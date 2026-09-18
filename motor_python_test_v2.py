@@ -4,7 +4,7 @@ import struct
 import threading
 import time
 
-from sparkmax import SparkMax
+from sparkmax_1 import SparkMax
 
 
 # ============================================================

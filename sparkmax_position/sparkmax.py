@@ -51,10 +51,8 @@ def build_arbitration_id(device_type: int, manufacturer: int,
 class SparkMax:
     HEARTBEAT_ID = 0x01011840
 
-    # IDs Base de Telemetría (Device Type=2, Mfg=5, API Class=46 "Periodic Status")
-    STATUS_0_BASE_ID = 0x0205B800   # Applied Output / Bus Voltage / Corriente / Temp
-    STATUS_1_BASE_ID = 0x0205B840   # Faults / Warnings (bits sin confirmar)
-    STATUS_2_BASE_ID = 0x0205B880   # Velocidad / Posición
+    # ID Base para Telemetría Status 2 (Device Type=2, Mfg=5, API Class=46, API Index=2)
+    STATUS_2_BASE_ID = 0x0205B880
 
     def __init__(self, can_id=1, channel="can0", period=0.02,
                  control_type="max_motion_position"):
@@ -73,23 +71,12 @@ class SparkMax:
             channel=channel
         )
 
-        self.status_0_id = self.STATUS_0_BASE_ID | can_id
-        self.status_1_id = self.STATUS_1_BASE_ID | can_id
         self.status_2_id = self.STATUS_2_BASE_ID | can_id
 
         # Variables de estado
         self._target_setpoint = 0.0
         self._current_position = 0.0
         self._current_velocity = 0.0
-
-        # Status 0 (confirmado por spec del usuario)
-        self._applied_output = 0.0     # -1..1 aprox (duty cycle aplicado)
-        self._bus_voltage = 0.0        # V
-        self._motor_current = 0.0      # A
-        self._temperature = 0          # °C
-
-        # Status 1 (crudo, sin decodificar en detalle todavia)
-        self._faults_raw = None        # bytes crudos del ultimo frame Status 1
 
         self._running = False
         self._lock = threading.Lock()
@@ -98,30 +85,12 @@ class SparkMax:
         self._control_thread = None
         self._read_thread = None
 
-        # Permite forzar una API Class cruda (para barridos de diagnostico)
-        # sin pasar por el diccionario API_CLASS_BY_CONTROL_TYPE.
-        self._override_api_class = None
-
     def _reference_id(self, control_type: str) -> int:
         api_class = API_CLASS_BY_CONTROL_TYPE[control_type]
         return build_arbitration_id(
             DEVICE_TYPE_MOTOR_CONTROLLER, MANUFACTURER_REV,
             api_class, API_INDEX_SET_SETPOINT, self.can_id,
         )
-
-    def _reference_id_raw(self, api_class: int) -> int:
-        return build_arbitration_id(
-            DEVICE_TYPE_MOTOR_CONTROLLER, MANUFACTURER_REV,
-            api_class, API_INDEX_SET_SETPOINT, self.can_id,
-        )
-
-    def set_raw_api_class(self, api_class):
-        """Fuerza una API Class cruda (0-63) para el frame de referencia,
-        ignorando self.control_type. Pasa None para volver al
-        comportamiento normal basado en control_type. Util solo para
-        barridos de diagnostico -- no usar en operacion normal."""
-        with self._lock:
-            self._override_api_class = api_class
 
     def _send_heartbeat(self):
         msg = can.Message(
@@ -138,16 +107,11 @@ class SparkMax:
         control_type: si no se especifica, usa self.control_type.
         """
         control_type = control_type or self.control_type
-        with self._lock:
-            override = self._override_api_class
         # bytes: float32 setpoint + pidSlot + relleno
         payload = struct.pack("<f B B h", setpoint, pid_slot, 0, 0)
 
-        arbitration_id = (self._reference_id_raw(override) if override is not None
-                           else self._reference_id(control_type))
-
         msg = can.Message(
-            arbitration_id=arbitration_id,
+            arbitration_id=self._reference_id(control_type),
             data=payload,
             is_extended_id=True
         )
@@ -192,33 +156,6 @@ class SparkMax:
                             self._current_position = pos
                             self._current_velocity = vel
 
-                    elif msg.arbitration_id == self.status_0_id:
-                        # entero de 64 bits LE empaquetado en bit-fields
-                        # (layout segun especificacion del usuario -- CONFIRMADO
-                        # salvo el signo de motor current, verificar con candump
-                        # si se necesitan corrientes "negativas"/direccion)
-                        raw = struct.unpack("<Q", msg.data)[0]
-
-                        applied_raw = raw & 0xFFFF                 # bits 0-15
-                        if applied_raw & 0x8000:                   # signed 16-bit
-                            applied_raw -= 0x10000
-                        bus_v_raw = (raw >> 16) & 0xFFF             # bits 16-27
-                        current_raw = (raw >> 28) & 0xFFF           # bits 28-39
-                        temp_raw = (raw >> 40) & 0xFF               # bits 40-47
-
-                        with self._lock:
-                            self._applied_output = applied_raw * 0.00003082369457075716
-                            self._bus_voltage = bus_v_raw * 0.0073260073260073
-                            self._motor_current = current_raw * 0.0366300366300366
-                            self._temperature = temp_raw
-
-                    elif msg.arbitration_id == self.status_1_id:
-                        # Faults/warnings: aun no decodificado bit por bit.
-                        # Se guarda crudo para poder cruzarlo con candump
-                        # (p.ej. forzar un soft-limit y ver que bit cambia).
-                        with self._lock:
-                            self._faults_raw = bytes(msg.data)
-
             except can.CanError:
                 pass  # Ignorar errores de lectura momentáneos para no saturar la consola
 
@@ -246,29 +183,6 @@ class SparkMax:
     def get_velocity(self):
         with self._lock:
             return self._current_velocity
-
-    def get_applied_output(self):
-        """Duty cycle efectivamente aplicado por el controlador (~ -1..1)."""
-        with self._lock:
-            return self._applied_output
-
-    def get_bus_voltage(self):
-        with self._lock:
-            return self._bus_voltage
-
-    def get_motor_current(self):
-        with self._lock:
-            return self._motor_current
-
-    def get_temperature(self):
-        with self._lock:
-            return self._temperature
-
-    def get_faults_raw(self):
-        """Bytes crudos del ultimo frame Status 1 (faults/warnings), o None
-        si todavia no se ha recibido ninguno. Sin decodificar bit a bit."""
-        with self._lock:
-            return self._faults_raw
 
     def stop(self):
         self.set_position(0.0)
