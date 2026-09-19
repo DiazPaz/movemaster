@@ -307,8 +307,8 @@ def main():
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--channel", default="can0")
     parser.add_argument("--device-id", type=int, default=1)
-    parser.add_argument("--step-seconds", type=float, default=4.0)
-    parser.add_argument("--final-seconds", type=float, default=4.0)
+    parser.add_argument("--step-seconds", type=float, default=6.0)
+    parser.add_argument("--final-seconds", type=float, default=6.0)
     parser.add_argument("--max-duty", type=int, choices=range(5, 101, 5), default=100,
                         help="Máximo en porcentaje; predeterminado 100")
     parser.add_argument("--output", default="resultados_neo")
