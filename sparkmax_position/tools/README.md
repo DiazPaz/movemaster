@@ -43,9 +43,18 @@ El formato estándar que se decodifica es:
 
 ---
 
+## Example
+
+La siguiente ilustración muestra cómo se divide un Arbitration ID de 29 bits en sus campos principales para un dispositivo REV.
+
+![Ejemplo de decodificación de Arbitration ID](./arbitration_id_example.svg)
+
+---
+
 ## Uso
 
 Ejecuta el script desde la terminal:
 
 ```bash
 python decode_arbitration_id.py
+```
