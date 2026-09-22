@@ -2,8 +2,8 @@ parameter,value
 result,completed
 channel,can0
 device_id,1
-step_seconds,6.0
-final_seconds,6.0
+step_seconds,6
+final_seconds,6
 max_duty_percent,100
 frames_spec,2.1.0
 heartbeat_and_refresh_s,0.02
