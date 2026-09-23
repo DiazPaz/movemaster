@@ -403,13 +403,8 @@ def persist_parameters(
         # OTRO ERROR
         # ====================================================
 
-        print(
-            "Resultado:    ERROR"
-        )
-
-        print(
-            "========================================\n"
-        )
+        print("Resultado:    ERROR")
+        print("========================================\n")
 
         return False
 
@@ -440,10 +435,6 @@ def persist_parameters(
     return False
 
 
-# ============================================================
-# MAIN
-# ============================================================
-
 def main():
 
     parser = argparse.ArgumentParser()
@@ -460,21 +451,13 @@ def main():
 
     args = parser.parse_args()
 
-
-    # ========================================================
     # CARGAR PROTOCOLO
-    # ========================================================
-
     spark = SparkMAXMotionProtocol(
         JSON_PATH,
         device_id=DEVICE_ID
     )
 
-
-    # ========================================================
     # ABRIR CAN
-    # ========================================================
-
     bus = can.Bus(
         interface="socketcan",
         channel="can0"
@@ -485,87 +468,48 @@ def main():
 
     try:
 
-        # ====================================================
-        # 1. CONFIGURACIÓN
-        #
-        # TODAVÍA NO INICIAMOS EL HEARTBEAT.
-        # El motor permanece deshabilitado.
-        # ====================================================
-
-        print(
-            "\n========================================"
-        )
-
-        print(
-            " CONFIGURANDO SLOT 0"
-        )
-
-        print(
-            "========================================"
-        )
-
-
         results = spark.configure_slot(
-
             bus,
-
             slot=PID_SLOT,
-
             pidf={
                 "p": KP,
                 "i": KI,
             },
-
             maxmotion={
-
                 "max_acceleration":
                     MAX_ACCEL,
-
                 "cruise_velocity":
                     CRUISE_VELOCITY,
-
                 "allowed_profile_error":
                     ALLOWED_CLOSED_LOOP_ERROR,
             },
-
             timeout=1.0
         )
 
 
-        # ====================================================
-        # 2. MOSTRAR RESPUESTAS
-        # ====================================================
-
+        # MOSTRAR RESPUESTAS
         for name, result in results.items():
-
             print_parameter_result(
                 name,
                 result
             )
 
 
-        # ====================================================
-        # 3. VALIDAR WRITES
-        # ====================================================
-
+        # VALIDAR WRITES
         all_ok = all(
-
             result["success"]
             and
             result["value_matches"]
-
             for result
             in results.values()
         )
 
 
         if not all_ok:
-
             print(
                 "\n[ERROR] Uno o más "
                 "parámetros fallaron."
             )
-
             return
 
 
@@ -575,51 +519,32 @@ def main():
         )
 
 
-        # ====================================================
-        # 4. PEQUEÑA PAUSA ANTES DE PERSISTIR
-        # ====================================================
-
+        # PAUSA ANTES DE PERSISTIR
         time.sleep(0.1)
 
 
-        # ====================================================
-        # 5. PERSIST PARAMETERS
-        #
-        # MOTOR TODAVÍA DESHABILITADO.
-        # ====================================================
-
+        # PERSIST PARAMETERS
         persist_ok = persist_parameters(
             spark,
             bus,
             timeout=2.5
         )
 
-
         if not persist_ok:
-
             print(
                 "[ERROR] El SPARK no confirmó "
                 "la persistencia."
             )
-
             print(
                 "No se enviará el setpoint."
             )
 
-            return
 
-
-        # ====================================================
-        # 6. ESPERAR A QUE EL SPARK TERMINE LA OPERACIÓN
-        # ====================================================
-
+        # ESPERAR A QUE EL SPARK TERMINE LA OPERACIÓN
         time.sleep(0.25)
 
 
-        # ====================================================
-        # 7. INICIAR HEARTBEAT
-        # ====================================================
-
+        # INICIAR HEARTBEAT
         print(
             "\nIniciando heartbeat..."
         )
@@ -633,30 +558,20 @@ def main():
         time.sleep(0.25)
 
 
-        # ====================================================
-        # 8. MAXMOTION POSITION SETPOINT
-        # ====================================================
-
+        # MAXMOTION POSITION SETPOINT
         print(
             "\n========== MAXMOTION POSITION =========="
         )
 
-
         setpoint_packet = (
             spark.send_setpoint(
-
                 bus,
-
                 args.setpoint,
-
                 slot=PID_SLOT,
-
                 arbitrary_feedforward=0.0,
-
                 arbitrary_feedforward_units=0
             )
         )
-
 
         print(
             f"Frame:       "
@@ -683,57 +598,29 @@ def main():
             f"{setpoint_packet.data.hex(' ').upper()}"
         )
 
-        print(
-            "MAXMotion Position Control activado."
-        )
+        print("MAXMotion Position Control activado.")
+        print("========================================\n")
 
-        print(
-            "========================================\n"
-        )
-
-
-        # ====================================================
-        # 9. MANTENER CONTROL ACTIVO
-        # ====================================================
-
-        print(
-            "Control activo."
-        )
-
-        print(
-            "Ctrl+C para terminar."
-        )
-
+        print("Control activo.")
+        print("Ctrl+C para terminar.")
 
         while True:
-
             time.sleep(1.0)
 
-
     except KeyboardInterrupt:
-
-        print(
-            "\nPrograma detenido."
-        )
+        print("\nPrograma detenido.")
 
 
     finally:
 
         if heartbeat is not None:
-
             heartbeat.stop()
-
             heartbeat.join(
                 timeout=1.0
             )
-
         bus.shutdown()
-
-        print(
-            "Bus CAN cerrado."
-        )
+        print("Bus CAN cerrado.")
 
 
 if __name__ == "__main__":
-
     main()
