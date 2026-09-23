@@ -14,10 +14,10 @@ en la Raspberry Pi 5: `0x01011840`, ocho bytes `FF`, cada 20 ms.
 | `pendant_terminal.py` | Consola interactiva con monitorización en segundo plano. |
 | `example_motion.py` | Ejemplo completo de inicialización y movimiento. |
 | `test_backend.py` | Pruebas de integración sin hardware, sobre CAN virtual. |
-| `sparkmax_json_protocol.py` | Tu librería original, incluida sin modificaciones. |
-| `spark-frames-2.1.0` | Tu JSON original, incluido sin modificaciones. |
-| `example_maxmotion_json.py` | Tu ejemplo funcional original, como referencia. |
-| `requirements.txt` | Dependencia `python-can==4.6.1`. |
+| `sparkmax_json_protocol.py` | Librería para programación de bajo y alto nivel de Spark Max. |
+| `spark-frames-2.1.0` | JSON con información de los frames del Spark. |
+| `example_maxmotion_json.py` | Ejemplo original. |
+| `requirements.txt` | Dependencias `python-can==4.6.1`. |
 
 ## Preparación y ejecución
 
