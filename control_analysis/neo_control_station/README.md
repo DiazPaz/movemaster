@@ -65,7 +65,7 @@ If G_n_percent(s) = N_RPM(s) / U_percent(s), then, for compatible measurement
 paths and zero/deviation initial conditions:
   G_position_percent(s) = G_n_percent(s) / (60*s)       [rev / percent duty]
   G_position_fraction(s) = 100*G_n_percent(s) / (60*s)  [rev / duty fraction]
-A velocity SOPDT K*exp(-L*s)/((tau1*s+1)*(tau2*s+1)) therefore becomes a
+A velocity $SOPDT K*exp(-L*s)/((tau1*s+1)*(tau2*s+1))$ therefore becomes a
 position model with an EXTRA INTEGRATOR, not an ordinary self-regulating SOPDT.
 The rational part of the position plant has poles 0, -1/tau1, -1/tau2.
 The delay remains and must be handled in the control design.
