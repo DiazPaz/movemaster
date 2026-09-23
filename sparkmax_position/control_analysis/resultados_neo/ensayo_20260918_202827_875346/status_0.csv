@@ -1,1 +1,0 @@
-t_rx_s,t_host_s,rx_unix_s,host_minus_rx_ms,dt_rx_ms,applied_duty,bus_voltage_V,current_A,temperature_C,hard_forward,hard_reverse,soft_forward,soft_reverse,inverted,primary_heartbeat_lock,raw_hex

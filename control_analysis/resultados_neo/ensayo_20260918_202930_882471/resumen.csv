@@ -1,0 +1,16 @@
+parameter,value
+result,error: Sin confirmación de habilitación de STATUS_0 y STATUS_2
+channel,can0
+device_id,0
+step_seconds,6.0
+final_seconds,6.0
+max_duty_percent,100
+frames_spec,2.1.0
+heartbeat_and_refresh_s,0.02
+status_periods,existing configuration; not modified
+encoder_units,RPM and rotations ONLY if conversion factors are 1
+test_note,
+t0_unix_s,
+monotonic_duration_s,
+status_0_count,0
+status_2_count,0
