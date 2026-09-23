@@ -3,7 +3,7 @@
 Backend Python para pruebas de **un eje** desde terminal y posterior integración
 con una interfaz gráfica. Utiliza directamente `SparkMAXMotionProtocol` de tu
 `sparkmax_json_protocol.py` y las tramas de `spark-frames-2.1.0`. El heartbeat
-conserva el ID, payload y período de tu `example_maxmotion_json.py`, que funciona
+conserva el ID, payload y período de `example_maxmotion_json.py`, que funciona
 en la Raspberry Pi 5: `0x01011840`, ocho bytes `FF`, cada 20 ms.
 
 ## Archivos
