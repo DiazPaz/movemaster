@@ -1,0 +1,24 @@
+[0.688s] Invoking command in '/home/bhjf/movemaster_ws/src/movemaster_ros': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/bhjf/movemaster_ws/build/movemaster_ros/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/bhjf/movemaster_ws/install/movemaster_ros/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/movemaster_ros build --build-base /home/bhjf/movemaster_ws/build/movemaster_ros/build install --record /home/bhjf/movemaster_ws/build/movemaster_ros/install.log --install-scripts $base/lib/movemaster_ros --single-version-externally-managed install_data
+[0.905s] running egg_info
+[0.921s] writing ../../build/movemaster_ros/movemaster_ros.egg-info/PKG-INFO
+[0.921s] writing dependency_links to ../../build/movemaster_ros/movemaster_ros.egg-info/dependency_links.txt
+[0.922s] writing entry points to ../../build/movemaster_ros/movemaster_ros.egg-info/entry_points.txt
+[0.922s] writing requirements to ../../build/movemaster_ros/movemaster_ros.egg-info/requires.txt
+[0.923s] writing top-level names to ../../build/movemaster_ros/movemaster_ros.egg-info/top_level.txt
+[0.952s] reading manifest file '../../build/movemaster_ros/movemaster_ros.egg-info/SOURCES.txt'
+[0.953s] writing manifest file '../../build/movemaster_ros/movemaster_ros.egg-info/SOURCES.txt'
+[0.953s] running build
+[0.953s] running build_py
+[0.953s] copying movemaster_ros/movemaster_node.py -> /home/bhjf/movemaster_ws/build/movemaster_ros/build/lib/movemaster_ros
+[0.954s] running install
+[0.959s] running install_lib
+[0.973s] copying /home/bhjf/movemaster_ws/build/movemaster_ros/build/lib/movemaster_ros/movemaster_node.py -> /home/bhjf/movemaster_ws/install/movemaster_ros/lib/python3.12/site-packages/movemaster_ros
+[0.974s] byte-compiling /home/bhjf/movemaster_ws/install/movemaster_ros/lib/python3.12/site-packages/movemaster_ros/movemaster_node.py to movemaster_node.cpython-312.pyc
+[0.974s] running install_data
+[0.974s] running install_egg_info
+[0.989s] removing '/home/bhjf/movemaster_ws/install/movemaster_ros/lib/python3.12/site-packages/movemaster_ros-0.0.0-py3.12.egg-info' (and everything under it)
+[0.990s] Copying ../../build/movemaster_ros/movemaster_ros.egg-info to /home/bhjf/movemaster_ws/install/movemaster_ros/lib/python3.12/site-packages/movemaster_ros-0.0.0-py3.12.egg-info
+[0.991s] running install_scripts
+[1.091s] Installing movemaster_node script to /home/bhjf/movemaster_ws/install/movemaster_ros/lib/movemaster_ros
+[1.092s] writing list of installed files to '/home/bhjf/movemaster_ws/build/movemaster_ros/install.log'
+[1.121s] Invoked command in '/home/bhjf/movemaster_ws/src/movemaster_ros' returned '0': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/bhjf/movemaster_ws/build/movemaster_ros/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/bhjf/movemaster_ws/install/movemaster_ros/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/movemaster_ros build --build-base /home/bhjf/movemaster_ws/build/movemaster_ros/build install --record /home/bhjf/movemaster_ws/build/movemaster_ros/install.log --install-scripts $base/lib/movemaster_ros --single-version-externally-managed install_data

@@ -1,0 +1,32 @@
+[1.199s] Invoking command in '/home/bhjf/movemaster_ws/src/movemaster_ros': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/bhjf/movemaster_ws/build/movemaster_ros/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/bhjf/movemaster_ws/install/movemaster_ros/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/movemaster_ros build --build-base /home/bhjf/movemaster_ws/build/movemaster_ros/build install --record /home/bhjf/movemaster_ws/build/movemaster_ros/install.log --install-scripts $base/lib/movemaster_ros --single-version-externally-managed install_data
+[1.426s] running egg_info
+[1.426s] creating ../../build/movemaster_ros/movemaster_ros.egg-info
+[1.441s] writing ../../build/movemaster_ros/movemaster_ros.egg-info/PKG-INFO
+[1.441s] writing dependency_links to ../../build/movemaster_ros/movemaster_ros.egg-info/dependency_links.txt
+[1.441s] writing requirements to ../../build/movemaster_ros/movemaster_ros.egg-info/requires.txt
+[1.441s] writing top-level names to ../../build/movemaster_ros/movemaster_ros.egg-info/top_level.txt
+[1.442s] writing manifest file '../../build/movemaster_ros/movemaster_ros.egg-info/SOURCES.txt'
+[1.470s] reading manifest file '../../build/movemaster_ros/movemaster_ros.egg-info/SOURCES.txt'
+[1.471s] writing manifest file '../../build/movemaster_ros/movemaster_ros.egg-info/SOURCES.txt'
+[1.472s] running build
+[1.472s] running build_py
+[1.473s] creating /home/bhjf/movemaster_ws/build/movemaster_ros/build
+[1.473s] creating /home/bhjf/movemaster_ws/build/movemaster_ros/build/lib
+[1.473s] creating /home/bhjf/movemaster_ws/build/movemaster_ros/build/lib/movemaster_ros
+[1.473s] copying movemaster_ros/__init__.py -> /home/bhjf/movemaster_ws/build/movemaster_ros/build/lib/movemaster_ros
+[1.473s] running install
+[1.478s] running install_lib
+[1.493s] creating /home/bhjf/movemaster_ws/install/movemaster_ros/lib/python3.12/site-packages/movemaster_ros
+[1.493s] copying /home/bhjf/movemaster_ws/build/movemaster_ros/build/lib/movemaster_ros/__init__.py -> /home/bhjf/movemaster_ws/install/movemaster_ros/lib/python3.12/site-packages/movemaster_ros
+[1.494s] byte-compiling /home/bhjf/movemaster_ws/install/movemaster_ros/lib/python3.12/site-packages/movemaster_ros/__init__.py to __init__.cpython-312.pyc
+[1.494s] running install_data
+[1.494s] creating /home/bhjf/movemaster_ws/install/movemaster_ros/share/ament_index
+[1.494s] creating /home/bhjf/movemaster_ws/install/movemaster_ros/share/ament_index/resource_index
+[1.494s] creating /home/bhjf/movemaster_ws/install/movemaster_ros/share/ament_index/resource_index/packages
+[1.494s] copying resource/movemaster_ros -> /home/bhjf/movemaster_ws/install/movemaster_ros/share/ament_index/resource_index/packages
+[1.494s] copying package.xml -> /home/bhjf/movemaster_ws/install/movemaster_ros/share/movemaster_ros
+[1.494s] running install_egg_info
+[1.509s] Copying ../../build/movemaster_ros/movemaster_ros.egg-info to /home/bhjf/movemaster_ws/install/movemaster_ros/lib/python3.12/site-packages/movemaster_ros-0.0.0-py3.12.egg-info
+[1.511s] running install_scripts
+[1.622s] writing list of installed files to '/home/bhjf/movemaster_ws/build/movemaster_ros/install.log'
+[1.646s] Invoked command in '/home/bhjf/movemaster_ws/src/movemaster_ros' returned '0': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/bhjf/movemaster_ws/build/movemaster_ros/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/bhjf/movemaster_ws/install/movemaster_ros/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/movemaster_ros build --build-base /home/bhjf/movemaster_ws/build/movemaster_ros/build install --record /home/bhjf/movemaster_ws/build/movemaster_ros/install.log --install-scripts $base/lib/movemaster_ros --single-version-externally-managed install_data

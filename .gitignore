@@ -1,0 +1,75 @@
+# =========================
+# Python
+# =========================
+
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+
+# =========================
+# ROS 2 / colcon
+# =========================
+
+build/
+install/
+log/
+
+# ROS bags
+*.db3
+*.mcap
+
+
+# =========================
+# VS Code
+# =========================
+
+# C/C++ IntelliSense database
+**/.vscode/browse.vc.db
+**/.vscode/browse.vc.db-shm
+**/.vscode/browse.vc.db-wal
+
+# IntelliSense cache
+**/.vscode/ipch/
+
+# VS Code workspace cache
+*.code-workspace
+
+
+# =========================
+# C / C++
+# =========================
+
+*.o
+*.obj
+*.so
+*.a
+*.out
+
+
+# =========================
+# CMake
+# =========================
+
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+
+# =========================
+# Temporary / OS files
+# =========================
+
+*.tmp
+*.temp
+*.swp
+*.swo
+
+.DS_Store
+Thumbs.db

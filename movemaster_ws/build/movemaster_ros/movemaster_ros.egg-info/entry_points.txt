@@ -1,0 +1,2 @@
+[console_scripts]
+movemaster_node = movemaster_ros.movemaster_node:main

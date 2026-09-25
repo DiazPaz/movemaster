@@ -1,0 +1,22 @@
+running egg_info
+writing ../../build/movemaster_ros/movemaster_ros.egg-info/PKG-INFO
+writing dependency_links to ../../build/movemaster_ros/movemaster_ros.egg-info/dependency_links.txt
+writing entry points to ../../build/movemaster_ros/movemaster_ros.egg-info/entry_points.txt
+writing requirements to ../../build/movemaster_ros/movemaster_ros.egg-info/requires.txt
+writing top-level names to ../../build/movemaster_ros/movemaster_ros.egg-info/top_level.txt
+reading manifest file '../../build/movemaster_ros/movemaster_ros.egg-info/SOURCES.txt'
+writing manifest file '../../build/movemaster_ros/movemaster_ros.egg-info/SOURCES.txt'
+running build
+running build_py
+copying movemaster_ros/movemaster_node.py -> /home/bhjf/movemaster_ws/build/movemaster_ros/build/lib/movemaster_ros
+running install
+running install_lib
+copying /home/bhjf/movemaster_ws/build/movemaster_ros/build/lib/movemaster_ros/movemaster_node.py -> /home/bhjf/movemaster_ws/install/movemaster_ros/lib/python3.12/site-packages/movemaster_ros
+byte-compiling /home/bhjf/movemaster_ws/install/movemaster_ros/lib/python3.12/site-packages/movemaster_ros/movemaster_node.py to movemaster_node.cpython-312.pyc
+running install_data
+running install_egg_info
+removing '/home/bhjf/movemaster_ws/install/movemaster_ros/lib/python3.12/site-packages/movemaster_ros-0.0.0-py3.12.egg-info' (and everything under it)
+Copying ../../build/movemaster_ros/movemaster_ros.egg-info to /home/bhjf/movemaster_ws/install/movemaster_ros/lib/python3.12/site-packages/movemaster_ros-0.0.0-py3.12.egg-info
+running install_scripts
+Installing movemaster_node script to /home/bhjf/movemaster_ws/install/movemaster_ros/lib/movemaster_ros
+writing list of installed files to '/home/bhjf/movemaster_ws/build/movemaster_ros/install.log'
