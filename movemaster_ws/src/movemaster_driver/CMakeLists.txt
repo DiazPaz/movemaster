@@ -28,17 +28,12 @@ target_link_libraries(movemaster_driver PUBLIC
   sparkmax_protocol::sparkmax_socketcan)
 target_link_libraries(movemaster_driver PRIVATE Threads::Threads)
 
-# Herramienta de banco sin ROS: configura los ejes y mueve uno a una posición.
-add_executable(movemaster_driver_demo examples/driver_demo.cpp)
-target_link_libraries(movemaster_driver_demo movemaster_driver)
-
 install(DIRECTORY include/ DESTINATION include/${PROJECT_NAME})
 install(TARGETS movemaster_driver
   EXPORT export_${PROJECT_NAME}
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin)
-install(TARGETS movemaster_driver_demo DESTINATION lib/${PROJECT_NAME})
 
 option(BUILD_TESTING "Compilar pruebas" ON)
 if(BUILD_TESTING)

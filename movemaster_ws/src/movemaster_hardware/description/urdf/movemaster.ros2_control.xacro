@@ -41,24 +41,19 @@
     </joint>
   </xacro:macro>
 
-  <xacro:macro name="movemaster_ros2_control" params="name use_mock_hardware:=false can_interface:=can0">
+  <xacro:macro name="movemaster_ros2_control" params="name can_interface:=can0">
     <ros2_control name="${name}" type="system">
       <hardware>
-        <xacro:if value="${use_mock_hardware}">
-          <plugin>mock_components/GenericSystem</plugin>
-        </xacro:if>
-        <xacro:unless value="${use_mock_hardware}">
-          <plugin>movemaster_hardware/MovemasterHardware</plugin>
-          <param name="can_interface">${can_interface}</param>
-          <!-- Vacío = share/sparkmax_protocol/spec/spark-frames-2.1.0 -->
-          <param name="frames_json"></param>
-          <param name="status_period_ms">20</param>
-          <param name="feedback_timeout_ms">300</param>
-          <param name="response_timeout_ms">500</param>
-          <param name="feedback_wait_ms">2000</param>
-          <param name="persist_parameters">false</param>
-          <param name="trip_on_error_frame">true</param>
-        </xacro:unless>
+        <plugin>movemaster_hardware/MovemasterHardware</plugin>
+        <param name="can_interface">${can_interface}</param>
+        <!-- Vacío = share/sparkmax_protocol/spec/spark-frames-2.1.0 -->
+        <param name="frames_json"></param>
+        <param name="status_period_ms">20</param>
+        <param name="feedback_timeout_ms">300</param>
+        <param name="response_timeout_ms">500</param>
+        <param name="feedback_wait_ms">2000</param>
+        <param name="persist_parameters">false</param>
+        <param name="trip_on_error_frame">true</param>
       </hardware>
 
       <xacro:movemaster_joint name="joint_1" can_id="1" lower="${-pi}" upper="${pi}"/>

@@ -11,8 +11,7 @@
 //   * decodificación de STATUS_0 / STATUS_1 / STATUS_2
 //
 // Las clases derivadas exponen UN tipo de control:
-//   * MAXMotionProtocol → MAXMOTION_POSITION_SETPOINT (port de SparkMAXMotionProtocol)
-//   * PositionProtocol  → POSITION_SETPOINT (ver position_protocol.hpp)
+//   * PositionProtocol → POSITION_SETPOINT (ver position_protocol.hpp)
 //
 // Esta capa sólo construye/interpreta CANPacket: no posee el bus, ni hilos, ni
 // el heartbeat. El transporte está en socketcan.hpp y la política en MoveMasterDriver.
@@ -151,7 +150,7 @@ public:
   std::string describe() const;
 
 protected:
-  /// Señales de una trama de setpoint (POSITION_SETPOINT, MAXMOTION_..., etc.).
+  /// Señales de una trama de setpoint (p.ej. POSITION_SETPOINT).
   struct SetpointFrame
   {
     const FrameSpec * frame{nullptr};
@@ -179,28 +178,6 @@ private:
   int slot_count_{kDefaultSlotCount};
   ParameterLayout layout_;
   std::map<std::string, std::vector<ParameterGroup>, std::less<>> groups_;
-};
-
-/// Port directo de SparkMAXMotionProtocol (sparkmax_json_protocol.py):
-/// sólo MAXMotion Position Control; catálogo pidf + maxmotion.
-class MAXMotionProtocol : public SparkMaxProtocol
-{
-public:
-  MAXMotionProtocol(SparkFrameDatabase::Ptr frames, uint8_t device_id,
-    ParameterLayout layout = parameter_layouts::maxMotionDefault(),
-    int slot_count = kDefaultSlotCount);
-
-  const char * controlType() const override {return "MAXMotion Position Control";}
-
-  const ParameterGroup & maxmotion(int slot = 0) const {return group("maxmotion", slot);}
-
-  /// MAXMOTION_POSITION_SETPOINT (rotaciones del motor por defecto).
-  CANPacket maxmotionSetpointPacket(double setpoint, int slot = 0,
-    double arbitrary_feedforward = 0.0,
-    FeedforwardUnits units = FeedforwardUnits::Voltage) const;
-
-private:
-  SetpointFrame setpoint_;
 };
 
 }  // namespace sparkmax_protocol

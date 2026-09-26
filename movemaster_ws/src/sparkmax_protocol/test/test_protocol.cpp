@@ -62,7 +62,7 @@ TEST_CASE("json: carga spark-frames-2.1.0")
   CHECK_EQ(db->at("STATUS_2").lengthBytes(), static_cast<std::size_t>(8));
   CHECK(db->at("READ_PARAMETER_12_AND_13").rtr());
   CHECK(db->matchArbitrationId(0x0205B883) == &db->at("STATUS_2"));
-  CHECK(!db->search("maxmotion").empty());
+  CHECK(!db->search("position setpoint").empty());
   CHECK_THROWS(db->at("NO_EXISTE"));
 }
 
@@ -90,25 +90,13 @@ TEST_CASE("codec: señales big-endian no soportadas (como en Python)")
 
 TEST_CASE("paridad Python: PARAMETER_WRITE")
 {
-  MAXMotionProtocol spark(database(), 3);
+  PositionProtocol spark(database(), 3);
   auto p = spark.parameterWritePacket(spark.pidf(0)["p"], 0.05);
   CHECK_EQ(p.arbitration_id, 0x02053803u);
   CHECK_EQ(static_cast<int>(p.dlc), 5);
   CHECK_EQ(hex(p), std::string("0D CD CC 4C 3D"));
   CHECK_EQ(hex(spark.parameterWritePacket(spark.pidf(2)["f"], -1.25)),
     std::string("20 00 00 A0 BF"));
-  CHECK_EQ(hex(spark.parameterWritePacket(spark.maxmotion(1)["cruisevelocity"], 900)),
-    std::string("AB 00 00 61 44"));
-}
-
-TEST_CASE("paridad Python: MAXMOTION_POSITION_SETPOINT")
-{
-  MAXMotionProtocol spark(database(), 3);
-  auto a = spark.maxmotionSetpointPacket(0.5, 1, 1.5, FeedforwardUnits::DutyCycle);
-  CHECK_EQ(a.arbitration_id, 0x02050203u);
-  CHECK_EQ(hex(a), std::string("00 00 00 3F 00 06 05 00"));
-  CHECK_EQ(hex(spark.maxmotionSetpointPacket(-12.75, 3, -2.0)),
-    std::string("00 00 4C C1 00 F8 03 00"));
 }
 
 TEST_CASE("paridad Python: SET_STATUSES_ENABLED, PERSIST y lectura RTR")
@@ -186,7 +174,7 @@ TEST_CASE("PositionProtocol: catálogo pidf/setup y alias")
   CHECK(spark.group("setup")["feedback_sensor"].value_type == ParameterType::Uint);
   CHECK_EQ(spark.pidf(0)["p"].readFrameName(), std::string("READ_PARAMETER_12_AND_13"));
   CHECK_THROWS(spark.pidf(0)["no_existe"]);
-  CHECK_THROWS(spark.group("maxmotion"));
+  CHECK_THROWS(spark.group("no_existe"));
   CHECK_THROWS(PositionProtocol(database(), 64));
 }
 
