@@ -1,5 +1,29 @@
 # Validación realizada — 26 de septiembre de 2026
 
+## Actualización 0.1.1: enlace de librerías
+
+Se reprodujeron exactamente los dos `undefined symbol` reportados por el usuario
+con la compilación compartida anterior y una librería de prueba con el mismo
+SONAME pero sin las exportaciones afectadas. Esa librería se colocó al principio
+de `LD_LIBRARY_PATH`. Ambos ejecutables terminaron con código 127.
+
+Después de cambiar el protocolo y driver a `STATIC` con PIC:
+
+- Compilación nueva en Release: correcta.
+- CTest con la librería incompatible aún en `LD_LIBRARY_PATH`: **3/3 correctas**.
+- Comparación contra Python: **1,841/1,841 casos coinciden**.
+- `readelf -d` de `protocol_demo`, `protocol_oracle`, `driver_test` y
+  `driver_monitor`: sin dependencias dinámicas de `libsparkmax_protocol.so`
+  ni `libmovemaster_driver.so`.
+- La prueba Python muestra ahora el stderr del oracle. Se comprobó con el
+  ejecutable anterior bajo la colisión: informa `undefined symbol` y código 127.
+- La solución temporal que antepone el `build/` correcto a `LD_LIBRARY_PATH`
+  también permitió ejecutar el demo anterior en la reproducción.
+
+Esto valida la corrección frente a la colisión reproducida; la ruta que carga
+el equipo del usuario no se inspeccionó. La compilación/carga ROS, ARM64 y la
+validación física siguen pendientes, como se detalla más abajo.
+
 ## Ejecutado en este entorno
 
 Linux x86_64, g++ 13.3.0, C++17, CMake 4.4.3 y nlohmann/json 3.12.0.

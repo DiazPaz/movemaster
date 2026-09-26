@@ -1,5 +1,25 @@
 # MoveMaster: protocolo C++, driver y plugin de hardware
 
+Versión 0.1.1: corrección del enlace de las librerías. El protocolo y el driver
+se compilan como librerías estáticas con PIC y se incorporan a sus consumidores;
+el plugin ROS sigue siendo una librería compartida para pluginlib. Los ejemplos
+y pruebas ya no cargan `libsparkmax_protocol.so` ni `libmovemaster_driver.so`
+desde un overlay o una instalación anterior.
+
+Si tienes la versión anterior, puedes actualizar únicamente `CMakeLists.txt`
+para aplicar la corrección de enlace; `tests/differential_test.py` añade además
+el diagnóstico del ejecutable cuando falla. Conserva tu configuración de ejes.
+Compila en un directorio nuevo para evitar mezclar productos anteriores:
+
+```bash
+cmake -S . -B build_fixed -DMOVEMASTER_BUILD_ROS2=OFF -DCMAKE_BUILD_TYPE=Release
+cmake --build build_fixed -j2
+ctest --test-dir build_fixed --output-on-failure
+```
+
+Detalles del problema original y diagnóstico:
+[docs/LINKING_FIX.md](docs/LINKING_FIX.md).
+
 Primera etapa de la arquitectura. Contiene una traducción del protocolo Python,
 un driver para **1 a 6 SPARK MAX** y el plugin `MovemasterHardware` para
 `ros2_control`. Se conserva **MAXMotion Position Control**.

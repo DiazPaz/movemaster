@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(movemaster_hardware VERSION 0.1.0 LANGUAGES CXX)
+project(movemaster_hardware VERSION 0.1.1 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -14,8 +14,12 @@ if(NOT nlohmann_json_FOUND)
 endif()
 find_package(Threads REQUIRED)
 
-add_library(sparkmax_protocol SHARED src/sparkmax_json_protocol.cpp)
-add_library(movemaster_driver SHARED src/socketcan.cpp src/movemaster_driver.cpp src/driver_config.cpp)
+# Embed the core in its consumers: a sourced ROS overlay must not replace it
+# with an older same-name .so through LD_LIBRARY_PATH at runtime.
+add_library(sparkmax_protocol STATIC src/sparkmax_json_protocol.cpp)
+add_library(movemaster_driver STATIC src/socketcan.cpp src/movemaster_driver.cpp src/driver_config.cpp)
+set_target_properties(sparkmax_protocol movemaster_driver PROPERTIES
+  POSITION_INDEPENDENT_CODE ON)
 foreach(target sparkmax_protocol movemaster_driver)
   target_include_directories(${target} PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

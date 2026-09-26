@@ -162,7 +162,14 @@ for slot, units in ((-1, 0), (4, 0), (0, 2)):
         lambda s=slot, u=units: protocol.maxmotion_setpoint_packet(1, slot=s, arbitrary_feedforward_units=u))
 
 run = subprocess.run([str(args.oracle.resolve()), str(args.spec.resolve())],
-    input=''.join(json.dumps(q) + '\n' for q in queries), text=True, capture_output=True, check=True)
+    input=''.join(json.dumps(q) + '\n' for q in queries), text=True, capture_output=True)
+if run.returncode != 0:
+    print(f'protocol_oracle failed to run (exit {run.returncode}): {args.oracle.resolve()}', file=sys.stderr)
+    if run.stderr:
+        print(run.stderr, end='' if run.stderr.endswith('\n') else '\n', file=sys.stderr)
+    if run.stdout:
+        print(run.stdout, end='' if run.stdout.endswith('\n') else '\n', file=sys.stderr)
+    sys.exit(1)
 actual = [json.loads(line) for line in run.stdout.splitlines()]
 if len(actual) != len(expected):
     raise AssertionError(f'Expected {len(expected)} replies, received {len(actual)}')
