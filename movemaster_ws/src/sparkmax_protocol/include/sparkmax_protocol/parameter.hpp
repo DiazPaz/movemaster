@@ -104,10 +104,14 @@ namespace parameter_layouts
 /// P=13, I=14, D=15, F=16, stride 8). i_zone/d_filter/output_min/output_max
 /// siguen la tabla REV SparkParameters (17..20); verifíquelos con su firmware.
 ParameterGroupLayout pidf();
+/// Parámetros MAXMotion por slot (IDs de sparkmax_json_protocol.py).
+ParameterGroupLayout maxmotion();
 /// Parámetros de inicialización sin slot usados por teach_pendant_backend.py
 /// (sensor de realimentación, factores de conversión, wrapping, periodos STATUS).
 ParameterGroupLayout setup();
 
+/// Catálogo por defecto de SparkMAXMotionProtocol en Python (pidf + maxmotion).
+ParameterLayout maxMotionDefault();
 /// Catálogo por defecto de PositionProtocol (pidf + setup).
 ParameterLayout positionDefault();
 }  // namespace parameter_layouts

@@ -371,4 +371,21 @@ std::string SparkMaxProtocol::describe() const
   return out.str();
 }
 
+// -----------------------------------------------------------------------------
+// MAXMotionProtocol
+// -----------------------------------------------------------------------------
+
+MAXMotionProtocol::MAXMotionProtocol(
+  SparkFrameDatabase::Ptr frames, uint8_t device_id, ParameterLayout layout, int slot_count)
+: SparkMaxProtocol(std::move(frames), device_id, std::move(layout), slot_count),
+  setpoint_(bindSetpointFrame("MAXMOTION_POSITION_SETPOINT"))
+{
+}
+
+CANPacket MAXMotionProtocol::maxmotionSetpointPacket(
+  double setpoint, int slot, double arbitrary_feedforward, FeedforwardUnits units) const
+{
+  return buildSetpoint(setpoint_, setpoint, slot, arbitrary_feedforward, units);
+}
+
 }  // namespace sparkmax_protocol
