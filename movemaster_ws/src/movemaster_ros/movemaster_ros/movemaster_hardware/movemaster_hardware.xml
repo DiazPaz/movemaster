@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<library path="movemaster_hardware">
+  <class name="movemaster_hardware/MovemasterHardware"
+         type="movemaster::MovemasterHardware"
+         base_class_type="hardware_interface::SystemInterface">
+    <description>SPARK MAX MAXMotion Position over SocketCAN, 1 to 6 joints.</description>
+  </class>
+</library>
