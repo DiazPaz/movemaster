@@ -1,0 +1,55 @@
+Start testing: Sep 26 11:08 CST
+----------------------------------------------------------
+1/3 Testing: driver_fake_bus
+1/3 Test: driver_fake_bus
+Command: "/home/movemaster/movemaster/movemaster_ws/src/movemaster_ros/movemaster_ros/movemaster_hardware/build_fixed/driver_test" "/home/movemaster/movemaster/movemaster_ws/src/movemaster_ros/movemaster_ros/movemaster_hardware/spec/spark-frames-2.1.0"
+Directory: /home/movemaster/movemaster/movemaster_ws/src/movemaster_ros/movemaster_ros/movemaster_hardware/build_fixed
+"driver_fake_bus" start time: Sep 26 11:08 CST
+Output:
+----------------------------------------------------------
+PASS: 1/3/6 axes, conversions, ACK checks, activation order, limits, stale/malformed feedback, TX failure and loop gap.
+<end of output>
+Test time =   0.92 sec
+----------------------------------------------------------
+Test Passed.
+"driver_fake_bus" end time: Sep 26 11:08 CST
+"driver_fake_bus" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2/3 Testing: protocol_demo_no_can
+2/3 Test: protocol_demo_no_can
+Command: "/home/movemaster/movemaster/movemaster_ws/src/movemaster_ros/movemaster_ros/movemaster_hardware/build_fixed/protocol_demo" "/home/movemaster/movemaster/movemaster_ws/src/movemaster_ros/movemaster_ros/movemaster_hardware/spec/spark-frames-2.1.0"
+Directory: /home/movemaster/movemaster/movemaster_ws/src/movemaster_ros/movemaster_ros/movemaster_hardware/build_fixed
+"protocol_demo_no_can" start time: Sep 26 11:08 CST
+Output:
+----------------------------------------------------------
+No CAN socket is opened. These are encoded examples only.
+Frames: 328, version: 2.1.0
+CANPacket(frame=MAXMOTION_POSITION_SETPOINT, id=0x02050201, dlc=8, data=00 00 00 3F 00 00 00 00)
+CANPacket(frame=PARAMETER_WRITE, id=0x02053801, dlc=5, data=0D CD CC 4C 3D)
+CANPacket(frame=READ_PARAMETER_12_AND_13, id=0x02053D81, dlc=8, data=<RTR/no data>)
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"protocol_demo_no_can" end time: Sep 26 11:08 CST
+"protocol_demo_no_can" time elapsed: 00:00:00
+----------------------------------------------------------
+
+3/3 Testing: python_cpp_parity
+3/3 Test: python_cpp_parity
+Command: "/usr/bin/python3" "/home/movemaster/movemaster/movemaster_ws/src/movemaster_ros/movemaster_ros/movemaster_hardware/tests/differential_test.py" "--oracle" "/home/movemaster/movemaster/movemaster_ws/src/movemaster_ros/movemaster_ros/movemaster_hardware/build_fixed/protocol_oracle"
+Directory: /home/movemaster/movemaster/movemaster_ws/src/movemaster_ros/movemaster_ros/movemaster_hardware/build_fixed
+"python_cpp_parity" start time: Sep 26 11:08 CST
+Output:
+----------------------------------------------------------
+1841/1841 cases match; 328 JSON frames covered.
+<end of output>
+Test time =   0.39 sec
+----------------------------------------------------------
+Test Passed.
+"python_cpp_parity" end time: Sep 26 11:08 CST
+"python_cpp_parity" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Sep 26 11:08 CST
