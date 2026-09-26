@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>sparkmax_protocol</name>
+  <version>0.1.0</version>
+  <description>
+    SparkMaxProtocol: parser del JSON de tramas CAN de REV (spark-frames), FrameSpec,
+    SignalCodec, CANPacket, ParameterDefinition/ParameterGroup, PositionProtocol
+    (Position Control) y transporte SocketCAN. Port en C++ de sparkmax_json_protocol.py.
+  </description>
+  <maintainer email="todo@todo.todo">movemaster</maintainer>
+  <license>TODO: License declaration</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

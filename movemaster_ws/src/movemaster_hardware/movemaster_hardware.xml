@@ -1,0 +1,10 @@
+<library path="movemaster_hardware">
+  <class name="movemaster_hardware/MovemasterHardware"
+         type="movemaster_hardware::MovemasterHardware"
+         base_class_type="hardware_interface::SystemInterface">
+    <description>
+      ros2_control SystemInterface del Movemaster: SPARK MAX en Position Control
+      sobre SocketCAN (MoveMasterDriver + SparkMaxProtocol).
+    </description>
+  </class>
+</library>
