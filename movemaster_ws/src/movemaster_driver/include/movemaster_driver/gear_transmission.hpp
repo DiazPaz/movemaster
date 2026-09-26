@@ -39,7 +39,7 @@ inline constexpr double rpmToRadPerSec(double rpm) {return rpm * kTwoPi / 60.0;}
 struct GearTransmission
 {
   /// Rotaciones del motor por rotación de la articulación (> 0).
-  double gear_ratio{1.0};
+  double gear_ratio{108.0};
   /// Invierte el sentido motor ↔ articulación.
   bool inverted{false};
   /// Posición de la articulación (rad) cuando el encoder del motor marca 0.
