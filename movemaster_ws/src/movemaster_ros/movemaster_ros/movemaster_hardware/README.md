@@ -1,5 +1,10 @@
 # MoveMaster: protocolo C++, driver y plugin de hardware
 
+Versión 0.1.2: se añade `examples/maxmotion_console.cpp`, una consola para
+enviar SP absolutos en rotaciones de motor a un SPARK MAX mediante MAXMotion.
+Permite `on`, `sp 0.5`, `pv`, `off` y `q`. Instrucciones en
+[docs/MAXMOTION_CONSOLE.md](docs/MAXMOTION_CONSOLE.md).
+
 Versión 0.1.1: corrección del enlace de las librerías. El protocolo y el driver
 se compilan como librerías estáticas con PIC y se incorporan a sus consumidores;
 el plugin ROS sigue siendo una librería compartida para pluginlib. Los ejemplos
@@ -44,6 +49,7 @@ launch files, modelo cinemático ni configuración de MoveIt.
 | `spec/spark-frames-2.1.0` | Tu archivo REV JSON, sin cambios de contenido. |
 | `examples/protocol_demo.cpp` | Construcción de tramas sin abrir CAN. |
 | `examples/driver_monitor.cpp` | Configuración RAM y lectura de telemetría, sin habilitación. |
+| `examples/maxmotion_console.cpp` | Habilitación y envío interactivo de SP MAXMotion para un eje. |
 | `tests/` | Comparación contra Python y pruebas del driver con transporte simulado. |
 
 La dependencia es:

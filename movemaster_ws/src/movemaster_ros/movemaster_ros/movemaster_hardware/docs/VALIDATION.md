@@ -1,5 +1,25 @@
 # Validación realizada — 26 de septiembre de 2026
 
+## Actualización 0.1.2: consola MAXMotion de un eje
+
+`examples/maxmotion_console.cpp` compila en C++17 como target CMake y también
+con g++ directamente contra las dos librerías estáticas. La compilación directa
+se verificó con `-Wall -Wextra -Wpedantic -Werror`.
+
+CTest: **4/4 pruebas correctas**, incluida la comparación de 1,841 casos contra
+Python. La prueba nueva ejecuta el mismo bucle de la consola con un driver
+simulado y entrada por pipe. Comprueba:
+
+- Rechazo de SP antes de habilitar; posición medida como objetivo inicial.
+- Continuidad de las escrituras durante una pausa de 120 ms a mitad de un comando.
+- Conversión de rotaciones de motor a radianes articulares con reducción y sentido.
+- Comandos `on`, `sp`, `pv`, `off` y `q`.
+- Deshabilitación ante una referencia fuera de límites, EOF o error del driver.
+- Rechazo de números mal formados y restauración de flags del descriptor de entrada.
+
+La consola no se probó con el SPARK físico. Estas pruebas ejercitan su entrada
+y ciclo; las pruebas existentes del driver ejercitan el protocolo CAN simulado.
+
 ## Actualización 0.1.1: enlace de librerías
 
 Se reprodujeron exactamente los dos `undefined symbol` reportados por el usuario
