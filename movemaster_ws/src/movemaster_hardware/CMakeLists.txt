@@ -38,7 +38,7 @@ install(TARGETS movemaster_hardware
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin)
-install(DIRECTORY config description launch DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY description DESTINATION share/${PROJECT_NAME})
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 ament_export_dependencies(hardware_interface pluginlib rclcpp rclcpp_lifecycle movemaster_driver)

@@ -5,7 +5,7 @@
   <version>0.1.0</version>
   <description>
     Plugin ros2_control (hardware_interface::SystemInterface) MovemasterHardware para
-    los SPARK MAX del Movemaster en Position Control. Incluye URDF, controladores y launch.
+    los SPARK MAX del Movemaster en Position Control, cargado por controller_manager.
   </description>
   <maintainer email="todo@todo.todo">movemaster</maintainer>
   <license>TODO: License declaration</license>
@@ -20,12 +20,6 @@
   <depend>movemaster_driver</depend>
   <depend>sparkmax_protocol</depend>
 
-  <exec_depend>controller_manager</exec_depend>
-  <exec_depend>forward_command_controller</exec_depend>
-  <exec_depend>joint_state_broadcaster</exec_depend>
-  <exec_depend>joint_trajectory_controller</exec_depend>
-  <exec_depend>robot_state_publisher</exec_depend>
-  <exec_depend>ros2launch</exec_depend>
   <exec_depend>xacro</exec_depend>
 
   <export>

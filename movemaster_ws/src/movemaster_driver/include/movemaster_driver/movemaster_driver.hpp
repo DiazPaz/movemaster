@@ -178,7 +178,7 @@ public:
   // ---- ciclo de vida (bloqueante, fuera del lazo RT) ---------------------------
   /// Carga el JSON, crea un PositionProtocol por eje, abre el bus y lanza el hilo RX.
   void open();
-  /// Configura cada SPARK en orden y confirma cada paso (ver README).
+  /// Configura cada SPARK en orden y confirma cada paso (ver configureAxis()).
   void configure();
   /// Espera STATUS_0 y STATUS_2 recientes de todos los ejes.
   bool waitForFeedback(std::chrono::milliseconds timeout);

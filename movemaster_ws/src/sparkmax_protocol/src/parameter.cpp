@@ -199,19 +199,6 @@ ParameterGroupLayout pidf()
     }};
 }
 
-ParameterGroupLayout maxmotion()
-{
-  return {"maxmotion", {
-      {"cruise_velocity", 166, 5, ParameterType::Float, "MAXMotion cruise/max velocity",
-        "RPM by default", {"cruisevelocity", "max_velocity", "maxvelocity"}},
-      {"max_acceleration", 167, 5, ParameterType::Float, "MAXMotion maximum acceleration",
-        "RPM/s by default", {"maxaccel", "max_accel", "maxacceleration"}},
-      {"allowed_profile_error", 169, 5, ParameterType::Float,
-        "MAXMotion allowed profile/closed-loop error", "rotations by default",
-        {"allowedprofileerror", "allowed_error", "allowed_closed_loop_error"}},
-    }};
-}
-
 ParameterGroupLayout setup()
 {
   return {"setup", {
@@ -225,11 +212,6 @@ ParameterGroupLayout setup()
       {"status0_period_ms", 158, 0, ParameterType::Uint, "Periodo de STATUS_0", "ms", {}},
       {"status2_period_ms", 160, 0, ParameterType::Uint, "Periodo de STATUS_2", "ms", {}},
     }};
-}
-
-ParameterLayout maxMotionDefault()
-{
-  return {pidf(), maxmotion()};
 }
 
 ParameterLayout positionDefault()
