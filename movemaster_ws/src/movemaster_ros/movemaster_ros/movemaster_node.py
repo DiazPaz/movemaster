@@ -45,46 +45,46 @@ class Movemaster_Node(Node):
 
         self.get_logger().info('Publisher "/joint_states" iniciado')
 
-        def publish_telemetry(self):
+    def publish_telemetry(self):
 
-            telemetry = self.axis.telemetry()
+        telemetry = self.axis.telemetry()
 
-            # Si todavía no tenemos una posición válida,
-            # no publicamos el mensaje.
-            if telemetry.pv_rot is None:
-                return
+        # Si todavía no tenemos una posición válida,
+        # no publicamos el mensaje.
+        if telemetry.pv_rot is None:
+            return
 
-            msg = JointState()
+        msg = JointState()
 
-            msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.stamp = self.get_clock().now().to_msg()
 
-            # Nombre de nuestra primera articulación
-            msg.name = ['joint_1']
+        # Nombre de nuestra primera articulación
+        msg.name = ['joint_1']
 
-            # Spark MAX -> ROS 2
-            #
-            # posición:
-            # rotaciones -> radianes
-            #
-            # velocidad:
-            # RPM -> rad/s
+        # Spark MAX -> ROS 2
+        #
+        # posición:
+        # rotaciones -> radianes
+        #
+        # velocidad:
+        # RPM -> rad/s
 
-            position_rad = telemetry.pv_rot * 2.0 * 3.141592653589793
+        position_rad = telemetry.pv_rot * 2.0 * 3.141592653589793
 
-            velocity_rad_s = 0.0
+        velocity_rad_s = 0.0
 
-            if telemetry.velocity_rpm is not None:
-                velocity_rad_s = (
-                    telemetry.velocity_rpm
-                    * 2.0
-                    * 3.141592653589793
-                    / 60.0
-                )
+        if telemetry.velocity_rpm is not None:
+            velocity_rad_s = (
+                telemetry.velocity_rpm
+                * 2.0
+                * 3.141592653589793
+                / 60.0
+            )
 
-            msg.position = [position_rad]
-            msg.velocity = [velocity_rad_s]
+        msg.position = [position_rad]
+        msg.velocity = [velocity_rad_s]
 
-            self.joint_state_publisher.publish(msg)
+        self.joint_state_publisher.publish(msg)
 
 
 
