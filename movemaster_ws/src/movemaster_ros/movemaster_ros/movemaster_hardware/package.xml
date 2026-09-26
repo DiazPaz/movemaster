@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>movemaster_hardware</name>
+  <version>0.1.0</version>
+  <description>Python-compatible SPARK JSON protocol, MoveMaster driver and ros2_control plugin.</description>
+  <maintainer email="maintainer@example.com">MoveMaster project (replace before publishing)</maintainer>
+  <license>Proprietary</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>hardware_interface</depend>
+  <depend>pluginlib</depend>
+  <depend>rclcpp</depend>
+  <depend>rclcpp_lifecycle</depend>
+  <depend>nlohmann-json-dev</depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>

@@ -1,0 +1,70 @@
+{
+  "period_s": 0.02,
+  "status_period_ms": 20,
+  "feedback_timeout_s": 0.3,
+  "response_timeout_s": 0.5,
+  "disable_settle_s": 0.5,
+  "max_cycle_gap_s": 0.1,
+  "joints": {
+    "joint_1": {
+      "can_id": 1,
+      "slot": 0,
+      "gear_ratio": null,
+      "direction": null,
+      "zero_offset_rad": null,
+      "min_position_rad": null,
+      "max_position_rad": null,
+      "pidf": {
+        "p": null,
+        "i": null,
+        "d": null,
+        "f": null
+      },
+      "maxmotion": {
+        "cruise_velocity": null,
+        "max_acceleration": null,
+        "allowed_profile_error": null
+      }
+    },
+    "joint_2": {
+      "can_id": 2,
+      "slot": 0,
+      "gear_ratio": null,
+      "direction": null,
+      "zero_offset_rad": null,
+      "min_position_rad": null,
+      "max_position_rad": null,
+      "pidf": {
+        "p": null,
+        "i": null,
+        "d": null,
+        "f": null
+      },
+      "maxmotion": {
+        "cruise_velocity": null,
+        "max_acceleration": null,
+        "allowed_profile_error": null
+      }
+    },
+    "joint_3": {
+      "can_id": 3,
+      "slot": 0,
+      "gear_ratio": null,
+      "direction": null,
+      "zero_offset_rad": null,
+      "min_position_rad": null,
+      "max_position_rad": null,
+      "pidf": {
+        "p": null,
+        "i": null,
+        "d": null,
+        "f": null
+      },
+      "maxmotion": {
+        "cruise_velocity": null,
+        "max_acceleration": null,
+        "allowed_profile_error": null
+      }
+    }
+  }
+}

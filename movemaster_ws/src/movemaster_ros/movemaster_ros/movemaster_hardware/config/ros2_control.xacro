@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<!-- Include this macro from your future robot URDF. It does not define geometry. -->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:macro name="movemaster_control_joint" params="name">
+    <joint name="${name}">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <state_interface name="current"/>
+    </joint>
+  </xacro:macro>
+  <xacro:macro name="movemaster_ros2_control" params="name spec_path joint_config_path can_interface:=can0">
+    <ros2_control name="${name}" type="system">
+      <hardware>
+        <plugin>movemaster_hardware/MovemasterHardware</plugin>
+        <param name="spec_path">${spec_path}</param>
+        <param name="joint_config_path">${joint_config_path}</param>
+        <param name="can_interface">${can_interface}</param>
+      </hardware>
+      <xacro:movemaster_control_joint name="joint_1"/>
+      <xacro:movemaster_control_joint name="joint_2"/>
+      <xacro:movemaster_control_joint name="joint_3"/>
+      <!-- Add joint_4..6 here and in your configuration when physically installed. -->
+    </ros2_control>
+  </xacro:macro>
+</robot>
