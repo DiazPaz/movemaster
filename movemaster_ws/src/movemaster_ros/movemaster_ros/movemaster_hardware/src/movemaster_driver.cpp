@@ -256,7 +256,9 @@ void MoveMasterDriver::write(const std::vector<double> &positions) {
     for (std::size_t i = 0; i < positions.size(); ++i)
       packets.push_back(protocols_[i]->maxmotion_setpoint_packet(
           checked_target(positions[i], config_.joints[i]), config_.joints[i].slot));
-    if (last_tx_ && std::chrono::duration<double>(Clock::now() - *last_tx_).count() < config_.period_s) return;
+    // A caller paced at period_s (the controller_manager loop) wakes up a little early or late
+    // every cycle; requiring a full period would drop about a third of the cycles.
+    if (last_tx_ && std::chrono::duration<double>(Clock::now() - *last_tx_).count() < 0.5 * config_.period_s) return;
     for (const auto &packet : packets) bus_->send(packet, 0);
     bus_->send(heartbeat_, 0);
     last_tx_ = Clock::now();

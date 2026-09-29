@@ -137,11 +137,30 @@ void healthy_session(const char *spec, int count) {
   check(spy->sent.empty() && !driver.active() && !driver.fault().empty(), "Invalid vector transmitted partially or fault not latched");
   rejects([&] { driver.activate(); }, "Fault automatically rearmed");
 }
+// controller_manager calls write() once per fixed-rate cycle, a little early or late:
+// a cycle shorter than period_s must still transmit, a burst far faster must not.
+void paced_writes(const char *spec) {
+  auto config = config_for(spec, 1);
+  auto bus = std::make_unique<SimulatedSparkBus>(config);
+  auto *spy = bus.get();
+  MoveMasterDriver driver(config, std::move(bus));
+  driver.configure(); driver.activate();
+  const std::vector<double> hold{driver.states()[0].position};
+  const auto frames_after = [&](double fraction_of_period) {
+    std::this_thread::sleep_for(std::chrono::duration<double>(fraction_of_period * config.period_s));
+    driver.read(); spy->sent.clear(); driver.write(hold);
+    return spy->sent.size();
+  };
+  for (int cycle = 0; cycle < 5; ++cycle)
+    check(frames_after(0.7) == 2, "Early controller cycle dropped its setpoint and heartbeat");
+  check(frames_after(0.2) == 0, "Write burst faster than half a period transmitted");
+}
 }
 int main(int argc, char **argv) {
   if (argc != 2) return 2;
   try {
     for (int count : {1, 3, 6}) healthy_session(argv[1], count);
+    paced_writes(argv[1]);
     auto duplicate = config_for(argv[1]); duplicate.joints[1].device_id = 1;
     rejects([&] { MoveMasterDriver driver(duplicate); }, "Duplicate CAN IDs accepted");
     auto missing = config_for(argv[1]); missing.joints[0].gear_ratio = 0;
@@ -181,7 +200,7 @@ int main(int argc, char **argv) {
       check(!d.active() && !d.fault().empty(), "Runtime failure did not latch");
       for (const auto &p : spy->sent) check(p.arbitration_id != 0x01011840U, "Heartbeat continued after failure");
     }
-    std::cout << "PASS: 1/3/6 axes, conversions, ACK checks, activation order, limits, stale/malformed feedback, TX failure and loop gap.\n";
+    std::cout << "PASS: 1/3/6 axes, conversions, ACK checks, activation order, limits, paced writes, stale/malformed feedback, TX failure and loop gap.\n";
     return 0;
   } catch (const std::exception &e) { std::cerr << "FAIL: " << e.what() << '\n'; return 1; }
 }

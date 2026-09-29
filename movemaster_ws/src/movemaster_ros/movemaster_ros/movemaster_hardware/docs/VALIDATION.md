@@ -88,6 +88,9 @@ Las pruebas del driver verifican:
 - Conversión de radianes, RPM, reducción, sentido y offset.
 - Referencia inicial igual a la posición medida en cada eje.
 - Referencias de todos los ejes antes del heartbeat global.
+- Envío en cada ciclo aunque llegue algo antes de `period_s`, como en el lazo
+  de periodo fijo del `controller_manager`, y descarte de ráfagas a menos de
+  medio periodo.
 - Detención de envíos estando inactivo y reactivación con feedback nuevo.
 - Rechazo de un vector inválido antes de enviar cualquiera de sus referencias.
 - Rechazo de IDs duplicados y configuraciones inválidas.
