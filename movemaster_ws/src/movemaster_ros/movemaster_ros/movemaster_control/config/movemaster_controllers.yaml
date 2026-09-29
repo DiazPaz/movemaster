@@ -1,0 +1,27 @@
+# Nodo controller_manager de MoveMaster (ros2_control, ROS 2 Jazzy).
+#
+# movemaster_control.launch.py completa dos valores a partir de joints.json, para
+# que nunca se desalineen del driver:
+#   controller_manager.update_rate      = 1 / period_s
+#   joint_trajectory_controller.joints  = las articulaciones del archivo, en orden
+controller_manager:
+  ros__parameters:
+    update_rate: 50  # Hz; valor por defecto si este archivo se usa sin el launch.
+
+    # Publica /joint_states (position, velocity) y /dynamic_joint_states, que
+    # además trae current en amperes. current no se publica como effort: no es un par.
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    joint_trajectory_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+joint_trajectory_controller:
+  ros__parameters:
+    command_interfaces: [position]
+    state_interfaces: [position, velocity]
+    # Las tolerancias (constraints) quedan en sus valores por defecto: sin
+    # tolerancia de trayectoria y goal_time = 0, es decir, esperar a que el eje se
+    # detenga. MAXMotion perfila cada setpoint dentro del SPARK MAX y el eje llega
+    # con retraso; si una tolerancia venciera, el controlador fijaría la posición
+    # medida en ese instante y el eje quedaría antes del objetivo.

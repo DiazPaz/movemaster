@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>movemaster_control</name>
+  <version>0.1.0</version>
+  <description>controller_manager node for MoveMaster: ros2_control with MovemasterHardware, JointStateBroadcaster and JointTrajectoryController.</description>
+  <maintainer email="maintainer@example.com">MoveMaster project (replace before publishing)</maintainer>
+  <license>Proprietary</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>controller_manager</exec_depend>
+  <!-- mock_components/GenericSystem for use_mock_hardware:=true -->
+  <exec_depend>hardware_interface</exec_depend>
+  <exec_depend>joint_state_broadcaster</exec_depend>
+  <exec_depend>joint_trajectory_controller</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>movemaster_hardware</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>ros2launch</exec_depend>
+  <exec_depend>xacro</exec_depend>
+
+  <test_depend>ament_cmake_pytest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

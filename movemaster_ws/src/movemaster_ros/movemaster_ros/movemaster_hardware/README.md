@@ -30,8 +30,9 @@ un driver para **1 a 6 SPARK MAX** y el plugin `MovemasterHardware` para
 `ros2_control`. Se conserva **MAXMotion Position Control**.
 
 **Objetivo del plugin: ROS 2 Jazzy, Linux, C++17.** Las librerías y los ejemplos
-tienen una compilación independiente de ROS. No se incluyen todavía nodos,
-launch files, modelo cinemático ni configuración de MoveIt.
+tienen una compilación independiente de ROS. El nodo `controller_manager`, con
+su launch y sus controladores, está en el paquete vecino `movemaster_control`.
+Todavía no hay modelo cinemático ni configuración de MoveIt.
 
 ## 1. Qué hay en el paquete
 
@@ -45,7 +46,7 @@ launch files, modelo cinemático ni configuración de MoveIt.
 | `include/movemaster_hardware/movemaster_hardware.hpp`, `src/movemaster_hardware.cpp` | Adaptación al ciclo de vida de `hardware_interface::SystemInterface`. |
 | `movemaster_hardware.xml` | Registro del plugin para pluginlib. |
 | `config/joints.example.json` | Plantilla de tres ejes; completar los valores `null`. |
-| `config/ros2_control.xacro` | Macro para incorporar el plugin al URDF futuro. |
+| `config/ros2_control.xacro` | Macro que declara el bloque `<ros2_control>` a partir de `joints.json`; admite hardware simulado. |
 | `spec/spark-frames-2.1.0` | Tu archivo REV JSON, sin cambios de contenido. |
 | `examples/protocol_demo.cpp` | Construcción de tramas sin abrir CAN. |
 | `examples/driver_monitor.cpp` | Configuración RAM y lectura de telemetría, sin habilitación. |
@@ -207,13 +208,16 @@ Las protecciones físicas del banco siguen siendo necesarias.
 
 ## 6. Compilar el plugin en ROS 2 Jazzy
 
-Colocar este directorio como `~/movemaster_ws/src/movemaster_hardware`.
+El paquete vive en `movemaster_ws/src/movemaster_ros/movemaster_ros/`, dentro del
+paquete Python `movemaster_ros`. colcon no busca paquetes dentro de otro paquete;
+`movemaster_ws/colcon_defaults.yaml` le indica esa carpeta, así que colcon debe
+ejecutarse desde `movemaster_ws/`. rosdep necesita las dos rutas.
 Con ROS 2 Jazzy instalado:
 
 ```bash
 source /opt/ros/jazzy/setup.bash
 cd ~/movemaster_ws
-rosdep install --from-paths src --ignore-src -r -y
+rosdep install --from-paths src src/movemaster_ros/movemaster_ros --ignore-src -r -y
 colcon build --packages-select movemaster_hardware --cmake-args -DCMAKE_BUILD_TYPE=Release
 source install/setup.bash
 colcon test --packages-select movemaster_hardware
@@ -226,19 +230,24 @@ en Jazzy; algunas versiones recientes pueden emitir avisos de deprecación.
 La documentación de las firmas está enlazada abajo. No se afirma compatibilidad
 compilada con Rolling/Kilted u otras distribuciones.
 
-Más adelante, dentro del URDF del robot, incluir la macro:
+Dentro del URDF del robot, incluir la macro:
 
 ```xml
 <xacro:include filename="$(find movemaster_hardware)/config/ros2_control.xacro"/>
 <xacro:movemaster_ros2_control
-    name="MoveMasterSystem"
+    name="MovemasterSystem"
     spec_path="$(find movemaster_hardware)/spec/spark-frames-2.1.0"
     joint_config_path="/ruta/absoluta/joints.json"
-    can_interface="can0"/>
+    can_interface="can0"
+    use_mock_hardware="false"/>
 ```
 
-Los joints `joint_1..3` deben existir en ese URDF. La macro entregada es un
-fragmento de hardware, no un modelo geométrico o cinemático del robot.
+La macro declara las articulaciones de `joint_config_path`, en el orden del
+archivo, que es justo lo que `on_init()` exige; esas articulaciones deben existir
+en el URDF. Con `use_mock_hardware="true"` usa `mock_components/GenericSystem`
+con las mismas interfaces, sin CAN ni motores. La macro es un fragmento de
+hardware, no un modelo geométrico: `movemaster_control` incluye un URDF
+provisional con las articulaciones y el launch del `controller_manager`.
 
 | Callback | Comportamiento |
 |---|---|

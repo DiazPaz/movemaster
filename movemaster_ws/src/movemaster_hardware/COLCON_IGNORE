@@ -1,0 +1,2 @@
+Versión anterior del plugin. colcon y rosdep ignoran esta carpeta: el paquete
+movemaster_hardware vigente está en src/movemaster_ros/movemaster_ros/movemaster_hardware.

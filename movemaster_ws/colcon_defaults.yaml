@@ -1,0 +1,17 @@
+# Valores por defecto de colcon para este workspace (colcon-defaults >= 0.2.7).
+# Se aplican al ejecutar colcon desde movemaster_ws/.
+#
+# Los paquetes de ros2_control (movemaster_hardware, movemaster_control) viven en
+# src/movemaster_ros/movemaster_ros/, dentro del paquete Python movemaster_ros.
+# colcon no busca paquetes dentro de otro paquete, así que esa carpeta se declara
+# como segunda base de búsqueda.
+build:
+  base-paths: &base_paths [src, src/movemaster_ros/movemaster_ros]
+test:
+  base-paths: *base_paths
+list:
+  base-paths: *base_paths
+graph:
+  base-paths: *base_paths
+info:
+  base-paths: *base_paths
