@@ -60,6 +60,9 @@ El protocolo prepara e interpreta paquetes; el driver decide cuándo enviarlos.
 `SparkMaxProtocol` es un alias de `SparkMAXMotionProtocol`, de modo que se puede
 usar el nombre del diagrama conservando el nombre del programa original.
 
+El diagrama de clases, con todos los miembros y quién es dueño de qué, está en
+[docs/CLASS_DIAGRAM.md](docs/CLASS_DIAGRAM.md).
+
 ## 2. Compilar primero sin ROS ni motores
 
 En Ubuntu/Raspberry Pi con Ubuntu, instalar las dependencias de compilación:

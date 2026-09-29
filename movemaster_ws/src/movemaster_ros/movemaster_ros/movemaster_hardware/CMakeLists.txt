@@ -14,26 +14,12 @@ if(NOT nlohmann_json_FOUND)
 endif()
 find_package(Threads REQUIRED)
 
-<<<<<<< HEAD
 # Embed the core in its consumers: a sourced ROS overlay must not replace it
 # with an older same-name .so through LD_LIBRARY_PATH at runtime.
 add_library(sparkmax_protocol STATIC src/sparkmax_json_protocol.cpp)
 add_library(movemaster_driver STATIC src/socketcan.cpp src/movemaster_driver.cpp src/driver_config.cpp)
 set_target_properties(sparkmax_protocol movemaster_driver PROPERTIES
   POSITION_INDEPENDENT_CODE ON)
-=======
-add_library(sparkmax_protocol STATIC src/sparkmax_json_protocol.cpp)
-
-add_library(movemaster_driver STATIC
-  src/socketcan.cpp
-  src/movemaster_driver.cpp
-  src/driver_config.cpp
-)
-
-set_target_properties(sparkmax_protocol movemaster_driver PROPERTIES
-  POSITION_INDEPENDENT_CODE ON
-)
->>>>>>> a5604cc (added joints.json)
 foreach(target sparkmax_protocol movemaster_driver)
   target_include_directories(${target} PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
