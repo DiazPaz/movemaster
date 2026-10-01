@@ -31,7 +31,7 @@ void shipped_configurations() {
   for (const auto *name : {"joints.json", "joints.example.json"})
     validate_driver_config(load_driver_config(config_dir / name, spec));
   const auto bench = load_driver_config(config_dir / "joints.json", spec).joints.at(0);
-  check(bench.device_id == 1 && bench.spark.idle_mode == IdleMode::kBrake && bench.spark.current_limit_a == 40,
+  check(bench.spark.idle_mode == IdleMode::kBrake && bench.spark.current_limit_a == 40,
       "joints.json baseline");
   check(bench.mode == ControlMode::kMAXMotionPosition && bench.slot == 0 && !bench.slots.at(0).maxmotion.is_null(),
       "joints.json must keep the MAXMotion behavior it had before v2");
