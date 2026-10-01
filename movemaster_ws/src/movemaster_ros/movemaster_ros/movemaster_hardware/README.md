@@ -32,7 +32,9 @@ un driver para **1 a 6 SPARK MAX** y el plugin `MovemasterHardware` para
 **Objetivo del plugin: ROS 2 Jazzy, Linux, C++17.** Las librerías y los ejemplos
 tienen una compilación independiente de ROS. El nodo `controller_manager`, con
 su launch y sus controladores, está en el paquete vecino `movemaster_control`.
-Todavía no hay modelo cinemático ni configuración de MoveIt.
+Todavía no hay modelo cinemático ni configuración de MoveIt. La guía completa de
+uso está en [../docs/MANUAL.md](../docs/MANUAL.md) y los términos en
+[../docs/DICCIONARIO.md](../docs/DICCIONARIO.md).
 
 ## 1. Qué hay en el paquete
 

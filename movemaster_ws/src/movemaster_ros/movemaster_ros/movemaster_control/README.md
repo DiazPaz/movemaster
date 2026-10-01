@@ -5,6 +5,9 @@ plugin propio `MovemasterHardware`, `JointStateBroadcaster` y
 `JointTrajectoryController`. Los dos controladores vienen con `ros2_controllers`;
 este paquete solo los configura y los arranca.
 
+Guía paso a paso, desde las pruebas sin ROS hasta mover un eje:
+[docs/MANUAL.md](../docs/MANUAL.md). Términos: [docs/DICCIONARIO.md](../docs/DICCIONARIO.md).
+
 ```mermaid
 flowchart LR
     rsp["robot_state_publisher"]
