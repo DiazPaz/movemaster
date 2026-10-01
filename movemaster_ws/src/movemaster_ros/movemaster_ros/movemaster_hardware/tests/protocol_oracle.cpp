@@ -38,6 +38,8 @@ int main(int argc, char **argv) {
       else if (op == "packet") out = packet_json(p.frames[q.at("frame")].packet(id, q.value("values", Json::object())));
       else if (op == "setpoint") out = packet_json(p.maxmotion_setpoint_packet(q.at("setpoint").get<double>(),
           q.value("slot", 0), q.value("ff", 0.0), q.value("units", 0)));
+      else if (op == "position_setpoint") out = packet_json(p.position_setpoint_packet(q.at("setpoint").get<double>(),
+          q.value("slot", 0), q.value("ff", 0.0), q.value("units", 0)));
       else if (op == "encode_bits") out = SignalCodec::encode_bits(q.at("spec"), q.at("value"));
       else if (op == "decode_bits") out = SignalCodec::decode_bits(q.at("spec"), q.at("raw").get<std::uint64_t>());
       else if (op == "pack") out = p.pack_parameter_value(q.at("value"), q.at("type"));

@@ -428,10 +428,20 @@ CANPacket SparkMAXMotionProtocol::parameter_read_packet(const ParameterDefinitio
   if (!frames.contains(p.read_frame_name())) throw SpecError("No read frame for parameter " + std::to_string(p.parameter_id));
   return frames[p.read_frame_name()].packet(device_id);
 }
+const char *setpoint_frame_name(ControlMode mode) {
+  return mode == ControlMode::kPosition ? "POSITION_SETPOINT" : "MAXMOTION_POSITION_SETPOINT";
+}
 CANPacket SparkMAXMotionProtocol::maxmotion_setpoint_packet(double setpoint, int slot, double ff, int units) const {
+  return setpoint_packet(ControlMode::kMAXMotionPosition, setpoint, slot, ff, units);
+}
+CANPacket SparkMAXMotionProtocol::position_setpoint_packet(double setpoint, int slot, double ff, int units) const {
+  return setpoint_packet(ControlMode::kPosition, setpoint, slot, ff, units);
+}
+// Both setpoint frames share one layout; only the frame, and so the control type, differs.
+CANPacket SparkMAXMotionProtocol::setpoint_packet(ControlMode mode, double setpoint, int slot, double ff, int units) const {
   if (slot < 0 || slot >= slot_count) throw std::out_of_range("Invalid PID slot");
   if (units != 0 && units != 1) throw std::invalid_argument("Feedforward units must be 0 or 1");
-  return frames["MAXMOTION_POSITION_SETPOINT"].packet(device_id, {{"SETPOINT", setpoint},
+  return frames[setpoint_frame_name(mode)].packet(device_id, {{"SETPOINT", setpoint},
       {"ARBITRARY_FEEDFORWARD", ff}, {"PID_SLOT", slot}, {"ARBITRARY_FEEDFORWARD_UNITS", units}, {"RESERVED", 0}});
 }
 Json SparkMAXMotionProtocol::decode_parameter_write_response(const Bytes &data) const {

@@ -8,62 +8,135 @@
   "joints": {
     "joint_1": {
       "can_id": 1,
-      "slot": 0,
-      "gear_ratio": 1.0,
-      "direction": 1.0,
+      "gear_ratio": 100.0,
+      "direction": 1,
       "zero_offset_rad": 0,
-      "min_position_rad": 1000,
-      "max_position_rad": 1000,
-      "pidf": {
-        "p": 1.0,
-        "i": 0,
-        "d": 0,
-        "f": 0
+      "min_position_rad": -2.6,
+      "max_position_rad": 2.6,
+      "max_velocity_rad_s": 1.5,
+      "spark": {
+        "motor_type": "brushless",
+        "idle_mode": "brake",
+        "current_limit_a": 40
       },
-      "maxmotion": {
-        "cruise_velocity": 200,
-        "max_acceleration": 500,
-        "allowed_profile_error": 0
+      "control": {
+        "mode": "maxmotion",
+        "slot": 0,
+        "max_following_error_rad": 0.1
+      },
+      "slots": {
+        "0": {
+          "pidf": {
+            "p": 0.5,
+            "i": 0,
+            "d": 0,
+            "f": 0
+          },
+          "maxmotion": {
+            "cruise_velocity": 1200,
+            "max_acceleration": 2400,
+            "allowed_profile_error": 0.05
+          }
+        },
+        "1": {
+          "pidf": {
+            "p": 0.5,
+            "i": 0,
+            "d": 0,
+            "f": 0
+          },
+          "maxmotion": {
+            "cruise_velocity": 400,
+            "max_acceleration": 800,
+            "allowed_profile_error": 0.05
+          }
+        },
+        "2": {
+          "pidf": {
+            "p": 1.0,
+            "i": 0.0001,
+            "d": 0,
+            "f": 0
+          },
+          "output_range": [-0.3, 0.3]
+        }
       }
     },
     "joint_2": {
       "can_id": 2,
-      "slot": 0,
-      "gear_ratio": null,
-      "direction": null,
-      "zero_offset_rad": null,
-      "min_position_rad": null,
-      "max_position_rad": null,
-      "pidf": {
-        "p": null,
-        "i": null,
-        "d": null,
-        "f": null
+      "gear_ratio": 160.0,
+      "direction": -1,
+      "zero_offset_rad": 0,
+      "min_position_rad": -1.6,
+      "max_position_rad": 1.6,
+      "max_velocity_rad_s": 1.0,
+      "spark": {
+        "motor_type": "brushless",
+        "idle_mode": "brake",
+        "current_limit_a": 40
       },
-      "maxmotion": {
-        "cruise_velocity": null,
-        "max_acceleration": null,
-        "allowed_profile_error": null
+      "control": {
+        "mode": "maxmotion",
+        "slot": 0,
+        "max_following_error_rad": 0.1
+      },
+      "slots": {
+        "0": {
+          "pidf": {
+            "p": 0.5,
+            "i": 0,
+            "d": 0,
+            "f": 0
+          },
+          "maxmotion": {
+            "cruise_velocity": 1200,
+            "max_acceleration": 2400,
+            "allowed_profile_error": 0.05
+          }
+        },
+        "2": {
+          "pidf": {
+            "p": 1.0,
+            "i": 0.0001,
+            "d": 0,
+            "f": 0
+          },
+          "output_range": [-0.3, 0.3]
+        }
       }
     },
     "joint_3": {
       "can_id": 3,
-      "slot": 0,
-      "gear_ratio": null,
-      "direction": null,
-      "zero_offset_rad": null,
-      "min_position_rad": null,
-      "max_position_rad": null,
-      "pidf": {
-        "p": null,
-        "i": null,
-        "d": null,
-        "f": null
+      "gear_ratio": 50.0,
+      "direction": 1,
+      "zero_offset_rad": 0,
+      "min_position_rad": -3.0,
+      "max_position_rad": 3.0,
+      "max_velocity_rad_s": 2.0,
+      "spark": {
+        "motor_type": "brushless",
+        "idle_mode": "brake",
+        "current_limit_a": 25
       },
-      "maxmotion": {
-        "cruise_velocity": null,
-        "max_acceleration": null,
-        "allowed_profile_error": null
+      "control": {
+        "mode": "maxmotion",
+        "slot": 0,
+        "max_following_error_rad": 0.15
+      },
+      "slots": {
+        "0": {
+          "pidf": {
+            "p": 0.4,
+            "i": 0,
+            "d": 0,
+            "f": 0
+          },
+          "maxmotion": {
+            "cruise_velocity": 900,
+            "max_acceleration": 1800,
+            "allowed_profile_error": 0.05
+          }
+        }
       }
     }
   }

@@ -13,9 +13,9 @@
   <xacro:include filename="$(find movemaster_hardware)/config/ros2_control.xacro"/>
 
   <!-- Serial chain: one revolute joint per entry of joints.json, in file order.
-       The velocity limit is the MAXMotion cruise velocity (motor RPM) divided by
-       gear_ratio. URDF requires effort; it is unused because the joints are
-       position controlled. -->
+       The velocity limit is max_velocity_rad_s, which the driver also enforces on
+       every MAXMotion cruise velocity. URDF requires effort; it is unused because
+       the joints are position controlled. -->
   <xacro:macro name="movemaster_chain" params="parent joints names">
     <xacro:if value="${names}">
       <xacro:property name="joint_name" value="${names[0]}"/>
@@ -26,7 +26,7 @@
         <axis xyz="0 0 1"/>
         <limit lower="${float(config['min_position_rad'])}"
                upper="${float(config['max_position_rad'])}"
-               velocity="${float(config['maxmotion']['cruise_velocity']) * 2 * pi / 60 / float(config['gear_ratio'])}"
+               velocity="${float(config['max_velocity_rad_s'])}"
                effort="0"/>
       </joint>
       <link name="${joint_name}_link"/>

@@ -90,6 +90,19 @@ for spec in ({'type': 'float', 'lengthBits': 16}, {'type': 'uint', 'lengthBits':
              {'type': 'uint', 'lengthBits': 8, 'decodeScaleFactor': 0}, {'type': 'unknown', 'lengthBits': 8}):
     add({'op': 'encode_bits', 'spec': spec, 'value': 1}, lambda s=spec: ref.SignalCodec.encode_bits(s, 1))
 
+def position_setpoint_packet(p, setpoint, slot=0, arbitrary_feedforward=0.0, arbitrary_feedforward_units=0):
+    """The C++ Position helper: maxmotion_setpoint_packet's checks and values on POSITION_SETPOINT.
+
+    The reference has no Position helper, so the frame is encoded with its generic packet().
+    """
+    if slot not in range(p.slot_count):
+        raise ValueError(f'slot must be in 0..{p.slot_count - 1}')
+    if arbitrary_feedforward_units not in (0, 1):
+        raise ValueError('arbitrary_feedforward_units must be 0 (V) or 1 (duty cycle)')
+    return p.frames['POSITION_SETPOINT'].packet(p.device_id, {
+        'SETPOINT': float(setpoint), 'ARBITRARY_FEEDFORWARD': float(arbitrary_feedforward),
+        'PID_SLOT': slot, 'ARBITRARY_FEEDFORWARD_UNITS': arbitrary_feedforward_units, 'RESERVED': 0})
+
 for device in (0, 1, 3, 6, 63):
     p = ref.SparkMAXMotionProtocol(args.spec, device_id=device)
     for slot in range(4):
@@ -97,6 +110,10 @@ for device in (0, 1, 3, 6, 63):
             add({'op': 'setpoint', 'device_id': device, 'slot': slot, 'setpoint': value, 'ff': ff, 'units': units},
                 lambda p=p, slot=slot, value=value, ff=ff, units=units: packet(p.maxmotion_setpoint_packet(
                     value, slot=slot, arbitrary_feedforward=ff, arbitrary_feedforward_units=units)))
+            add({'op': 'position_setpoint', 'device_id': device, 'slot': slot, 'setpoint': value, 'ff': ff,
+                 'units': units},
+                lambda p=p, slot=slot, value=value, ff=ff, units=units: packet(position_setpoint_packet(
+                    p, value, slot=slot, arbitrary_feedforward=ff, arbitrary_feedforward_units=units)))
     for group in ('pidf', 'maxmotion'):
         for slot in range(4):
             for key, definition in p[group][slot].items():
@@ -160,6 +177,8 @@ add({'op': 'custom', 'layout': layout, 'slot_count': 2},
 for slot, units in ((-1, 0), (4, 0), (0, 2)):
     add({'op': 'setpoint', 'slot': slot, 'units': units, 'setpoint': 1},
         lambda s=slot, u=units: protocol.maxmotion_setpoint_packet(1, slot=s, arbitrary_feedforward_units=u))
+    add({'op': 'position_setpoint', 'slot': slot, 'units': units, 'setpoint': 1},
+        lambda s=slot, u=units: position_setpoint_packet(protocol, 1, slot=s, arbitrary_feedforward_units=u))
 
 run = subprocess.run([str(args.oracle.resolve()), str(args.spec.resolve())],
     input=''.join(json.dumps(q) + '\n' for q in queries), text=True, capture_output=True)

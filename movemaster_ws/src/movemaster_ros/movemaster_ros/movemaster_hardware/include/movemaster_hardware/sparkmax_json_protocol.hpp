@@ -21,6 +21,12 @@ extern const std::map<int, std::string> PARAMETER_TYPE_NAME;
 struct SpecError : std::runtime_error { using std::runtime_error::runtime_error; };
 struct TimeoutError : std::runtime_error { using std::runtime_error::runtime_error; };
 
+// The setpoint frame selects the control type; it is not a parameter.
+// kPosition: the slot's PID tracks each setpoint. kMAXMotionPosition: the SPARK
+// also generates a motion profile toward it with the slot's MAXMotion limits.
+enum class ControlMode { kPosition, kMAXMotionPosition };
+const char *setpoint_frame_name(ControlMode mode);
+
 struct CANPacket {
   std::uint32_t arbitration_id = 0;
   Bytes data;
@@ -150,6 +156,10 @@ class SparkMAXMotionProtocol {
   CANPacket parameter_write_packet(const ParameterDefinition &parameter, const Json &value) const;
   CANPacket parameter_read_packet(const ParameterDefinition &parameter) const;
   CANPacket maxmotion_setpoint_packet(double setpoint, int slot = 0,
+      double arbitrary_feedforward = 0.0, int arbitrary_feedforward_units = 0) const;
+  CANPacket position_setpoint_packet(double setpoint, int slot = 0,
+      double arbitrary_feedforward = 0.0, int arbitrary_feedforward_units = 0) const;
+  CANPacket setpoint_packet(ControlMode mode, double setpoint, int slot = 0,
       double arbitrary_feedforward = 0.0, int arbitrary_feedforward_units = 0) const;
   Json decode_parameter_write_response(const Bytes &data) const;
   Json decode_parameter_read_response(const ParameterDefinition &parameter, const Bytes &data) const;

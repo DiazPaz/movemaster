@@ -1,7 +1,6 @@
 """The controller_manager model matches joints.json and what the plugin requires."""
 
 import json
-import math
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -14,15 +13,12 @@ PACKAGE = Path(__file__).resolve().parents[1]
 JOINT_CONFIG = Path(get_package_share_directory('movemaster_hardware'), 'config', 'joints.json')
 CONFIG = json.loads(JOINT_CONFIG.read_text())
 
-# Three axes with reductions, a range that excludes 0 and a number PyYAML reads as text.
+# Three axes with a range that excludes 0 and numbers PyYAML reads as text.
 # Only the fields the description uses; the plugin validates the rest.
 THREE_AXES = """{"joints": {
-  "joint_1": {"gear_ratio": 1.0, "min_position_rad": -3.1416, "max_position_rad": 3.1416,
-              "maxmotion": {"cruise_velocity": 200}},
-  "joint_2": {"gear_ratio": 100.0, "min_position_rad": -1.2, "max_position_rad": 9e-1,
-              "maxmotion": {"cruise_velocity": 200}},
-  "joint_3": {"gear_ratio": 50, "min_position_rad": 0.2, "max_position_rad": 2.5,
-              "maxmotion": {"cruise_velocity": 150}}}}"""
+  "joint_1": {"min_position_rad": -3.1416, "max_position_rad": 3.1416, "max_velocity_rad_s": 21},
+  "joint_2": {"min_position_rad": -1.2, "max_position_rad": 9e-1, "max_velocity_rad_s": 1.5},
+  "joint_3": {"min_position_rad": 0.2, "max_position_rad": 2.5, "max_velocity_rad_s": 2e0}}}"""
 
 
 def robot(use_mock_hardware, joint_config=JOINT_CONFIG):
@@ -88,8 +84,7 @@ def test_urdf_chain_and_limits_come_from_joints_json(three_axes):
         limit = urdf_joint.find('limit')
         assert float(limit.get('lower')) == pytest.approx(joint['min_position_rad'])
         assert float(limit.get('upper')) == pytest.approx(joint['max_position_rad'])
-        motor_rad_s = joint['maxmotion']['cruise_velocity'] * 2 * math.pi / 60
-        assert float(limit.get('velocity')) == pytest.approx(motor_rad_s / joint['gear_ratio'])
+        assert float(limit.get('velocity')) == pytest.approx(joint['max_velocity_rad_s'])
     assert [j.get('name') for j in root.findall('ros2_control/joint')] == list(joints)
 
 
