@@ -61,7 +61,7 @@ ejecutarse desde `movemaster_ws/`. rosdep necesita las dos rutas.
 
 ```bash
 source /opt/ros/jazzy/setup.bash
-cd ~/movemaster_ws
+cd ~/movemaster/movemaster_ws
 rosdep install --from-paths src src/movemaster_ros/movemaster_ros --ignore-src -r -y
 colcon build --packages-up-to movemaster_control --cmake-args -DCMAKE_BUILD_TYPE=Release
 source install/setup.bash

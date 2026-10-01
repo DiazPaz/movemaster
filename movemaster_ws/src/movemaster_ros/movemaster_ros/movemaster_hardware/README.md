@@ -218,7 +218,7 @@ Con ROS 2 Jazzy instalado:
 
 ```bash
 source /opt/ros/jazzy/setup.bash
-cd ~/movemaster_ws
+cd ~/movemaster/movemaster_ws
 rosdep install --from-paths src src/movemaster_ros/movemaster_ros --ignore-src -r -y
 colcon build --packages-select movemaster_hardware --cmake-args -DCMAKE_BUILD_TYPE=Release
 source install/setup.bash

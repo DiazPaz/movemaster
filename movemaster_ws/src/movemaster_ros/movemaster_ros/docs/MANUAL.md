@@ -282,7 +282,7 @@ El plugin compila como un proyecto CMake normal, sin ROS. Sirve para comprobar
 el código y probar en el banco.
 
 ```bash
-cd ~/movemaster_ws/src/movemaster_ros/movemaster_ros/movemaster_hardware
+cd ~/movemaster/movemaster_ws/src/movemaster_ros/movemaster_ros/movemaster_hardware
 cmake -S . -B build -DMOVEMASTER_BUILD_ROS2=OFF -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j2
 ctest --test-dir build --output-on-failure
@@ -384,7 +384,7 @@ Siempre desde la raíz del workspace, para que colcon lea `colcon_defaults.yaml`
 
 ```bash
 source /opt/ros/jazzy/setup.bash
-cd ~/movemaster_ws
+cd ~/movemaster/movemaster_ws
 sudo rosdep init        # solo la primera vez en la máquina
 rosdep update
 rosdep install --from-paths src src/movemaster_ros/movemaster_ros --ignore-src -r -y
