@@ -1,14 +1,15 @@
 # Diagrama de clases
 
 Clases declaradas en `include/movemaster_hardware/` e implementadas en `src/`.
-Se organizan en cuatro capas, de ROS hacia el hardware:
+Se organizan en cinco capas, de ROS hacia el hardware:
 
 | Capa | Clases | Archivos |
 |---|---|---|
 | 1. Adaptador ros2_control | `MovemasterHardware` | `movemaster_hardware.hpp`, `movemaster_hardware.cpp` |
-| 2. Driver | `MoveMasterDriver`, `DriverConfig`, `JointConfig`, `JointState`, `load_driver_config()` | `movemaster_driver.hpp`, `movemaster_driver.cpp`, `driver_config.cpp` |
-| 3. Protocolo SPARK | `SparkMAXMotionProtocol` (con la clase anidada `Access`), `SparkFrameDatabase`, `FrameSpec`, `ParameterGroup`, `ParameterDefinition`, `SignalCodec`, `CANPacket`, `CANBus`, `SpecError`, `TimeoutError` | `sparkmax_json_protocol.hpp`, `sparkmax_json_protocol.cpp` |
-| 4. Transporte CAN | `SocketCAN` | `socketcan.hpp`, `socketcan.cpp` |
+| 2. Driver | `MoveMasterDriver`, `DriverConfig`, `JointConfig`, `JointControl`, `JointState`, `load_driver_config()`, `validate_driver_config()` | `movemaster_driver.hpp`, `movemaster_driver.cpp`, `driver_config.cpp` |
+| 3. Configuración de los SPARK | `SparkSetup`, `SparkBaseline`, `SlotConfig`, `IdleMode`, `BusSurvey`, `survey_bus()` y los parámetros `rev::` | `spark_setup.hpp`, `spark_setup.cpp` |
+| 4. Protocolo SPARK | `SparkMAXMotionProtocol` (con la clase anidada `Access`), `ControlMode`, `SparkFrameDatabase`, `FrameSpec`, `ParameterGroup`, `ParameterDefinition`, `SignalCodec`, `CANPacket`, `CANBus`, `SpecError`, `TimeoutError` | `sparkmax_json_protocol.hpp`, `sparkmax_json_protocol.cpp` |
+| 5. Transporte CAN | `SocketCAN` | `socketcan.hpp`, `socketcan.cpp` |
 
 `CANBus` y `CANPacket` se declaran en el header del protocolo, pero son el
 contrato que implementa la capa de transporte.
@@ -37,7 +38,17 @@ classDiagram
   class JointConfig {
     <<struct>>
   }
+  class JointControl {
+    <<struct>>
+  }
   class JointState {
+    <<struct>>
+  }
+  class SparkSetup
+  class SparkBaseline {
+    <<struct>>
+  }
+  class SlotConfig {
     <<struct>>
   }
   class SparkMAXMotionProtocol
@@ -73,9 +84,15 @@ classDiagram
   load_driver_config ..> DriverConfig : crea
   MoveMasterDriver *-- DriverConfig : config_
   DriverConfig *-- "1..6" JointConfig : joints
+  JointConfig *-- SparkBaseline : spark
+  JointConfig *-- "1..4" SlotConfig : slots
+  MoveMasterDriver *-- "1..6" JointControl : controls_
   MoveMasterDriver *-- "1..6" JointState : states_
   MoveMasterDriver *-- "1..6" SparkMAXMotionProtocol : protocols_
   MoveMasterDriver *-- "0..1" CANBus : bus_
+  MoveMasterDriver ..> SparkSetup : configure
+  SparkSetup ..> SparkMAXMotionProtocol : usa
+  SparkSetup ..> CANBus : usa CANBus&
   SparkMAXMotionProtocol *-- "4" Access : _access
   SparkMAXMotionProtocol *-- SparkFrameDatabase : frames
   SparkMAXMotionProtocol *-- "8" ParameterGroup : _pidf y _maxmotion
@@ -99,22 +116,25 @@ Cómo leerlo:
 
 Por claridad, esta vista omite relaciones que sí están en el diagrama completo:
 el driver crea el `SocketCAN`, guarda un `CANPacket` constante (el heartbeat) y
-usa `SignalCodec` para cuantizar a float32; `CANBus` transporta `CANPacket`;
-`SpecError` y `TimeoutError` heredan de `std::runtime_error`.
-`SimulatedSparkBus` no forma parte de `src/`: es el bus simulado de
-`tests/driver_test.cpp`.
+usa `SignalCodec` para cuantizar a float32; `SparkSetup` escribe un
+`SparkBaseline` y los `SlotConfig`; `CANBus` transporta `CANPacket`; `SpecError`
+y `TimeoutError` heredan de `std::runtime_error`. `SimulatedSparkBus` no forma
+parte de `src/`: es el bus simulado de `tests/simulated_spark_bus.hpp`.
 
 ## Quién es dueño del bus
 
 La sección 1 del [README](../README.md) resume la dependencia como
 `MovemasterHardware → MoveMasterDriver → SparkMAXMotionProtocol → SocketCAN`.
-En el código, el protocolo no es dueño del bus:
+En el código, ni el protocolo ni `SparkSetup` son dueños del bus:
 
 - `MoveMasterDriver` guarda el bus (`bus_`) y un `SparkMAXMotionProtocol` por
   articulación (`protocols_`).
 - El protocolo solo arma y decodifica tramas. Recibe el bus prestado
-  (`CANBus&`) en sus ayudantes síncronos; el driver solo usa
-  `write_parameter()`, durante `configure()`, para esperar cada ACK.
+  (`CANBus&`) en sus ayudantes síncronos.
+- `SparkSetup` es una vista de un SPARK durante la configuración: guarda
+  referencias al bus y a su protocolo, y espera cada respuesta. El driver crea
+  uno por eje dentro de `configure()`; `spark_commission` crea uno por eje para
+  la puesta en marcha.
 - En `read()` y `write()` es el driver quien llama a `bus_->recv()` y
   `bus_->send()`.
 - `CANBus` es el punto de inyección: el constructor del driver acepta un
@@ -128,7 +148,8 @@ destructores, copias eliminadas y los `begin()`, `end()` y `size()` de los
 contenedores. Notación: `+` público, `-` privado, `#` protegido; subrayado,
 `static`; cursiva, virtual pura. Los tipos se abrevian: sin `std::`, sin
 `const&` y sin valores por defecto. Los alias y constantes del namespace
-(`Json`, `Bytes`, `DEFAULT_PARAMETER_LAYOUT`, …) están en [API.md](API.md).
+(`Json`, `Bytes`, `DEFAULT_PARAMETER_LAYOUT`, `kEnableHeartbeatId`, los
+parámetros `rev::`, …) están en [API.md](API.md) y [PARAMETROS.md](PARAMETROS.md).
 
 ```mermaid
 classDiagram
@@ -168,6 +189,7 @@ classDiagram
     -unique_ptr~CANBus~ bus_
     -vector~unique_ptr~SparkMAXMotionProtocol~~ protocols_
     -vector~JointState~ states_
+    -vector~JointControl~ controls_
     -vector~optional~time_point~~ status0_at_
     -vector~optional~time_point~~ status2_at_
     -optional~time_point~ last_tx_
@@ -181,17 +203,16 @@ classDiagram
     +deactivate() void
     +read() void
     +write(vector~double~ positions_rad) void
+    +set_control(size_t joint, ControlMode mode, int slot) void
+    +controls() vector~JointControl~
     +states() vector~JointState~
     +active() bool
     +fault() string
     +radians_to_rotations(double radians, JointConfig joint) double$
     +rotations_to_radians(double rotations, JointConfig joint) double$
     +rpm_to_rad_s(double rpm, JointConfig joint) double$
-    -validate_config() void
     -ensure_healthy() void
     -trip(string message) void
-    -write_checked(SparkMAXMotionProtocol protocol, ParameterDefinition parameter, Json value) void
-    -exchange(SparkMAXMotionProtocol protocol, string request, string response, Json values) Json
     -receive(CANPacket packet) void
     -feedback_fresh() bool
     -wait_feedback() void
@@ -215,14 +236,22 @@ classDiagram
     <<struct>>
     +string name
     +int device_id
-    +int slot
     +double gear_ratio
     +int direction
     +double zero_offset_rad
     +double min_position_rad
     +double max_position_rad
-    +Json pidf
-    +Json maxmotion
+    +double max_velocity_rad_s
+    +SparkBaseline spark
+    +ControlMode mode
+    +int slot
+    +double max_following_error_rad
+    +map~int, SlotConfig~ slots
+  }
+  class JointControl {
+    <<struct>>
+    +ControlMode mode
+    +int slot
   }
   class JointState {
     <<struct>>
@@ -231,12 +260,56 @@ classDiagram
     +double current
     +bool primary_heartbeat_lock
   }
-  class load_driver_config["load_driver_config()"] {
-    <<función libre>>
+  class load_driver_config["load_driver_config() y validate_driver_config()"] {
+    <<funciones libres>>
     +load_driver_config(path config_path, path spec_path, string channel, vector~string~ joint_order) DriverConfig$
+    +validate_driver_config(DriverConfig config) void$
   }
 
-  %% Capa 3 · sparkmax_json_protocol.hpp / .cpp
+  %% Capa 3 · spark_setup.hpp / .cpp
+  class SparkSetup {
+    -CANBus& bus_
+    -SparkMAXMotionProtocol& spark_
+    -double timeout_s_
+    -double flash_timeout_s_
+    +SparkSetup(CANBus bus, SparkMAXMotionProtocol spark, double timeout_s, double flash_timeout_s)
+    +exchange(string request, string response, Json values) Json
+    +write(ParameterDefinition parameter, Json value) void
+    +write_baseline(SparkBaseline baseline) void
+    +write_slot(int slot, SlotConfig config) void
+    +reset_safe_parameters() void
+    +persist_parameters() void
+    +commission(SparkBaseline baseline) void
+    -flash_command(string request, string response) void
+  }
+  class SparkBaseline {
+    <<struct>>
+    +IdleMode idle_mode
+    +int current_limit_a
+  }
+  class SlotConfig {
+    <<struct>>
+    +Json pidf
+    +double output_min
+    +double output_max
+    +Json maxmotion
+  }
+  class IdleMode {
+    <<enumeration>>
+    kCoast
+    kBrake
+  }
+  class BusSurvey {
+    <<struct>>
+    +set~int~ sparks
+    +bool enable_heartbeat
+  }
+  class survey_bus["survey_bus()"] {
+    <<función libre>>
+    +survey_bus(CANBus bus, SparkFrameDatabase frames, double listen_s) BusSurvey$
+  }
+
+  %% Capa 4 · sparkmax_json_protocol.hpp / .cpp
   class SparkMAXMotionProtocol {
     <<alias SparkMaxProtocol>>
     +int device_id
@@ -253,6 +326,8 @@ classDiagram
     +parameter_write_packet(ParameterDefinition parameter, Json value) CANPacket
     +parameter_read_packet(ParameterDefinition parameter) CANPacket
     +maxmotion_setpoint_packet(double setpoint, int slot, double arbitrary_feedforward, int arbitrary_feedforward_units) CANPacket
+    +position_setpoint_packet(double setpoint, int slot, double arbitrary_feedforward, int arbitrary_feedforward_units) CANPacket
+    +setpoint_packet(ControlMode mode, double setpoint, int slot, double arbitrary_feedforward, int arbitrary_feedforward_units) CANPacket
     +decode_parameter_write_response(Bytes data) Json
     +decode_parameter_read_response(ParameterDefinition parameter, Bytes data) Json
     +_send_packet(CANBus bus, CANPacket packet) void$
@@ -261,6 +336,11 @@ classDiagram
     +configure_slot(CANBus bus, int slot, Json pidf, Json maxmotion, double timeout) Json
     +describe() Json
     -_build_group_by_slot(string group) Slots
+  }
+  class ControlMode {
+    <<enumeration>>
+    kPosition
+    kMAXMotionPosition
   }
   class Access["SparkMAXMotionProtocol::Access"] {
     <<clase anidada>>
@@ -355,7 +435,7 @@ classDiagram
   }
   class runtime_error["std::runtime_error"]
 
-  %% Capa 4 · socketcan.hpp / .cpp
+  %% Capa 5 · socketcan.hpp / .cpp
   class SocketCAN {
     <<final>>
     -int fd_
@@ -371,19 +451,33 @@ classDiagram
   MovemasterHardware *-- "0..1" MoveMasterDriver : driver_
   MovemasterHardware *-- DriverConfig : config_
   MovemasterHardware ..> load_driver_config : on_init
-  load_driver_config ..> DriverConfig : crea
+  load_driver_config ..> DriverConfig : crea y valida
   MoveMasterDriver *-- DriverConfig : config_
   DriverConfig *-- "1..6" JointConfig : joints
+  JointConfig *-- SparkBaseline : spark
+  JointConfig *-- "1..4" SlotConfig : slots
+  JointConfig ..> ControlMode : mode
+  SparkBaseline ..> IdleMode : idle_mode
+  MoveMasterDriver *-- "1..6" JointControl : controls_
+  JointControl ..> ControlMode : mode
   MoveMasterDriver *-- "1..6" JointState : states_
   MoveMasterDriver *-- "1..6" SparkMAXMotionProtocol : protocols_
   MoveMasterDriver *-- "0..1" CANBus : bus_
   MoveMasterDriver ..> SocketCAN : crea en configure()
+  MoveMasterDriver ..> SparkSetup : uno por eje en configure()
   MoveMasterDriver *-- CANPacket : heartbeat_
   MoveMasterDriver ..> SignalCodec : float32
+  SparkSetup ..> SparkMAXMotionProtocol : spark_
+  SparkSetup ..> CANBus : bus_
+  SparkSetup ..> SparkBaseline : escribe
+  SparkSetup ..> SlotConfig : escribe
+  survey_bus ..> BusSurvey : crea
+  survey_bus ..> CANBus : solo recv
   SparkMAXMotionProtocol *-- SparkFrameDatabase : frames
   SparkMAXMotionProtocol *-- "8" ParameterGroup : _pidf y _maxmotion
   SparkMAXMotionProtocol *-- "4" Access : _access
   SparkMAXMotionProtocol ..> CANBus : usa CANBus&
+  SparkMAXMotionProtocol ..> ControlMode : setpoint_packet
   SparkFrameDatabase *-- "*" FrameSpec : frames
   ParameterGroup *-- "*" ParameterDefinition : _canonical
   FrameSpec ..> SignalCodec : usa

@@ -1,5 +1,76 @@
 # Validación realizada — 26 de septiembre de 2026
 
+## Actualización 0.2.0: parámetros por nivel, modo Position y puesta en marcha
+
+1 de octubre de 2026. Linux x86_64, CMake 3.28, Python 3.11, sin ROS ni CAN.
+
+| Compilación | Resultado |
+|---|---|
+| g++ 13.3, Debug, `-Wall -Wextra -Wpedantic -Werror` en todos los targets | Sin avisos; CTest **5/5**. |
+| clang 18.1, Debug, mismas opciones | Sin avisos; CTest **5/5**. |
+| g++ 13.3 con AddressSanitizer y UBSan | CTest **5/5**, sin errores de memoria ni comportamiento indefinido. |
+
+Qué comprueba cada prueba nueva o ampliada:
+
+- **Paridad Python/C++: 1,904/1,904 casos.** Los 63 nuevos comparan
+  `position_setpoint_packet` con el `packet()` genérico de la referencia sobre
+  `POSITION_SETPOINT`: CAN IDs 0, 1, 3, 6 y 63, slots 0 a 3, tres valores y tres
+  entradas inválidas. La referencia Python sigue sin cambios.
+- **`driver_fake_bus`.** `configure()` escribe en RAM el baseline, los factores
+  en 1.0 y todos los slots (PIDF, rango de salida y MAXMotion solo donde existe),
+  y nunca envía `RESET_SAFE_PARAMETERS` ni `PERSIST_PARAMETERS`. Modo y slot por
+  eje desde la activación, `set_control()` en caliente sin enclavar fallos al
+  rechazar, guarda de error de seguimiento sin transmitir nada, y control
+  conservado al reactivar.
+- **`config_and_commissioning` (nueva).** Los dos `joints.json` del repositorio
+  cargan y validan. 21 errores del cargador dan su mensaje, incluido el del
+  formato anterior. La puesta en marcha sigue el orden restablecer → baseline →
+  persistir, con los números mágicos del spec (36292 y 15011) y 255 como "en
+  curso". Un ACK fallido no llega a persistir, y un rechazo o un silencio se
+  reportan. `spark_commission` revisa sin transmitir, guarda solo los ejes
+  nombrados y se niega si falta un SPARK o hay heartbeat. La escucha del bus no
+  transmite.
+- **`console_input_and_cycle`.** `mode`, `slot`, el límite de escalón en
+  Position y mantener la posición medida al cambiar de modo.
+
+Mutaciones: se introdujeron 13 errores a propósito en una copia del paquete, y
+cada uno hizo fallar al menos una prueba:
+
+1. Position enviado como MAXMotion.
+2. Guarda de error de seguimiento eliminada.
+3. Límite de corriente a velocidad libre sin escribir.
+4. Persistir antes del baseline.
+5. Claves desconocidas aceptadas.
+6. Cruise velocity sin tope.
+7. Consola sin mantener posición al cambiar de modo.
+8. 255 tomado como éxito.
+9. Solo el slot activo escrito.
+10. Rango de salida sin escribir.
+11. MAXMotion en un slot sin perfil.
+12. Selección de ejes de `spark_commission`.
+13. Heartbeat ajeno ignorado.
+
+La revisión del código encontró un error real en la selección de ejes de
+`spark_commission`: tras guardar el último eje nombrado, los siguientes también
+se habrían guardado. Se corrigió y la prueba de la herramienta lo cubre.
+
+`movemaster_control`: pytest **6/6** con el URDF tomando `max_velocity_rad_s`, y
+flake8 con las reglas de ament sin observaciones. La emulación del launch y de
+`on_init` acepta los dos `joints.json` y rechaza el formato anterior con el
+mensaje de migración.
+
+**Pendiente en el equipo de destino:**
+
+- Los IDs 2, 6, 19, 20, 59 y 60 (tipo de motor, idle mode, rango de salida y
+  límite de corriente) salen de la tabla de REV, pero no se han probado con un
+  SPARK real. El ACK verifica tipo y valor.
+- El comportamiento real de `RESET_SAFE_PARAMETERS` y `PERSIST_PARAMETERS`: sus
+  tiempos y el código 255.
+- El modo Position con el motor: estabilidad del PID y el valor adecuado de
+  `max_following_error_rad`.
+- Compilación con colcon y carga del plugin en ROS. La interfaz del plugin no
+  cambió.
+
 ## Actualización 0.1.2: consola MAXMotion de un eje
 
 `examples/maxmotion_console.cpp` compila en C++17 como target CMake y también

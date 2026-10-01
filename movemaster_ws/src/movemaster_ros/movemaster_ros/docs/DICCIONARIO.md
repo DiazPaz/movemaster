@@ -26,8 +26,8 @@ Transición del ciclo de vida que habilita el hardware. En MoveMaster: espera
 como setpoint y envía el primer heartbeat. Ver *Ciclo de vida*.
 
 **allowed_profile_error**
-Campo de `maxmotion` en `joints.json`: error permitido por el perfil MAXMotion,
-en rotaciones del motor.
+Campo de `slots.<n>.maxmotion` en `joints.json`: error permitido por el perfil
+MAXMotion, en rotaciones del motor.
 
 **ament / ament_cmake / ament_python**
 Sistema de construcción de ROS 2. `ament_cmake` es para paquetes CMake
@@ -54,6 +54,12 @@ articulaciones cuelgan de él en cadena.
 **base-paths**
 Opción de colcon con las carpetas donde buscar paquetes. En
 `colcon_defaults.yaml` vale `[src, src/movemaster_ros/movemaster_ros]`.
+
+**Baseline**
+Lo que se guarda en la flash de cada SPARK además del CAN ID: tipo de motor,
+idle mode y límite de corriente. Bloque `spark` de `joints.json`. Lo persiste
+`spark_commission` y el driver lo vuelve a escribir en RAM al configurar.
+[PARAMETROS.md](../movemaster_hardware/docs/PARAMETROS.md).
 
 **Broadcaster**
 Controlador que solo lee estados y los publica, sin mandar comandos. El
@@ -87,7 +93,7 @@ elige con el argumento `can_interface`.
 
 **can_id**
 Campo de `joints.json`: CAN ID del SPARK de ese eje, 0–63, único en el bus. Se
-asigna al SPARK con REV Hardware Client.
+asigna al SPARK con REV Hardware Client y queda en su flash.
 
 **CANBus**
 Interfaz C++ del plugin (`sparkmax_json_protocol.hpp`) con `send()` y `recv()`.
@@ -130,9 +136,13 @@ mismo componente).
 
 **configure / on_configure**
 Transición que prepara el hardware sin habilitarlo. En MoveMaster: abre CAN,
-espera `disable_settle_s` y en cada SPARK envía `STOP_FOLLOWER_MODE`, seis
-parámetros de arranque, `SET_STATUSES_ENABLED`, PIDF y MAXMotion, todo con ACK.
-Solo en RAM.
+espera `disable_settle_s` y en cada SPARK envía `STOP_FOLLOWER_MODE`, el
+baseline, los parámetros de unidades y telemetría, `SET_STATUSES_ENABLED` y
+todos sus slots (PIDF, rango de salida y MAXMotion), todo con ACK. Solo en RAM.
+
+**control (joints.json)**
+Bloque de cada eje con el modo (`position` o `maxmotion`) y el slot con que se
+activa, y `max_following_error_rad`. En caliente se cambian con `set_control`.
 
 **Controlador**
 Plugin que el `controller_manager` ejecuta en cada ciclo dentro de `update()`:
@@ -145,13 +155,14 @@ que carga el hardware y los controladores, y ejecuta el lazo
 `movemaster_control`.
 
 **ctest / CTest**
-Corredor de pruebas de CMake. `ctest --test-dir build` corre las cuatro
+Corredor de pruebas de CMake. `ctest --test-dir build` corre las cinco
 pruebas del plugin. `colcon test` lo usa por debajo.
 
 **cruise_velocity**
-Campo de `maxmotion` en `joints.json`: velocidad máxima del motor en RPM. El
-URDF la convierte en el límite de velocidad de la articulación:
-`cruise_velocity · 2π / 60 / gear_ratio` rad/s.
+Campo de `slots.<n>.maxmotion` en `joints.json`: velocidad máxima del motor en
+RPM en modo MAXMotion. Convertida a la articulación
+(`cruise_velocity · 2π / 60 / gear_ratio` rad/s) no puede superar
+`max_velocity_rad_s`.
 
 **current**
 Interfaz de estado con la corriente del motor en amperes, leída de `STATUS_0`.
@@ -177,7 +188,8 @@ Número de bytes de datos de una trama CAN (0–8).
 **Driver (MoveMasterDriver)**
 Clase C++ central del plugin (`movemaster_driver.cpp`). Hace la configuración,
 las conversiones de unidades, la validación de límites, los watchdogs y el
-envío de setpoints y heartbeat. No tiene hilos: actúa cuando lo llaman.
+envío de setpoints y heartbeat, en el modo y slot de cada eje. No tiene hilos:
+actúa cuando lo llaman.
 
 **driver_monitor**
 Ejemplo que configura los SPARK y muestra la telemetría sin habilitar los
@@ -199,9 +211,21 @@ enviar heartbeat y rechaza cualquier operación posterior. Solo se sale
 destruyendo el driver: `ros2_control` lo hace en `on_error`, y se vuelve con
 `set_hardware_component_state … active`. MANUAL §12.
 
+**Error de seguimiento (max_following_error_rad)**
+Campo de `control`: en modo `position`, distancia máxima entre un objetivo y la
+posición medida. Más lejos, el driver no envía nada y enclava un fallo. Protege
+de saltos (el modo Position no tiene perfil) y detecta un eje que dejó de
+seguir, por ejemplo por un choque.
+
 **exchange**
-Método privado del driver: envía una petición y espera su respuesta (por
-ejemplo `STOP_FOLLOWER_MODE` → `STOP_FOLLOWER_MODE_RESPONSE`).
+Método de `SparkSetup`: envía una petición y espera su respuesta (por ejemplo
+`STOP_FOLLOWER_MODE` → `STOP_FOLLOWER_MODE_RESPONSE`).
+
+**Factor de conversión (position/velocity conversion factor)**
+Parámetros 112 y 113 del SPARK: multiplican lo que reporta y lo que entiende de
+cada setpoint. El driver los deja siempre en 1.0, así que el SPARK trabaja en
+rotaciones y RPM del motor y la reducción solo está en `gear_ratio`.
+[PARAMETROS.md](../movemaster_hardware/docs/PARAMETROS.md).
 
 ## F
 
@@ -215,7 +239,8 @@ firmware 25 o posterior.
 
 **Flash / RAM (persistir)**
 El driver escribe la configuración solo en la RAM del SPARK: se pierde al
-apagarlo y se repite en cada `configure`. Nunca la guarda en flash.
+apagarlo y se repite en cada `configure`. En flash solo quedan el CAN ID y el
+baseline, que guarda `spark_commission` (`PERSIST_PARAMETERS`). [PARAMETROS.md](../movemaster_hardware/docs/PARAMETROS.md).
 
 **FollowJointTrajectory**
 Tipo de acción (`control_msgs/action/FollowJointTrajectory`) del JTC: recibe una
@@ -229,7 +254,8 @@ decodificarla.
 
 **gear_ratio**
 Campo de `joints.json`: vueltas del motor por cada vuelta de la articulación
-(reducción). Siempre positivo; el sentido lo da `direction`.
+(reducción). Siempre positivo; el sentido lo da `direction`. Es la única
+reducción del sistema: los factores de conversión del SPARK quedan en 1.0.
 
 **GenericSystem (mock_components)**
 Hardware simulado de `ros2_control`: copia el comando al estado sin física. Se
@@ -247,6 +273,11 @@ activo después de los setpoints. Mientras llega, los SPARK están habilitados;
 si deja de llegar, su watchdog los deshabilita. Solo debe haber un emisor.
 
 ## I
+
+**Idle mode (coast / brake)**
+Qué hace el SPARK con el eje deshabilitado: `coast` deja girar el motor libre;
+`brake` lo cortocircuita y frena el brazo, pero no lo sostiene. Campo
+`spark.idle_mode`; parte del baseline.
 
 **info_ (HardwareInfo)**
 Miembro que `MovemasterHardware` hereda de `SystemInterface`: contiene las
@@ -284,7 +315,8 @@ cada ciclo escribe la posición deseada de cada eje. Configurado en
 **joints.json**
 Configuración de los ejes en `movemaster_hardware/config/`. Es la única fuente
 de las articulaciones: la lee el plugin y de ella se generan el URDF, los
-`joints` del JTC y el `update_rate`. MANUAL §4.
+`joints` del JTC y el `update_rate`. Formato v2: cada eje con `spark`,
+`control` y `slots`; una clave desconocida es un error. MANUAL §4.
 
 **joint_config_path / joint_config**
 Ruta a `joints.json`. `joint_config` es el argumento del launch y del xacro;
@@ -307,6 +339,10 @@ Una estática (`.a`) se copia dentro del programa al enlazar; una compartida
 dentro de `libmovemaster_hardware.so`, que es compartida porque pluginlib la
 carga en tiempo de ejecución.
 
+**Límite de corriente (current_limit_a)**
+Corriente máxima del motor en A (*smart current limit* de REV), la misma en
+parada y a velocidad libre. Campo `spark.current_limit_a`; parte del baseline.
+
 **Límites (min_position_rad / max_position_rad)**
 Rango calibrado de cada articulación en `joints.json`. El driver rechaza
 objetivos fuera de él (y enclava un fallo); el URDF los usa como `lower` y
@@ -320,23 +356,36 @@ Cuerpo rígido del URDF. En el modelo provisional son eslabones sin geometría
 
 **MAXMotion**
 Modo de control de posición del SPARK MAX que genera internamente un perfil de
-movimiento con velocidad de crucero y aceleración máximas. Por eso el eje sigue
-al setpoint con algo de retraso.
+movimiento con la velocidad de crucero y la aceleración máximas del slot. Por
+eso el eje sigue al setpoint con algo de retraso. Se elige enviando
+`MAXMOTION_POSITION_SETPOINT`.
 
 **max_acceleration**
-Campo de `maxmotion` en `joints.json`: aceleración máxima del motor en RPM/s.
+Campo de `slots.<n>.maxmotion` en `joints.json`: aceleración máxima del motor en
+RPM/s.
 
 **max_cycle_gap_s**
 Campo global de `joints.json` (0.1 s): tiempo máximo sin transmitir estando
 activo. Si el lazo se detiene más: `Control loop gap exceeded`.
 
+**max_velocity_rad_s**
+Campo de `joints.json`: velocidad máxima de la articulación en rad/s. Es el
+límite de velocidad del URDF, con el que planea MoveIt, y ninguna
+`cruise_velocity` puede superarlo.
+
 **maxmotion_console**
-Ejemplo interactivo para mover un eje sin ROS (`on`, `sp`, `pv`, `off`, `q`).
-MANUAL §7.2.
+Nombre anterior de `spark_console`.
 
 **Mock hardware / use_mock_hardware**
 Argumento del launch y del macro: `true` usa `mock_components/GenericSystem` en
 lugar del plugin real, para probar sin CAN ni motores.
+
+**Modo de control (position / maxmotion)**
+Cómo persigue el SPARK cada setpoint. `maxmotion`: genera un perfil con los
+límites del slot. `position`: su PID va directo al setpoint, sin perfil; sirve
+para trayectorias ya perfiladas, como las de MoveIt. No es un parámetro: lo
+elige la trama de cada setpoint, así que cambiarlo es inmediato. Campo
+`control.mode`.
 
 **MoveIt**
 Planificador de movimientos de ROS 2 (cinemática, colisiones, trayectorias).
@@ -385,6 +434,10 @@ Acción de launch que ejecuta una función Python cuando los argumentos ya
 tienen valor. El launch de MoveMaster la usa para leer `joints.json` y generar
 el URDF y los parámetros.
 
+**output_range**
+Campo opcional de `slots.<n>`: ciclo de trabajo mínimo y máximo del PID,
+`[-1, 1]` si falta. Limita cuánto puede empujar el motor ese slot.
+
 ## P
 
 **package.xml**
@@ -399,13 +452,18 @@ Valor de configuración de un nodo. En un YAML, va bajo
 Campo global de `joints.json` (0.020 s): periodo del lazo. El launch pone
 `update_rate = 1/period_s`; el driver descarta envíos a menos de medio periodo.
 
+**PERSIST_PARAMETERS**
+Trama que copia a flash **todos** los parámetros de la RAM del SPARK. Por eso
+`spark_commission` restablece antes con `RESET_SAFE_PARAMETERS`. El driver
+nunca la envía.
+
 **PIC (POSITION_INDEPENDENT_CODE)**
 Opción de compilación necesaria para meter una librería estática dentro de una
 compartida.
 
 **PIDF**
 Ganancias del lazo de posición del SPARK: proporcional, integral, derivativa y
-*feedforward*. Campo `pidf` de `joints.json`.
+*feedforward*. Campo `pidf` de cada slot; las usan los dos modos.
 
 **Plugin / pluginlib**
 Clase C++ compilada en una librería que otro programa carga por nombre en
@@ -419,9 +477,15 @@ librería para pluginlib.
 
 **position**
 Interfaz de comando (objetivo) y de estado (medida) de cada eje, en radianes.
+No confundir con el modo de control `position`.
 
 **protocol_demo**
 Ejemplo que muestra tramas codificadas sin abrir CAN.
+
+**Puesta en marcha (spark_commission)**
+Paso que se hace una vez por SPARK: restablece sus parámetros a fábrica
+(conserva CAN ID, tipo de motor e idle mode), escribe el baseline y lo guarda
+en flash. MANUAL §6.1.
 
 **PV / SP**
 *Process value* (posición medida) y *setpoint* (posición objetivo).
@@ -432,6 +496,11 @@ Ejemplo que muestra tramas codificadas sin abrir CAN.
 Métodos del plugin que el `controller_manager` llama en cada ciclo: `read()`
 recibe la telemetría y `write()` envía setpoints y heartbeat.
 
+**RESET_SAFE_PARAMETERS**
+Trama que devuelve a fábrica casi todos los parámetros del SPARK, excepto CAN
+ID, tipo de motor, idle mode, deadband PWM y offset del duty cycle. Primer paso
+de la puesta en marcha.
+
 **Resource manager**
 Parte del `controller_manager` que carga los componentes de hardware y reparte
 sus interfaces entre los controladores.
@@ -441,8 +510,9 @@ Campo global de `joints.json` (0.5 s): espera máxima de cada respuesta del
 SPARK al configurar y de la telemetría al activar.
 
 **REV Hardware Client**
-Aplicación de REV para asignar CAN ID, actualizar firmware y configurar el
-tipo de motor del SPARK MAX.
+Aplicación de REV para asignar el CAN ID, actualizar el firmware y revisar la
+configuración del SPARK MAX por USB-C. El resto del baseline lo guarda
+`spark_commission`.
 
 **robot_description**
 Parámetro y tópico (`/robot_description`) con el URDF como texto. En Jazzy el
@@ -483,13 +553,19 @@ Visualizador 3D de ROS para ver el robot, TF y trayectorias.
 
 ## S
 
-**Setpoint (MAXMOTION_POSITION_SETPOINT)**
-Trama con la posición objetivo, en rotaciones de motor, y el slot. Se envía una
-por eje en cada ciclo activo.
+**set_control**
+Método del driver para cambiar el modo y el slot de un eje en caliente; aplica
+desde el siguiente `write()`. En `spark_console`: `mode` y `slot`.
+
+**Setpoint (POSITION_SETPOINT / MAXMOTION_POSITION_SETPOINT)**
+Trama con la posición objetivo, en rotaciones de motor, y el slot (`PID_SLOT`).
+La trama elige el modo de control. Se envía una por eje en cada ciclo activo.
 
 **slot**
-Campo de `joints.json` (0–3): juego de ganancias PIDF/MAXMotion del SPARK que se
-configura y usa.
+Cada SPARK tiene cuatro (0–3); cada uno guarda PIDF, rango de salida y un
+perfil MAXMotion: son los presets del eje. En `joints.json`, `slots."0"` a
+`slots."3"`; `control.slot` elige el de arranque. Viaja en cada setpoint, así
+que cambiarlo es inmediato.
 
 **SocketCAN**
 Interfaz de Linux para CAN y clase C++ del plugin (`socketcan.cpp`) que abre
@@ -510,6 +586,18 @@ Controlador de motor de REV Robotics, uno por eje, conectado por CAN.
 **spark-frames-2.1.0 (spec)**
 JSON de REV con la descripción de todas las tramas CAN del SPARK. El protocolo
 lo lee al construirse; no se modifica.
+
+**spark_commission**
+Herramienta de la puesta en marcha. Sin `--apply` solo escucha el bus; con
+`--apply` restablece, escribe el baseline y lo persiste en cada SPARK.
+
+**spark_console**
+Ejemplo interactivo para mover un eje sin ROS (`on`, `sp`, `mode`, `slot`,
+`pv`, `off`, `q`). MANUAL §7.2.
+
+**SparkSetup**
+Clase C++ con los intercambios que esperan respuesta (escribir parámetros con
+ACK, restablecer, persistir). La usan `configure()` y `spark_commission`.
 
 **STATUS_0 / STATUS_2**
 Tramas periódicas del SPARK. `STATUS_0`: corriente, tensión, temperatura y si

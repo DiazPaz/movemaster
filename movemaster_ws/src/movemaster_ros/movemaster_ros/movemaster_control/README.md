@@ -46,7 +46,7 @@ mano, todo lo demás se genera a partir de ese archivo:
 |---|---|
 | Articulaciones del URDF y del bloque `<ros2_control>`, en orden | Claves de `joints` |
 | Límites `lower` / `upper` del URDF | `min_position_rad` / `max_position_rad` |
-| Límite de velocidad del URDF (rad/s) | `maxmotion.cruise_velocity` (RPM del motor) / `gear_ratio` |
+| Límite de velocidad del URDF (rad/s) | `max_velocity_rad_s` |
 | `joints` del `JointTrajectoryController` | Claves de `joints` |
 | `update_rate` del `controller_manager` | `1 / period_s` |
 
@@ -137,6 +137,7 @@ vuelve a mantener la posición medida.
 
 - **Frecuencia del lazo.** `update_rate = 1 / period_s`. El `controller_manager` llama a `write()` con un periodo fijo, unos microsegundos antes o después en cada ciclo; el limitador del driver ahora descarta solo llamadas a menos de medio periodo, así que se transmite en todos los ciclos.
 - **Tolerancias del `JointTrajectoryController`.** Se dejan en sus valores por defecto: sin tolerancia de trayectoria y `goal_time = 0`, que espera a que el eje se detenga. MAXMotion perfila cada setpoint dentro del SPARK y el eje llega con retraso; si una tolerancia venciera, el controlador fijaría la posición medida en ese instante y el eje quedaría antes del objetivo.
+- **Modo de cada eje.** Lo fija el bloque `control` de `joints.json` al activar: `maxmotion` (por defecto en el banco) o `position`, que deja el perfil solo al JTC y protege con `max_following_error_rad`. Cambiarlo desde ROS es un paso pendiente; ver [PARAMETROS.md](../movemaster_hardware/docs/PARAMETROS.md).
 - **`current` no es `effort`.** El broadcaster publica la corriente en `/dynamic_joint_states` y no la hace pasar por par en `/joint_states`.
 - **Modelo provisional.** `urdf/movemaster.urdf.xacro` genera una cadena de eslabones sin geometría, suficiente para `ros2_control` y `robot_state_publisher`. Cuando exista `movemaster_description`, basta con pasar su xacro en `description_file`, incluyendo el macro `movemaster_ros2_control` del plugin.
 

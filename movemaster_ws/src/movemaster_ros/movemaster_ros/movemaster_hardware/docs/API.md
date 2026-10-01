@@ -22,7 +22,7 @@ claves del JSON y de los diccionarios suministrados para configuración.
 | `ParameterGroup` | `_canonical`, `_aliases`, `_normalize()`, `operator[]`, `as_dict()`. |
 | `SparkMAXMotionProtocol` | `device_id`, `slot_count`, `frames`, `parameter_layout`, `_pidf`, `_maxmotion`, `_access`, `_build_group_by_slot()`. Miembros internos privados. |
 | Empaquetado de parámetros | `pack_parameter_value`, `unpack_parameter_value`. |
-| Construcción de tramas | `parameter_write_packet`, `parameter_read_packet`, `maxmotion_setpoint_packet`. |
+| Construcción de tramas | `parameter_write_packet`, `parameter_read_packet`, `maxmotion_setpoint_packet`. Extensión C++: `position_setpoint_packet` y `setpoint_packet(ControlMode, ...)`, ver abajo. |
 | Decodificación de respuestas | `decode_parameter_write_response`, `decode_parameter_read_response`. |
 | Helpers síncronos | `_send_packet`, `write_parameter`, `send_setpoint`, `configure_slot`. Reciben `CANBus&`. |
 | Introspección | `describe()` devuelve `Json`. |
@@ -66,7 +66,8 @@ no viaja por CAN: `from_socketcan()` no puede recuperarlo por sí solo.
 - Parámetros float enviados como sus bits de 32 bits dentro del campo `VALUE`.
 - Lectura por pares y selección de `FIRST_PARAMETER_VALUE`/`SECOND_PARAMETER_VALUE`.
 - Cuatro slots por defecto y aliases originales de MAXMotion.
-- MAXMotion Position como único modo de control de la API de alto nivel.
+- MAXMotion Position como modo de la API original. C++ agrega Position: ver
+  [Extensiones C++](#extensiones-c).
 - `write_parameter()` conserva timeout, filtro de ID/parámetro, `verify`,
   `requested_value`, `parameter`, `value_matches` y tolerancias para floats.
 - Los helpers síncronos consumen `recv()` y requieren propiedad exclusiva del
@@ -96,14 +97,39 @@ STATUS_0/2, heartbeat y estrategia de deshabilitación dentro del driver.
   que el llamador la inspeccione. El driver, al configurar hardware, exige
   además ACK exitoso, tipo esperado y coincidencia exacta del valor float32.
 
+## Extensiones C++
+
+No existen en la librería Python; su paridad se comprueba igual contra ella.
+
+- `enum class ControlMode { kPosition, kMAXMotionPosition }` y
+  `setpoint_frame_name(mode)`: el modo lo elige la trama del setpoint.
+- `position_setpoint_packet(setpoint, slot, ff, units)`: mismas validaciones y
+  campos que `maxmotion_setpoint_packet`, sobre `POSITION_SETPOINT`. La prueba
+  diferencial la compara con `frames["POSITION_SETPOINT"].packet(...)` de Python.
+- `setpoint_packet(mode, ...)`: los dos anteriores detrás de un solo método.
+
+En `spark_setup.hpp`, fuera del protocolo:
+
+- `rev::kMotorType`, `rev::kIdleMode`, `rev::kSmartCurrentStallLimit`,
+  `rev::kSmartCurrentFreeLimit`, `rev::output_min(slot)`, `rev::output_max(slot)`
+  y los parámetros de unidades y telemetría que ya usaba el driver. La tabla
+  está en [PARAMETROS.md](PARAMETROS.md).
+- `SparkSetup`: `exchange`, `write` (exige ACK con tipo y valor), `write_baseline`,
+  `write_slot`, `reset_safe_parameters`, `persist_parameters` y `commission`.
+  Esperan respuesta: solo para configurar, con el bus en exclusiva.
+- `survey_bus`: escucha sin transmitir qué SPARK responden y si hay heartbeat.
+
 ## Métodos propios del driver
 
-`configure()`, `activate()`, `deactivate()`, `read()`, `write()`, `states()`,
-`active()`, `fault()`, `radians_to_rotations()`, `rotations_to_radians()` y
-`rpm_to_rad_s()`. El driver tiene un único dueño; no se llama concurrentemente
-desde la HMI y `controller_manager`. La futura HMI deberá enviar sus comandos
-a la capa ROS que controle estas interfaces.
+`configure()`, `activate()`, `deactivate()`, `read()`, `write()`,
+`set_control()`, `controls()`, `states()`, `active()`, `fault()`,
+`radians_to_rotations()`, `rotations_to_radians()` y `rpm_to_rad_s()`. Además,
+`load_driver_config()` lee `joints.json` v2 y `validate_driver_config()` lo
+valida. El driver tiene un único dueño; no se llama concurrentemente desde la
+HMI y `controller_manager`. La futura HMI deberá enviar sus comandos a la capa
+ROS que controle estas interfaces.
 
-`configure()` modifica parámetros en RAM y no cambia motor type, inversiones
-del controlador, límites de corriente ni brake/coast. Se parte del SPARK ya
-configurado para el motor utilizado en el banco probado.
+`configure()` escribe en RAM el baseline (tipo de motor, idle mode y límite de
+corriente), las unidades, la telemetría y todos los slots de cada eje. Nunca
+persiste: la flash la escribe solo `spark_commission`. No cambia las inversiones
+del controlador; el sentido lo da `direction`.
