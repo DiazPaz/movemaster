@@ -7,7 +7,7 @@
   "max_cycle_gap_s": 0.1,
   "joints": {
     "joint_1": {
-      "can_id": 1,
+      "can_id": 2,
       "gear_ratio": 1.0,
       "direction": 1,
       "zero_offset_rad": 0,
