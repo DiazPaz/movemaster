@@ -14,12 +14,23 @@ std::filesystem::path spec, config_dir, scratch;
 const std::vector<std::string> kCommissionOrder{"RESET_SAFE_PARAMETERS", "PARAMETER_WRITE", "PARAMETER_WRITE",
     "PARAMETER_WRITE", "PARAMETER_WRITE", "PERSIST_PARAMETERS"};
 
-Json read_json(const std::filesystem::path &path) {
-  std::ifstream file(path);
-  Json data;
-  file >> data;
-  return data;
-}
+// The tests' own joints.json, so they never depend on how the bench file is calibrated.
+const char *const kFixture = R"json({
+  "period_s": 0.02,
+  "joints": {
+    "joint_1": {
+      "can_id": 1, "gear_ratio": 10.0, "direction": -1, "zero_offset_rad": 0.1,
+      "min_position_rad": -2.0, "max_position_rad": 2.0, "max_velocity_rad_s": 3.0,
+      "spark": {"motor_type": "brushless", "idle_mode": "brake", "current_limit_a": 40},
+      "control": {"mode": "maxmotion", "slot": 0, "max_following_error_rad": 0.2},
+      "slots": {
+        "0": {"pidf": {"p": 0.5, "i": 0, "d": 0, "f": 0},
+              "maxmotion": {"cruise_velocity": 200, "max_acceleration": 500, "allowed_profile_error": 0.01}}
+      }
+    }
+  }
+})json";
+
 DriverConfig load(const Json &data) {
   const auto path = scratch / "joints.json";
   std::ofstream(path) << data.dump(2);
@@ -27,18 +38,25 @@ DriverConfig load(const Json &data) {
   validate_driver_config(config);
   return config;
 }
-void shipped_configurations() {
-  for (const auto *name : {"joints.json", "joints.example.json"})
-    validate_driver_config(load_driver_config(config_dir / name, spec));
-  const auto bench = load_driver_config(config_dir / "joints.json", spec).joints.at(0);
-  check(bench.spark.idle_mode == IdleMode::kBrake && bench.spark.current_limit_a == 40,
-      "joints.json baseline");
-  check(bench.mode == ControlMode::kMAXMotionPosition && bench.slot == 0 && !bench.slots.at(0).maxmotion.is_null(),
-      "joints.json must keep the MAXMotion behavior it had before v2");
+// The bench joints.json is yours to calibrate: it only has to pass the driver's validation.
+void bench_configuration() {
+  validate_driver_config(load_driver_config(config_dir / "joints.json", spec));
+}
+// The loader puts every field of the fixture where the driver reads it.
+void fixture_loads() {
+  const auto j = load(Json::parse(kFixture)).joints.at(0);
+  check(j.name == "joint_1" && j.device_id == 1 && j.gear_ratio == 10 && j.direction == -1 &&
+      j.zero_offset_rad == 0.1 && j.min_position_rad == -2 && j.max_position_rad == 2 && j.max_velocity_rad_s == 3,
+      "Joint fields not loaded");
+  check(j.spark.idle_mode == IdleMode::kBrake && j.spark.current_limit_a == 40, "spark block not loaded");
+  check(j.mode == ControlMode::kMAXMotionPosition && j.slot == 0 && j.max_following_error_rad == 0.2,
+      "control block not loaded");
+  check(j.slots.size() == 1 && j.slots.at(0).pidf.at("p") == 0.5 &&
+      j.slots.at(0).maxmotion.at("cruise_velocity") == 200, "slots not loaded");
 }
 // Each mistake names the field, and the previous format explains where things moved.
 void loader_errors() {
-  const auto base = read_json(config_dir / "joints.json");
+  const auto base = Json::parse(kFixture);
   const auto joint = base["joints"].begin().key();
   const auto broken = [&](auto mutate, const std::string &expected) {
     auto data = base;
@@ -233,13 +251,14 @@ int main(int argc, char **argv) {
   std::filesystem::create_directories(scratch);
   int status = 0;
   try {
-    shipped_configurations();
+    bench_configuration();
+    fixture_loads();
     parameter_table();
     loader_errors();
     commissioning();
     commission_tool();
     survey();
-    std::cout << "PASS: shipped joints.json files, parameter IDs against SparkParameters-v0.1.2.md, "
+    std::cout << "PASS: bench joints.json valid, loader fields, parameter IDs against SparkParameters-v0.1.2.md, "
         "v2 loader errors, Position-only slots, commissioning order, "
         "magic numbers and failures, spark_commission selection and refusals, bus survey.\n";
   } catch (const std::exception &e) {

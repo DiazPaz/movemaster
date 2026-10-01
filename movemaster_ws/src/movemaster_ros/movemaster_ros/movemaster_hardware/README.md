@@ -57,7 +57,7 @@ uso está en [../docs/MANUAL.md](../docs/MANUAL.md) y los términos en
 | `src/driver_config.cpp` | Lectura estricta de `joints.json` v2. |
 | `include/movemaster_hardware/movemaster_hardware.hpp`, `src/movemaster_hardware.cpp` | Adaptación al ciclo de vida de `hardware_interface::SystemInterface`. |
 | `movemaster_hardware.xml` | Registro del plugin para pluginlib. |
-| `config/joints.json`, `config/joints.example.json` | El eje del banco, y un ejemplo de tres ejes con varios slots y valores ilustrativos. |
+| `config/joints.json` | Calibración y control de los ejes del banco. |
 | `config/ros2_control.xacro` | Macro que declara el bloque `<ros2_control>` a partir de `joints.json`; admite hardware simulado. |
 | `spec/spark-frames-2.1.0` | Tu archivo REV JSON, sin cambios de contenido. |
 | `spec/SparkParameters-v0.1.2.md` | Tabla de parámetros del SPARK (ID, tipo, fábrica), sin cambios; las pruebas comparan con ella los IDs del código. |
@@ -139,8 +139,7 @@ las limitaciones están en [docs/API.md](docs/API.md).
 
 ## 4. Configurar tus ejes
 
-Parte de `config/joints.json` (un eje) o de `config/joints.example.json` (tres
-ejes, valores ilustrativos). Los CAN IDs deben coincidir con los configurados
+Edita `config/joints.json`. Los CAN IDs deben coincidir con los configurados
 físicamente. La referencia completa de `joints.json` v2 está en
 [docs/PARAMETROS.md](docs/PARAMETROS.md#jointsjson-v2).
 

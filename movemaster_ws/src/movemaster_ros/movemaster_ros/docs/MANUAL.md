@@ -347,7 +347,7 @@ estricto: una clave desconocida es un error.
 
 ### 4.3 Ejemplo de un eje
 
-Es el `joints.json` del banco: un NEO sin reducción, en MAXMotion con el slot 0.
+Un eje con un NEO sin reducción, en MAXMotion con el slot 0:
 
 ```json
 {
@@ -374,8 +374,6 @@ Es el `joints.json` del banco: un NEO sin reducción, en MAXMotion con el slot 0
 
 Para agregar un eje, copia el bloque de `joint_1`, cambia el nombre (`joint_2`),
 el `can_id` y sus valores. No hay que tocar nada más.
-`config/joints.example.json` tiene tres ejes con reducción, varios slots y un
-slot solo para `position`. Sus valores son ilustrativos: calibra los tuyos.
 
 Qué guarda cada nivel, la tabla de parámetros de REV y cómo pasar un archivo
 del formato anterior están en

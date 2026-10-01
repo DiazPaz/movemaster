@@ -160,9 +160,9 @@ PID.
 
 ## `joints.json` v2
 
-Ejemplo completo con tres ejes y varios slots: `config/joints.example.json`. El
-cargador es estricto: una clave desconocida es un error, nunca un ajuste que se
-queda en su valor por defecto.
+Ejemplo de un eje con dos slots: el 0 con perfil MAXMotion y el 2 solo para
+Position. El cargador es estricto: una clave desconocida es un error, nunca un
+ajuste que se queda en su valor por defecto.
 
 ```json
 "joint_1": {
