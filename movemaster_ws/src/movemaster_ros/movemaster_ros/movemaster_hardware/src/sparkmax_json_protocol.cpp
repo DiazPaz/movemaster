@@ -1,5 +1,7 @@
 #include "movemaster_hardware/sparkmax_json_protocol.hpp"
 
+#include <linux/can/error.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -124,6 +126,40 @@ using Clock = std::chrono::steady_clock;
 double remaining(Clock::time_point deadline) {
   return std::max(0.0, std::chrono::duration<double>(deadline - Clock::now()).count());
 }
+// Linux error frame (linux/can/error.h) in words, so a report says which error the adapter saw.
+std::string describe_error_frame(const can_frame &frame) {
+  const auto cls = frame.can_id & CAN_ERR_MASK;
+  const auto *d = frame.data;
+  std::vector<std::string> parts;
+  const auto add_bits = [&](std::uint8_t value, std::initializer_list<std::pair<std::uint8_t, const char *>> names,
+      const std::string &prefix) {
+    for (const auto &[bit, name] : names) if (value & bit) parts.push_back(prefix + name);
+  };
+  if (cls & CAN_ERR_TX_TIMEOUT) parts.push_back("tx-timeout");
+  if (cls & CAN_ERR_LOSTARB) parts.push_back("lost-arbitration");
+  if (cls & CAN_ERR_CRTL)
+    add_bits(d[1], {{CAN_ERR_CRTL_RX_OVERFLOW, "rx-overflow"}, {CAN_ERR_CRTL_TX_OVERFLOW, "tx-overflow"},
+        {CAN_ERR_CRTL_RX_WARNING, "rx-warning"}, {CAN_ERR_CRTL_TX_WARNING, "tx-warning"},
+        {CAN_ERR_CRTL_RX_PASSIVE, "rx-passive"}, {CAN_ERR_CRTL_TX_PASSIVE, "tx-passive"},
+        {CAN_ERR_CRTL_ACTIVE, "back-to-active"}}, "controller ");
+  if (cls & CAN_ERR_PROT)
+    add_bits(d[2], {{CAN_ERR_PROT_BIT, "bit"}, {CAN_ERR_PROT_FORM, "form"}, {CAN_ERR_PROT_STUFF, "stuff"},
+        {CAN_ERR_PROT_BIT0, "bit0"}, {CAN_ERR_PROT_BIT1, "bit1"}, {CAN_ERR_PROT_OVERLOAD, "overload"},
+        {CAN_ERR_PROT_ACTIVE, "active-error"}, {CAN_ERR_PROT_TX, "on-tx"}}, "protocol ");
+  if (cls & CAN_ERR_TRX) parts.push_back("transceiver");
+  if (cls & CAN_ERR_ACK) parts.push_back("no-ack");
+  if (cls & CAN_ERR_BUSOFF) parts.push_back("bus-off");
+  if (cls & CAN_ERR_BUSERROR) parts.push_back("bus-error");
+  if (cls & CAN_ERR_RESTARTED) parts.push_back("restarted");
+  if (cls & CAN_ERR_CNT)
+    parts.push_back("counters tx=" + std::to_string(d[6]) + " rx=" + std::to_string(d[7]));
+  std::ostringstream out;
+  for (std::size_t i = 0; i < parts.size(); ++i) out << (i ? ", " : "") << parts[i];
+  out << " (class 0x" << std::hex << cls << ", data";
+  for (int i = 0; i < frame.can_dlc && i < CAN_MAX_DLEN; ++i)
+    out << ' ' << std::setw(2) << std::setfill('0') << static_cast<int>(d[i]);
+  return out.str() + ")";
+}
 }  // namespace
 
 can_frame CANPacket::to_socketcan() const {
@@ -143,7 +179,7 @@ can_frame CANPacket::to_socketcan() const {
   return frame;
 }
 CANPacket CANPacket::from_socketcan(const can_frame &frame) {
-  if (frame.can_id & CAN_ERR_FLAG) throw std::runtime_error("CAN error frame received");
+  if (frame.can_id & CAN_ERR_FLAG) throw std::runtime_error("CAN error frame received: " + describe_error_frame(frame));
   if (frame.can_dlc > CAN_MAX_DLEN) throw std::invalid_argument("Invalid classic CAN DLC");
   CANPacket packet;
   packet.is_extended_id = (frame.can_id & CAN_EFF_FLAG) != 0;
