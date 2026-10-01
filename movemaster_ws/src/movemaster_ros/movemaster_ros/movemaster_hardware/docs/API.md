@@ -112,8 +112,11 @@ En `spark_setup.hpp`, fuera del protocolo:
 
 - `rev::kMotorType`, `rev::kIdleMode`, `rev::kSmartCurrentStallLimit`,
   `rev::kSmartCurrentFreeLimit`, `rev::output_min(slot)`, `rev::output_max(slot)`
-  y los parámetros de unidades y telemetría que ya usaba el driver. La tabla
-  está en [PARAMETROS.md](PARAMETROS.md).
+  y los parámetros de unidades y telemetría que ya usaba el driver. Su
+  `description` es el nombre del parámetro en `spec/SparkParameters-v0.1.2.md`, y
+  `rev::kBrushless` y `rev::kMainEncoder` son los valores de enumeración que se
+  escriben. `setup_test` compara todo con esa tabla. Resumen en
+  [PARAMETROS.md](PARAMETROS.md).
 - `SparkSetup`: `exchange`, `write` (exige ACK con tipo y valor), `write_baseline`,
   `write_slot`, `reset_safe_parameters`, `persist_parameters` y `commission`.
   Esperan respuesta: solo para configurar, con el bus en exclusiva.

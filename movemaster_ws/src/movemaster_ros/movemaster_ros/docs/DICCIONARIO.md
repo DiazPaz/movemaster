@@ -144,6 +144,10 @@ todos sus slots (PIDF, rango de salida y MAXMotion), todo con ACK. Solo en RAM.
 Bloque de cada eje con el modo (`position` o `maxmotion`) y el slot con que se
 activa, y `max_following_error_rad`. En caliente se cambian con `set_control`.
 
+**Control Type (ID 5)**
+Parámetro del SPARK con el modo de control activo. MoveMaster no lo escribe:
+cada trama de setpoint lo fija.
+
 **Controlador**
 Plugin que el `controller_manager` ejecuta en cada ciclo dentro de `update()`:
 lee interfaces de estado y escribe interfaces de comando. Aquí: JTC y JSB.
@@ -275,9 +279,9 @@ si deja de llegar, su watchdog los deshabilita. Solo debe haber un emisor.
 ## I
 
 **Idle mode (coast / brake)**
-Qué hace el SPARK con el eje deshabilitado: `coast` deja girar el motor libre;
-`brake` lo cortocircuita y frena el brazo, pero no lo sostiene. Campo
-`spark.idle_mode`; parte del baseline.
+Qué hace el SPARK cuando su salida es neutra, como al deshabilitarse: `coast`
+deja girar el motor libre; `brake` lo cortocircuita y frena el brazo, pero no
+lo sostiene. De fábrica, `coast`. Campo `spark.idle_mode`; parte del baseline.
 
 **info_ (HardwareInfo)**
 Miembro que `MovemasterHardware` hereda de `SystemInterface`: contiene las
@@ -287,6 +291,11 @@ articulaciones, interfaces y parámetros (`spec_path`, `joint_config_path`,
 **initial_value**
 Parámetro de una interfaz de estado en el URDF. Solo lo usa el hardware
 simulado como posición inicial; el plugin real lee los encoders.
+
+**Inverted (ID 45)**
+Parámetro del SPARK que invierte el sentido del motor. MoveMaster no lo usa: el
+sentido lo da `direction`. La puesta en marcha lo deja en `false`, así que
+conviene revisar el sentido después.
 
 ## J
 
@@ -340,8 +349,9 @@ dentro de `libmovemaster_hardware.so`, que es compartida porque pluginlib la
 carga en tiempo de ejecución.
 
 **Límite de corriente (current_limit_a)**
-Corriente máxima del motor en A (*smart current limit* de REV), la misma en
-parada y a velocidad libre. Campo `spark.current_limit_a`; parte del baseline.
+Corriente máxima del motor en A (*smart current limit* de REV, IDs 59 y 60), la
+misma en parada y a velocidad libre. De fábrica son 80 A en parada y 20 A libre.
+Campo `spark.current_limit_a`; parte del baseline.
 
 **Límites (min_position_rad / max_position_rad)**
 Rango calibrado de cada articulación en `joints.json`. El driver rechaza
@@ -383,9 +393,9 @@ lugar del plugin real, para probar sin CAN ni motores.
 **Modo de control (position / maxmotion)**
 Cómo persigue el SPARK cada setpoint. `maxmotion`: genera un perfil con los
 límites del slot. `position`: su PID va directo al setpoint, sin perfil; sirve
-para trayectorias ya perfiladas, como las de MoveIt. No es un parámetro: lo
-elige la trama de cada setpoint, así que cambiarlo es inmediato. Campo
-`control.mode`.
+para trayectorias ya perfiladas, como las de MoveIt. No hay que escribir ningún
+parámetro: la trama de cada setpoint fija el modo (Control Type), así que
+cambiarlo es inmediato. Campo `control.mode`.
 
 **MoveIt**
 Planificador de movimientos de ROS 2 (cinemática, colisiones, trayectorias).
@@ -594,6 +604,11 @@ Herramienta de la puesta en marcha. Sin `--apply` solo escucha el bus; con
 **spark_console**
 Ejemplo interactivo para mover un eje sin ROS (`on`, `sp`, `mode`, `slot`,
 `pv`, `off`, `q`). MANUAL §7.2.
+
+**SparkParameters-v0.1.2.md**
+Tabla en `movemaster_hardware/spec/` con todos los parámetros del SPARK: ID,
+tipo, valor de fábrica, descripción y enumeraciones. `setup_test` comprueba
+contra ella cada parámetro que escribe el código.
 
 **SparkSetup**
 Clase C++ con los intercambios que esperan respuesta (escribir parámetros con

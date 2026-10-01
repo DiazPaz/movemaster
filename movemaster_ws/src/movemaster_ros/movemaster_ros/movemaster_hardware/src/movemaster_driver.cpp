@@ -134,7 +134,7 @@ void MoveMasterDriver::configure() {
       spark.write_baseline(j.spark);
       // Factors of 1 keep the SPARK in motor rotations and RPM: gear_ratio, direction and
       // zero_offset_rad convert to the joint here, once.
-      spark.write(rev::kFeedbackSensor, 1);
+      spark.write(rev::kFeedbackSensor, rev::kMainEncoder);
       spark.write(rev::kPositionConversionFactor, 1.0);
       spark.write(rev::kVelocityConversionFactor, 1.0);
       spark.write(rev::kPositionWrapping, false);

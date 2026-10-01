@@ -21,7 +21,7 @@ extern const std::map<int, std::string> PARAMETER_TYPE_NAME;
 struct SpecError : std::runtime_error { using std::runtime_error::runtime_error; };
 struct TimeoutError : std::runtime_error { using std::runtime_error::runtime_error; };
 
-// The setpoint frame selects the control type; it is not a parameter.
+// Each setpoint frame sets the control type itself; nothing is written beforehand.
 // kPosition: the slot's PID tracks each setpoint. kMAXMotionPosition: the SPARK
 // also generates a motion profile toward it with the slot's MAXMotion limits.
 enum class ControlMode { kPosition, kMAXMotionPosition };

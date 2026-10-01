@@ -36,34 +36,51 @@ solo se persiste el baseline.
 
 ## Los parámetros de REV que usa MoveMaster
 
-`s` es el slot (0 a 3). Todos se escriben con `PARAMETER_WRITE`, y el driver
-exige que el ACK confirme el tipo y el valor exacto.
+La tabla completa de parámetros del SPARK, con ID, tipo, valor de fábrica y
+descripción, está en [`spec/SparkParameters-v0.1.2.md`](../spec/SparkParameters-v0.1.2.md).
+Estos son los que toca MoveMaster, con su nombre en esa tabla; `s` es el slot
+(0 a 3). Todos se escriben con `PARAMETER_WRITE`, y el driver exige que el ACK
+confirme el tipo y el valor exacto.
 
-| ID | Parámetro | Tipo | Valor | Nivel | Lo escribe |
-|---|---|---|---|---|---|
-| 0 | CAN ID (`kCanID`) | uint | 0–63 | Puesta en marcha | REV Hardware Client |
-| 2 | Tipo de motor (`kMotorType`) | uint | 1 = brushless | Puesta en marcha | `spark_commission` (flash) y el driver (RAM) |
-| 6 | Idle mode (`kIdleMode`) | uint | 0 = coast, 1 = brake | Puesta en marcha | `spark_commission` y el driver |
-| 59, 60 | Límite de corriente en parada y a velocidad libre (`kSmartCurrentStallLimit`, `kSmartCurrentFreeLimit`) | uint | A; ambos iguales | Puesta en marcha | `spark_commission` y el driver |
-| 9 | Sensor del lazo cerrado | uint | 1 = encoder primario | Eje (fijo) | El driver |
-| 112, 113 | Factores de conversión de posición y velocidad | float | 1.0 | Eje (fijo) | El driver |
-| 149 | Position wrapping | bool | false | Eje (fijo) | El driver |
-| 158, 160 | Periodos de `STATUS_0` y `STATUS_2` | uint | ms | Eje | El driver (`status_period_ms`) |
-| 13+8s a 16+8s | P, I, D, F | float | — | Eje (slot) | El driver |
-| 19+8s, 20+8s | Salida mínima y máxima del PID (`kOutputMin`, `kOutputMax`) | float | Ciclo de trabajo, −1 a 1 | Eje (slot) | El driver |
-| 166+5s, 167+5s, 169+5s | MAXMotion: cruise velocity, max acceleration, allowed profile error | float | RPM, RPM/s, rotaciones | Eje (slot) | El driver |
+| ID | Parámetro | Tipo | Fábrica | MoveMaster | Nivel | Lo escribe |
+|---|---|---|---|---|---|---|
+| 0 | CAN ID | UINT32 | 0 | 1 a 6, uno por eje | Puesta en marcha | REV Hardware Client |
+| 2 | Motor Type | UINT32 | BRUSHLESS (1) | BRUSHLESS (1) | Puesta en marcha | `spark_commission` (flash) y el driver (RAM) |
+| 6 | Idle Mode | UINT32 | COAST (0) | `spark.idle_mode` | Puesta en marcha | `spark_commission` y el driver |
+| 59 | Smart Current Stall Limit | UINT32 | 80 A | `spark.current_limit_a` | Puesta en marcha | `spark_commission` y el driver |
+| 60 | Smart Current Free Limit | UINT32 | 20 A | `spark.current_limit_a` | Puesta en marcha | `spark_commission` y el driver |
+| 9 | Closed Loop Control Sensor | UINT32 | NONE (0) | MAIN_ENCODER (1) | Eje (fijo) | El driver |
+| 112 | Position Conversion Factor | FLOAT | 1.0 | 1.0 | Eje (fijo) | El driver |
+| 113 | Velocity Conversion Factor | FLOAT | 1.0 | 1.0 | Eje (fijo) | El driver |
+| 149 | Position PID Wrap Enable | BOOL | false | false | Eje (fijo) | El driver |
+| 158, 160 | Status 0 Period, Status 2 Period | UINT32 | 10 y 20 ms | `status_period_ms` | Eje | El driver |
+| 13+8s a 16+8s | P s, I s, D s, F s | FLOAT | 0 | `slots.<s>.pidf` | Eje (slot) | El driver |
+| 19+8s, 20+8s | Output Min s, Output Max s | FLOAT | −1 y 1 | `slots.<s>.output_range` | Eje (slot) | El driver |
+| 166+5s, 167+5s, 169+5s | MAXMotion Max Velocity s, Max Accel s, Allowed Closed Loop Error s | FLOAT | 0 | `slots.<s>.maxmotion` | Eje (slot) | El driver |
 
 Los IDs 9, 13–16, 112, 113, 149, 158, 160, 166, 167 y 169 son los que ya usaba
-el backend Python validado en el banco. Los IDs 2, 6, 19, 20, 59 y 60 son nuevos.
-Salen de la misma tabla de REV, pero todavía no se han probado con un SPARK
-real. Si un ACK trae otro tipo o valor, el driver se detiene antes de habilitar
-y la puesta en marcha no llega a persistir. Pero si un ID estuviera mal y su
-tipo coincidiera, se escribiría otro parámetro sin aviso. Por eso, la primera
-vez, prueba con un solo SPARK en el bus y revisa el resultado en REV Hardware
-Client.
+el backend Python validado en el banco. Los demás (2, 6, 19, 20, 59 y 60) se
+comprobaron contra la tabla, igual que todos los anteriores. Lo hace la prueba
+`config_and_commissioning` en cada compilación: revisa ID, nombre, tipo y los
+valores de `MotorType`, `IdleMode` y `Sensor`. Aun así, no se han probado con un
+SPARK real. Si un ACK trae otro tipo o valor, el driver se detiene antes de
+habilitar y la puesta en marcha no llega a persistir. La primera vez, prueba con
+un solo SPARK en el bus y revisa el resultado en REV Hardware Client.
 
-Lo que el driver no escribe (I-zone, D-filter, rampas, límites suaves, etc.)
-queda en el valor de fábrica gracias al restablecimiento de la puesta en marcha.
+Tres detalles de la tabla:
+
+- **Status 0/2 Period** dice "in μs", pero sus valores de fábrica (10 y 20) son
+  los `defaultPeriodMs` de `spark-frames-2.1.0`, y el backend validado escribe
+  20 para 20 ms: la unidad es ms.
+- **Control Type (ID 5)** guarda el modo activo. No hace falta escribirlo: cada
+  trama de setpoint lo fija (ver [Slots y modos](#slots-y-modos-de-control)).
+- **Inverted (ID 45)** invierte el motor. MoveMaster no lo usa: el sentido lo da
+  `direction`, y la puesta en marcha lo deja en `false`.
+
+Lo que el driver no escribe (I-zone, D Filter, rampas, límites suaves, Inverted,
+etc.) queda en el valor de fábrica gracias al restablecimiento de la puesta en
+marcha. Según la tabla, los parámetros se guardan aparte del firmware y
+sobreviven a una actualización de firmware.
 
 ## `gear_ratio` y el factor de conversión del SPARK
 
@@ -101,14 +118,16 @@ reducción 100:1, 1200 RPM del motor son 1.26 rad/s en la articulación.
 ## Slots y modos de control
 
 Cada SPARK tiene cuatro slots (0 a 3). Un slot guarda PIDF, el rango de salida
-del PID y un perfil MAXMotion. No existe un juego de parámetros aparte para
+del PID y un perfil MAXMotion (además de I-zone, D Filter e I Max Accum, que
+MoveMaster deja en fábrica). No existe un juego de parámetros aparte para
 Position: los dos modos usan el PIDF y el rango de salida del slot, y MAXMotion
 agrega su perfil encima.
 
-El modo y el slot no son parámetros. Viajan en cada setpoint: la trama elige
-el modo (`POSITION_SETPOINT` o `MAXMOTION_POSITION_SETPOINT`) y su campo
-`PID_SLOT` elige el slot. Cambiar cualquiera de los dos es inmediato y no
-escribe nada en el SPARK.
+El modo y el slot viajan en cada setpoint: la trama elige el modo
+(`POSITION_SETPOINT` o `MAXMOTION_POSITION_SETPOINT`) y su campo `PID_SLOT`
+elige el slot. Según `spark-frames-2.1.0`, la trama misma "fija el Control
+Type" (ID 5), así que cambiar cualquiera de los dos es inmediato y no requiere
+escribir ni persistir ningún parámetro.
 
 | Modo | Qué hace el SPARK | Cuándo conviene |
 |---|---|---|
@@ -173,8 +192,8 @@ queda en su valor por defecto.
 | `min_position_rad`, `max_position_rad` | Mínimo < máximo | Límites; el driver rechaza objetivos fuera de ellos. |
 | `max_velocity_rad_s` | > 0 | Límite de velocidad del URDF, con el que planea MoveIt. Ninguna cruise velocity puede superarlo. |
 | `spark.motor_type` | Solo `"brushless"` | Los NEO son brushless; el modo brushed puede dañarlos. |
-| `spark.idle_mode` | `"coast"` o `"brake"` | Comportamiento con el eje deshabilitado. `brake` cortocircuita el motor y frena el brazo, pero no lo sostiene. |
-| `spark.current_limit_a` | Entero 1–80 | Límite de corriente del motor, igual en parada y a velocidad libre. 40 A es un valor habitual para NEO. |
+| `spark.idle_mode` | `"coast"` o `"brake"` | Qué hace el SPARK cuando su salida es neutra, como al deshabilitarse. `brake` cortocircuita el motor y frena el brazo, pero no lo sostiene. De fábrica: `coast`. |
+| `spark.current_limit_a` | Entero 1–80 | Límite de corriente del motor, igual en parada y a velocidad libre. De fábrica son 80 A en parada y 20 A libre; 40 A es un valor habitual para NEO. |
 | `control.mode` | `"position"` o `"maxmotion"` | Modo con el que el eje se activa. |
 | `control.slot` | Uno de `slots` | Slot con el que el eje se activa. Con `maxmotion`, debe tener perfil. |
 | `control.max_following_error_rad` | > 0 | Distancia máxima entre un objetivo en modo `position` y la posición medida. |
@@ -220,6 +239,10 @@ Se hace una vez por SPARK, y de nuevo al reemplazarlo o al cambiar su bloque
    mode y límite de corriente, y termina con `PERSIST_PARAMETERS`. Si algo
    falla antes de `PERSIST_PARAMETERS`, ese SPARK no guarda nada; la
    herramienta se detiene e indica qué eje repetir.
+6. Comprueba el sentido de cada eje con `driver_monitor`, girándolo a mano. El
+   restablecimiento deja `Inverted` en `false`: si lo habías activado en REV
+   Hardware Client, el motor ahora gira al revés que antes, y hay que
+   corregirlo con `direction`.
 
 La lectura de parámetros por CAN no está disponible en SPARK MAX: el propio
 `spark-frames-2.1.0` lo advierte en sus tramas `READ_PARAMETER`. Por eso la

@@ -42,6 +42,8 @@ movemaster_ws/                                  workspace de colcon (desde aquí
             │   ├── config/joints.json          calibración de los ejes  ← lo editas tú
             │   ├── config/ros2_control.xacro   bloque <ros2_control> del URDF
             │   ├── spec/spark-frames-2.1.0     descripción de las tramas CAN de REV
+            │   ├── spec/SparkParameters-v0.1.2.md   tabla de parámetros del SPARK (ID, tipo, fábrica)
+            │   ├── docs/                       PARAMETROS, API, diagrama de clases, consola, validación
             │   ├── examples/                   programas sin ROS: demo, monitor, consola, puesta en marcha
             │   └── tests/                      pruebas automáticas
             └── movemaster_control/             NODO controller_manager (configuración + launch)
@@ -75,7 +77,8 @@ flowchart TB
     end
     subgraph plugin["Plugin movemaster_hardware (C++)"]
         hw["MovemasterHardware<br/>adaptador ros2_control"]
-        drv["MoveMasterDriver<br/>unidades, límites, watchdogs, heartbeat"]
+        drv["MoveMasterDriver<br/>unidades, límites, modos, watchdogs, heartbeat"]
+        setup["SparkSetup<br/>escrituras con ACK, puesta en marcha"]
         proto["SparkMAXMotionProtocol<br/>arma y lee tramas desde el JSON de REV"]
         can["SocketCAN<br/>socket CAN_RAW de Linux"]
     end
@@ -87,7 +90,9 @@ flowchart TB
     cm -- "estados" --> jsb
     jsb -- "/joint_states" --> out(["robot_state_publisher, RViz, MoveIt"])
     hw --> drv --> proto
+    drv -- "configure()" --> setup --> proto
     drv --> can
+    setup --> can
     can <-- "bus CAN 1 Mbit/s" --> spark
 ```
 
@@ -127,8 +132,8 @@ El `controller_manager` repite tres pasos con periodo fijo, `1/update_rate`
 Cada eje usa el modo y el slot de su bloque `control` en `joints.json`. En modo
 MAXMotion (`MAXMOTION_POSITION_SETPOINT`), el SPARK genera su propio perfil con
 la cruise velocity y la aceleración del slot. En modo Position
-(`POSITION_SETPOINT`), su PID persigue cada setpoint sin perfil. Detalle en
-[PARAMETROS.md](../movemaster_hardware/docs/PARAMETROS.md).
+(`POSITION_SETPOINT`), su PID persigue cada setpoint sin perfil. Detalle en la
+[sección 2.7](#27-modos-de-control-y-slots).
 
 **Heartbeat**: es la trama `0x01011840` con 8 bytes `FF`. Mientras llega, los
 SPARK están habilitados; si deja de llegar, su watchdog los deshabilita. No hay
@@ -151,8 +156,7 @@ Ejemplo: `G = 100`, `d = 1`, `q0 = 0`. Mandar `q = 0.5 rad` pide al SPARK
 
 La reducción está solo en `gear_ratio`. Los factores de conversión del SPARK
 quedan siempre en 1.0, así que PIDF y MAXMotion se escriben en unidades del
-motor. El porqué está en
-[PARAMETROS.md](../movemaster_hardware/docs/PARAMETROS.md#gear_ratio-y-el-factor-de-conversión-del-spark).
+motor. El porqué está en la [sección 2.6](#26-qué-se-guarda-en-cada-spark).
 
 `current` está en **amperes** del motor; no es par ni `effort`.
 
@@ -199,6 +203,77 @@ sequenceDiagram
 | `inactive` | CAN abierto, SPARK configurados en RAM, telemetría llegando; **sin heartbeat**: motores deshabilitados. | `on_configure`, o `on_deactivate` desde `active`. |
 | `active` | Heartbeat y setpoints en cada ciclo: motores habilitados manteniendo o siguiendo la posición. | `on_activate`. Por defecto el launch deja el hardware aquí. |
 | `finalized` | Apagado. | `on_shutdown`, al cerrar el nodo. |
+
+### 2.6 Qué se guarda en cada SPARK
+
+Cada dato vive en un solo lugar, según lo seguido que cambia:
+
+| Nivel | Datos | Dónde vive | Quién lo escribe |
+|---|---|---|---|
+| Puesta en marcha | CAN ID, tipo de motor, idle mode, límite de corriente | Flash del SPARK | REV Hardware Client (CAN ID) y `spark_commission` (el resto), una vez por SPARK |
+| Eje | Conversión, límites, slots (PIDF, rango de salida, MAXMotion), control de arranque | `joints.json` | El driver, en RAM, cada vez que configura |
+| Operación | Modo y slot de cada eje | Memoria del driver | `set_control()` o los comandos `mode` y `slot` de la consola |
+
+- **Solo la puesta en marcha va a flash.** `PERSIST_PARAMETERS` copia a flash
+  **todos** los parámetros de la RAM. Por eso `spark_commission` restablece
+  antes con `RESET_SAFE_PARAMETERS`, que según REV conserva el CAN ID, el tipo
+  de motor y el idle mode (y dos ajustes de entrada que MoveMaster no usa), y
+  después escribe el baseline. La flash queda con los valores de fábrica más
+  esos cuatro datos.
+- **El driver nunca persiste.** En cada `configure()` escribe en RAM, con ACK,
+  todo lo que controla, incluido el baseline. Así la operación no depende de lo
+  que haya en flash ni de lo que haya guardado otro programa.
+- **Los IDs están verificados contra la tabla de parámetros.**
+  [`spec/SparkParameters-v0.1.2.md`](../movemaster_hardware/spec/SparkParameters-v0.1.2.md)
+  lista los parámetros del SPARK, IDs 0 a 198, con su tipo y valor de fábrica.
+  Una prueba compara con ella cada parámetro que escribe el código.
+
+| ID | Parámetro | Valor de MoveMaster |
+|---|---|---|
+| 2 | Motor Type | BRUSHLESS (1) |
+| 6 | Idle Mode | `spark.idle_mode`: COAST (0) o BRAKE (1); de fábrica, COAST |
+| 59, 60 | Smart Current Stall Limit, Smart Current Free Limit | `spark.current_limit_a` en los dos; de fábrica, 80 A y 20 A |
+| 9 | Closed Loop Control Sensor | MAIN_ENCODER (1) |
+| 112, 113 | Position / Velocity Conversion Factor | 1.0 |
+| 149 | Position PID Wrap Enable | false |
+| 158, 160 | Status 0 Period, Status 2 Period | `status_period_ms` |
+| 13+8s a 16+8s | P, I, D, F del slot `s` | `slots.<s>.pidf` |
+| 19+8s, 20+8s | Output Min y Output Max del slot `s` | `slots.<s>.output_range` |
+| 166+5s, 167+5s, 169+5s | MAXMotion Max Velocity, Max Accel y Allowed Closed Loop Error del slot `s` | `slots.<s>.maxmotion` |
+
+**`gear_ratio` frente al factor de conversión del SPARK.** Los dos convierten
+unidades, pero no son intercambiables. El factor (IDs 112 y 113) solo
+multiplica: no puede aplicar `zero_offset_rad` ni `direction`, y cambia las
+unidades del PID y de MAXMotion, así que las ganancias ajustadas dejarían de
+valer. Usar los dos aplicaría la reducción dos veces. Por eso el factor queda
+siempre en 1.0 y `gear_ratio` es la única reducción: PIDF y MAXMotion se
+escriben en rotaciones y RPM del **motor**.
+
+Tabla completa, valores de fábrica y razones: [PARAMETROS.md](../movemaster_hardware/docs/PARAMETROS.md).
+
+### 2.7 Modos de control y slots
+
+| Modo | Trama | Qué hace el SPARK | Cuándo conviene |
+|---|---|---|---|
+| `maxmotion` | `MAXMOTION_POSITION_SETPOINT` | Genera un perfil hacia el setpoint con la cruise velocity y la aceleración del slot. | Movimientos punto a punto y jog: el SPARK limita la velocidad. |
+| `position` | `POSITION_SETPOINT` | Su PID persigue cada setpoint, sin perfil. | Trayectorias ya perfiladas, como las de MoveIt por el JTC. |
+
+- **Cambiar de modo o de slot es inmediato.** Cada trama de setpoint fija el
+  modo (Control Type, ID 5) y lleva el slot en su campo `PID_SLOT`: no se
+  escribe ni se persiste ningún parámetro.
+- **Un slot es un preset.** Cada uno tiene su PIDF, su rango de salida y,
+  opcionalmente, su perfil MAXMotion. Los dos modos usan el PIDF y el rango de
+  salida; MAXMotion agrega su perfil. Un slot sin `maxmotion` solo sirve en
+  modo `position`.
+- **Error de seguimiento.** En modo `position` el SPARK no limita la velocidad:
+  un salto grande llevaría el PID a su salida máxima. El driver no envía ningún
+  objetivo que quede a más de `max_following_error_rad` de la posición medida,
+  y enclava un fallo. Así también detecta un eje que dejó de seguir, por
+  ejemplo por un choque.
+- **Quién elige el modo.** Cada eje arranca con el `control` de `joints.json`.
+  En caliente lo cambian `set_control()` o los comandos `mode` y `slot` de
+  `spark_console`, que al cambiar de modo mantiene la posición medida. Desde ROS,
+  por ahora, el modo es el de `joints.json`.
 
 ---
 
@@ -337,7 +412,7 @@ ejemplos y las pruebas. La carpeta `build/` está ignorada por git.
 | Prueba (`ctest`) | Programa | Qué verifica |
 |---|---|---|
 | `driver_fake_bus` | `tests/driver_test.cpp` | El driver completo contra un SPARK simulado (`tests/simulated_spark_bus.hpp`): 1, 3 y 6 ejes, conversiones, ACKs, orden setpoints → heartbeat, límites, envío en cada ciclo del lazo, baseline y slots en RAM, modos Position y MAXMotion por eje, error de seguimiento, telemetría vencida o corrupta, fallo de TX y lazo detenido. |
-| `config_and_commissioning` | `tests/setup_test.cpp` | Que los `joints.json` del repositorio cargan, los mensajes de error del cargador, y la puesta en marcha: orden restablecer → baseline → persistir, números mágicos, fallos y la escucha del bus. |
+| `config_and_commissioning` | `tests/setup_test.cpp` | Que los `joints.json` del repositorio cargan; que cada parámetro que escribe el código coincide en ID, nombre, tipo y valores con `spec/SparkParameters-v0.1.2.md`; los mensajes de error del cargador; y la puesta en marcha: orden restablecer → baseline → persistir, números mágicos, fallos, `spark_commission` y la escucha del bus. |
 | `protocol_demo_no_can` | `examples/protocol_demo.cpp` | Que se puede leer el JSON de REV y armar tramas sin abrir CAN. |
 | `console_input_and_cycle` | `tests/console_test.cpp` | La lógica de `spark_console` con un driver falso y entrada por tubería, incluidos los comandos `mode` y `slot`. |
 | `python_cpp_parity` | `tests/differential_test.py` + `tests/protocol_oracle.cpp` | Que el protocolo C++ produce exactamente los mismos bytes que la librería Python original (`tests/reference/`) en todas las tramas. |
@@ -408,9 +483,16 @@ habilitación, y muestra lo que quedaría en flash. Si todo está en orden:
 
 Para cada SPARK envía `RESET_SAFE_PARAMETERS`, escribe el baseline con ACK y
 termina con `PERSIST_PARAMETERS`. Si un paso falla, se detiene e indica qué eje
-repetir. Los parámetros de tipo de motor, idle mode y límite de corriente son
-nuevos y aún no se han probado con un SPARK real: la primera vez, hazlo con un
-solo SPARK en el bus. Detalle en
+repetir.
+
+Después, comprueba el sentido de cada eje con `driver_monitor` (paso 4),
+girándolo a mano. El restablecimiento deja `Inverted` (ID 45) en `false`: si lo
+habías activado en REV Hardware Client, el motor ahora gira al revés que antes,
+y se corrige con `direction` en `joints.json`.
+
+Los IDs del baseline coinciden con la tabla de parámetros, pero aún no se han probado
+con un SPARK real: la primera vez, hazlo con un solo SPARK en el bus y revisa
+el resultado en REV Hardware Client después de apagarlo y encenderlo. Detalle en
 [PARAMETROS.md](../movemaster_hardware/docs/PARAMETROS.md#puesta-en-marcha-de-un-spark).
 
 ---
@@ -814,11 +896,19 @@ argumentos y una `OpaqueFunction` que, ya con los valores resueltos:
    `spawner` que carga y activa los dos controladores; si el
    `controller_manager` no responde en 60 s, el spawner falla.
 
-### 13.10 `movemaster_hardware/spec/spark-frames-2.1.0`
+### 13.10 `movemaster_hardware/spec/`
 
-JSON oficial de REV que describe cada trama CAN del SPARK: ID base, longitud y
-cada señal (posición de bit, tipo, escala). El protocolo C++ no tiene IDs
-escritos a mano: los lee de aquí. No se modifica.
+- **`spark-frames-2.1.0`**: JSON oficial de REV que describe cada trama CAN del
+  SPARK: ID base, longitud y cada señal (posición de bit, tipo, escala). El
+  protocolo C++ no tiene IDs de trama escritos a mano: los lee de aquí.
+- **`SparkParameters-v0.1.2.md`**: tabla de los parámetros del SPARK, IDs 0 a
+  198, con tipo, modo de acceso, valor de fábrica y descripción, y las enumeraciones
+  (`MotorType`, `IdleMode`, `Sensor`…). Los IDs de parámetros del código están
+  en C++ (`DEFAULT_PARAMETER_LAYOUT` y `spark_setup.hpp`), y `setup_test` los
+  compara con esta tabla en cada compilación. Su "Status Period" dice μs, pero
+  la unidad real es ms.
+
+Ninguno de los dos se modifica.
 
 ### 13.11 Programas de ejemplo y pruebas
 
@@ -864,6 +954,7 @@ escritos a mano: los lee de aquí. No se modifica.
 | `RESET_SAFE_PARAMETERS rejected on CAN 1: RESULT_CODE 1` o `Timeout waiting for PERSIST_PARAMETERS_RESPONSE on CAN 1` | El SPARK rechazó o no confirmó el restablecimiento o el guardado. | Repite la puesta en marcha de ese eje; si persiste, revisa el firmware con REV Hardware Client. |
 | `CAN error frame received` | El adaptador reportó un error de bus (terminación, cableado, bitrate). | `ip -details -statistics link show can0`; revisa resistencias de 120 Ω y bitrate. |
 | El brazo se mueve en sentido contrario | `direction` invertido. | Cambia `direction`; verifica con `driver_monitor` antes. |
+| Después de la puesta en marcha, un eje gira al revés que antes | El restablecimiento dejó `Inverted` (ID 45) en `false`, y antes estaba activado en REV Hardware Client. | Corrige `direction` en `joints.json`; MoveMaster no usa `Inverted`. |
 | La posición en ROS no coincide con la real | `zero_offset_rad` o `gear_ratio` incorrectos, o el encoder perdió su cero. | Recalibra con `driver_monitor`. |
 | Cambié `joints.json` y no pasa nada | El launch lee la copia instalada. | Compila con `--symlink-install` o vuelve a compilar. |
 | La acción termina tarde | En modo `maxmotion`, el SPARK limita la velocidad a la `cruise_velocity` del slot; la trayectoria pedía más. | Da más `time_from_start` o sube `cruise_velocity`, sin pasar de `max_velocity_rad_s`. |

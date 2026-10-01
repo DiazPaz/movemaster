@@ -4,26 +4,29 @@
 
 namespace movemaster {
 namespace rev {
-const ParameterDefinition kMotorType{"baseline", "motor_type", 0, 2, "uint", "0 brushed, 1 brushless", std::nullopt};
-const ParameterDefinition kIdleMode{"baseline", "idle_mode", 0, 6, "uint", "0 coast, 1 brake", std::nullopt};
-const ParameterDefinition kFeedbackSensor{"setup", "feedback_sensor", 0, 9, "uint", "1 primary encoder", std::nullopt};
+const ParameterDefinition kMotorType{"baseline", "motor_type", 0, 2, "uint", "Motor Type", std::nullopt};
+const ParameterDefinition kIdleMode{"baseline", "idle_mode", 0, 6, "uint", "Idle Mode", std::nullopt};
+const ParameterDefinition kFeedbackSensor{"setup", "feedback_sensor", 0, 9, "uint", "Closed Loop Control Sensor",
+    std::nullopt};
 const ParameterDefinition kSmartCurrentStallLimit{"baseline", "smart_current_stall_limit", 0, 59, "uint",
-    "Current limit at stall", "A"};
+    "Smart Current Stall Limit", "A"};
 const ParameterDefinition kSmartCurrentFreeLimit{"baseline", "smart_current_free_limit", 0, 60, "uint",
-    "Current limit at free speed", "A"};
+    "Smart Current Free Limit", "A"};
 const ParameterDefinition kPositionConversionFactor{"setup", "position_factor", 0, 112, "float",
-    "Position units per motor rotation", std::nullopt};
+    "Position Conversion Factor", std::nullopt};
 const ParameterDefinition kVelocityConversionFactor{"setup", "velocity_factor", 0, 113, "float",
-    "Velocity units per motor RPM", std::nullopt};
-const ParameterDefinition kPositionWrapping{"setup", "position_wrapping", 0, 149, "bool", "", std::nullopt};
-const ParameterDefinition kStatus0Period{"setup", "status0_period_ms", 0, 158, "uint", "", "ms"};
-const ParameterDefinition kStatus2Period{"setup", "status2_period_ms", 0, 160, "uint", "", "ms"};
-// Each slot holds 8 parameters from ID 13: P, I, D, F, IZone, DFilter, OutputMin, OutputMax.
+    "Velocity Conversion Factor", std::nullopt};
+const ParameterDefinition kPositionWrapping{"setup", "position_wrapping", 0, 149, "bool", "Position PID Wrap Enable",
+    std::nullopt};
+// The table says microseconds, but its defaults (10, 20) are the JSON's defaultPeriodMs: ms.
+const ParameterDefinition kStatus0Period{"setup", "status0_period_ms", 0, 158, "uint", "Status 0 Period", "ms"};
+const ParameterDefinition kStatus2Period{"setup", "status2_period_ms", 0, 160, "uint", "Status 2 Period", "ms"};
+// Each slot holds 8 parameters from ID 13: P, I, D, F, IZone, D Filter, Output Min, Output Max.
 ParameterDefinition output_min(int slot) {
-  return {"slot", "output_min", slot, 19 + 8 * slot, "float", "Minimum PID output", "duty cycle"};
+  return {"slot", "output_min", slot, 19 + 8 * slot, "float", "Output Min " + std::to_string(slot), "duty cycle"};
 }
 ParameterDefinition output_max(int slot) {
-  return {"slot", "output_max", slot, 20 + 8 * slot, "float", "Maximum PID output", "duty cycle"};
+  return {"slot", "output_max", slot, 20 + 8 * slot, "float", "Output Max " + std::to_string(slot), "duty cycle"};
 }
 }  // namespace rev
 
@@ -62,7 +65,7 @@ void SparkSetup::write(const ParameterDefinition &parameter, const Json &value) 
     throw std::runtime_error("Parameter ACK mismatch: CAN " + std::to_string(spark_.device_id) + ", " + parameter.key);
 }
 void SparkSetup::write_baseline(const SparkBaseline &baseline) const {
-  write(rev::kMotorType, 1);
+  write(rev::kMotorType, rev::kBrushless);
   write(rev::kIdleMode, static_cast<int>(baseline.idle_mode));
   write(rev::kSmartCurrentStallLimit, baseline.current_limit_a);
   write(rev::kSmartCurrentFreeLimit, baseline.current_limit_a);

@@ -4,6 +4,25 @@
 
 1 de octubre de 2026. Linux x86_64, CMake 3.28, Python 3.11, sin ROS ni CAN.
 
+### Contra la tabla de parámetros
+
+Se añadió `spec/SparkParameters-v0.1.2.md`, sin cambios, como referencia de los
+parámetros del SPARK. Los 46 parámetros que escribe el código coinciden con
+ella en ID, nombre y tipo:
+
+- los 10 de `spark_setup.hpp` y `Output Min`/`Output Max` de los 4 slots;
+- PIDF y MAXMotion de `DEFAULT_PARAMETER_LAYOUT` en los 4 slots.
+
+También coinciden los valores de enumeración que se escriben: BRUSHLESS = 1,
+COAST = 0, BRAKE = 1 y MAIN_ENCODER = 1. Esto incluye los seis IDs nuevos de
+0.2.0 (2, 6, 19, 20, 59 y 60). La comprobación es parte de
+`config_and_commissioning`, que lee la tabla en cada ejecución. Cinco errores
+introducidos a propósito (un ID, un tipo, un ID por slot, un valor de
+enumeración y un ID del catálogo Python) la hacen fallar con un mensaje que
+nombra el parámetro.
+
+### Compilación y pruebas
+
 | Compilación | Resultado |
 |---|---|
 | g++ 13.3, Debug, `-Wall -Wextra -Wpedantic -Werror` en todos los targets | Sin avisos; CTest **5/5**. |
@@ -62,8 +81,8 @@ mensaje de migración.
 **Pendiente en el equipo de destino:**
 
 - Los IDs 2, 6, 19, 20, 59 y 60 (tipo de motor, idle mode, rango de salida y
-  límite de corriente) salen de la tabla de REV, pero no se han probado con un
-  SPARK real. El ACK verifica tipo y valor.
+  límite de corriente) coinciden con la tabla de parámetros, pero no se han
+  probado con un SPARK real. El ACK verifica tipo y valor.
 - El comportamiento real de `RESET_SAFE_PARAMETERS` y `PERSIST_PARAMETERS`: sus
   tiempos y el código 255.
 - El modo Position con el motor: estabilidad del PID y el valor adecuado de
@@ -210,3 +229,4 @@ Hashes SHA-256 de los archivos originales utilizados:
 | `spark-frames-2.1(1).0` | `bb065bcd59cf192d6a16e088aeec4c44634155716d8bc9e11f2ac302a0d64717` |
 | `sparkmax_json_protocol(1).py` | `dd3fc192a99da15c13c24bc778047b48d3482ea04c20a50d7f61f7b2fa8e7190` |
 | `teach_pendant_backend(1).py` | `450d3665908ab9fcf7e85d523eb0a821a568bf7cdb759ef13bcb450aa3f3d18e` |
+| `SparkParameters-v0.1.2.md` | `87ddac614c68dbc76e599e0aa8a728b476c9014e99cfbbc7e3cb2c5858dc2775` |

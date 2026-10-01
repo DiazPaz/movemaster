@@ -6,13 +6,15 @@ namespace movemaster {
 // Exact global heartbeat from teach_pendant_backend.py, not present in the JSON.
 inline constexpr std::uint32_t kEnableHeartbeatId = 0x01011840U;
 
-// REV SparkParameter IDs that MoveMaster writes besides DEFAULT_PARAMETER_LAYOUT (PIDF and
-// MAXMotion, shared with the Python module). Same REV table as the IDs the validated Python
-// backend already writes: 9, 112, 113, 149, 158 and 160.
+// SPARK parameters that MoveMaster writes besides DEFAULT_PARAMETER_LAYOUT (PIDF and MAXMotion,
+// shared with the Python module). IDs, types and enum values follow spec/SparkParameters-v0.1.2.md;
+// each description is the parameter's name there, and setup_test checks them against the table.
 namespace rev {
-extern const ParameterDefinition kMotorType;                 // 0 brushed, 1 brushless
-extern const ParameterDefinition kIdleMode;                  // 0 coast, 1 brake
-extern const ParameterDefinition kFeedbackSensor;            // 1 primary encoder
+inline constexpr int kBrushless = 1;    // MotorType.BRUSHLESS
+inline constexpr int kMainEncoder = 1;  // Sensor.MAIN_ENCODER
+extern const ParameterDefinition kMotorType;                 // MotorType
+extern const ParameterDefinition kIdleMode;                  // IdleMode
+extern const ParameterDefinition kFeedbackSensor;            // Sensor
 extern const ParameterDefinition kSmartCurrentStallLimit;    // A
 extern const ParameterDefinition kSmartCurrentFreeLimit;     // A
 extern const ParameterDefinition kPositionConversionFactor;  // SPARK position unit per rotation
@@ -24,7 +26,7 @@ ParameterDefinition output_min(int slot);                    // duty cycle, -1..
 ParameterDefinition output_max(int slot);                    // duty cycle, 0..1
 }  // namespace rev
 
-enum class IdleMode { kCoast = 0, kBrake = 1 };
+enum class IdleMode { kCoast = 0, kBrake = 1 };  // IdleMode.COAST, IdleMode.BRAKE
 
 // What stays in the SPARK's flash, besides its CAN ID. spark_commission persists it and every
 // configure() writes it again to RAM. The motor type is always brushless: MoveMaster uses NEOs.
