@@ -1,13 +1,5 @@
 # MoveMaster: protocolo C++, driver y plugin de hardware
 
-Versión 0.3.0: `gear_ratio` pasa al SPARK. El driver la escribe como factor de
-conversión de posición y de velocidad (IDs 112 y 113), así que el SPARK mide la
-articulación en radianes. `joints.json` pasa a v3: PIDF y el perfil MAXMotion
-quedan en unidades de la articulación (`cruise_velocity_rad_s`,
-`max_acceleration_rad_s2`, `allowed_profile_error_rad`), y `spark_console`
-recibe SP en radianes. Cómo convertir un archivo v2:
-[docs/PARAMETROS.md](docs/PARAMETROS.md#pasar-de-unidades-del-motor-v2-a-unidades-de-la-articulación-v3).
-
 Versión 0.2.0: cada dato de los SPARK tiene su lugar. En flash quedan solo el
 CAN ID, el tipo de motor, el idle mode y el límite de corriente, que guarda la
 herramienta nueva `spark_commission`. Todo lo demás está en `joints.json`, que
@@ -105,7 +97,7 @@ ctest --test-dir build --output-on-failure
 ```
 
 La última orden **no transmite nada**. Para CAN ID 1, slot 0 y SP de 0.5
-debe mostrar, entre otros:
+rotaciones debe mostrar, entre otros:
 
 ```text
 CANPacket(frame=MAXMOTION_POSITION_SETPOINT, id=0x02050201, dlc=8, data=00 00 00 3F 00 00 00 00)
@@ -148,35 +140,32 @@ las limitaciones están en [docs/API.md](docs/API.md).
 ## 4. Configurar tus ejes
 
 Edita `config/joints.json`. Los CAN IDs deben coincidir con los configurados
-físicamente. La referencia completa de `joints.json` v3 está en
-[docs/PARAMETROS.md](docs/PARAMETROS.md#jointsjson-v3).
+físicamente. La referencia completa de `joints.json` v2 está en
+[docs/PARAMETROS.md](docs/PARAMETROS.md#jointsjson-v2).
 
 | Campo por eje | Significado |
 |---|---|
 | `can_id` | ID único del SPARK, entre 0 y 63. |
-| `gear_ratio` | Vueltas del motor por vuelta de la articulación; siempre positivo. Se escribe en el SPARK como factor de conversión. |
+| `gear_ratio` | Vueltas del motor por vuelta de la articulación; siempre positivo. |
 | `direction` | `1` o `-1`, según el sentido del encoder respecto a la articulación ROS. |
 | `zero_offset_rad` | Posición articular cuando el encoder del motor indica cero. |
 | `min_position_rad`, `max_position_rad` | Límites calibrados de la articulación, en radianes. |
-| `max_velocity_rad_s` | Velocidad máxima de la articulación; límite del URDF y tope de todo `cruise_velocity_rad_s`. |
+| `max_velocity_rad_s` | Velocidad máxima de la articulación; límite del URDF y tope de toda cruise velocity. |
 | `spark` | `motor_type` (`"brushless"`), `idle_mode` y `current_limit_a`: lo que la puesta en marcha guarda en flash. |
 | `control` | `mode` y `slot` de arranque, y `max_following_error_rad` para el modo Position. |
-| `slots."0"` a `slots."3"` | `pidf` (por radián), `output_range` opcional y `maxmotion` opcional (rad/s, rad/s² y rad de la **articulación**). |
+| `slots."0"` a `slots."3"` | `pidf`, `output_range` opcional y `maxmotion` opcional (RPM, RPM/s, rotaciones del **motor**). |
 
 Se usa una articulación independiente por SPARK. Para seis ejes, agregar
 `joint_4`, `joint_5` y `joint_6` tanto al JSON como al bloque `ros2_control`;
 el código no cambia. El orden del plugin sigue el URDF y se comprueba que sus
 nombres coincidan exactamente con los del JSON.
 
-Con `G = gear_ratio`, `d = direction` y `q0 = zero_offset_rad`, el SPARK
-convierte el motor a la articulación y la Pi aplica sentido y cero:
+Con `G = gear_ratio`, `d = direction` y `q0 = zero_offset_rad`:
 
 ```text
-position_factor = (2*pi) / G           # ID 112: rad por vuelta del motor
-velocity_factor = (2*pi) / (60*G)      # ID 113: rad/s por RPM del motor
-q_rad = q0 + d * spark_position
-spark_setpoint = d * (q_rad - q0)
-velocity_rad_s = d * spark_velocity
+q_rad = q0 + d * motor_rotations * (2*pi) / G
+motor_rotations = d * (q_rad - q0) * G / (2*pi)
+velocity_rad_s = d * motor_rpm * (2*pi) / (60*G)
 ```
 
 No se implementa homing. Si el encoder relativo cambia su referencia al
@@ -289,7 +278,7 @@ provisional con las articulaciones y el launch del `controller_manager`.
 | `on_configure()` | Abre CAN, configura los SPARK (baseline, unidades y slots) y espera ACKs. |
 | `on_activate()` | Espera feedback nuevo de todos los ejes; carga PV como SP y habilita. |
 | `read()` | Recibe con presupuesto limitado; actualiza `position`, `velocity` y `current`. |
-| `write()` | Valida todas las referencias; aplica sentido y cero; transmite el SP de cada eje en su modo y slot, y el heartbeat. |
+| `write()` | Valida todas las referencias; convierte radianes a rotaciones; transmite el SP de cada eje en su modo y slot, y el heartbeat. |
 | `on_deactivate()` | Deja de emitir referencias y heartbeat. |
 | `on_cleanup()`, `on_shutdown()`, `on_error()` | Desactiva y libera el transporte. |
 

@@ -1,4 +1,4 @@
-// joints.json v3 loading and validation, commissioning and bus survey, without CAN.
+// joints.json v2 loading and validation, commissioning and bus survey, without CAN.
 #include "simulated_spark_bus.hpp"
 #define MOVEMASTER_COMMISSION_NO_MAIN
 #include "../examples/spark_commission.cpp"
@@ -25,8 +25,7 @@ const char *const kFixture = R"json({
       "control": {"mode": "maxmotion", "slot": 0, "max_following_error_rad": 0.2},
       "slots": {
         "0": {"pidf": {"p": 0.5, "i": 0, "d": 0, "f": 0},
-              "maxmotion": {"cruise_velocity_rad_s": 2.0, "max_acceleration_rad_s2": 5.0,
-                            "allowed_profile_error_rad": 0.01}}
+              "maxmotion": {"cruise_velocity": 200, "max_acceleration": 500, "allowed_profile_error": 0.01}}
       }
     }
   }
@@ -53,9 +52,7 @@ void fixture_loads() {
   check(j.mode == ControlMode::kMAXMotionPosition && j.slot == 0 && j.max_following_error_rad == 0.2,
       "control block not loaded");
   check(j.slots.size() == 1 && j.slots.at(0).pidf.at("p") == 0.5 &&
-      j.slots.at(0).maxmotion && j.slots.at(0).maxmotion->cruise_velocity_rad_s == 2 &&
-      j.slots.at(0).maxmotion->max_acceleration_rad_s2 == 5 && j.slots.at(0).maxmotion->allowed_profile_error_rad == 0.01,
-      "slots not loaded");
+      j.slots.at(0).maxmotion.at("cruise_velocity") == 200, "slots not loaded");
 }
 // Each mistake names the field, and the previous format explains where things moved.
 void loader_errors() {
@@ -84,13 +81,7 @@ void loader_errors() {
   broken([](Json &j) { j["slots"]["0"]["output_range"] = 0.5; }, "slots.0.output_range must be [min, max]");
   broken([](Json &j) { j["slots"]["0"]["pidf"].erase("d"); }, "PIDF accepts p, i, d, f");
   broken([](Json &j) { j["slots"]["0"].erase("maxmotion"); }, "MAXMotion control needs a maxmotion block");
-  broken([](Json &j) { j["max_velocity_rad_s"] = 1.0; }, "cruise_velocity_rad_s exceeds max_velocity_rad_s");
-  broken([](Json &j) { j["slots"]["0"]["maxmotion"]["cruise"] = 1; }, "slots.0.maxmotion.cruise is not a known key");
-  broken([](Json &j) { j["slots"]["0"]["maxmotion"].erase("max_acceleration_rad_s2"); },
-      "slots.0.maxmotion.max_acceleration_rad_s2 is missing");
-  // A v2 profile was in motor RPM: it must not be reread as rad/s.
-  broken([](Json &j) { j["slots"]["0"]["maxmotion"] = {{"cruise_velocity", 1200}, {"max_acceleration", 2400},
-      {"allowed_profile_error", 0.05}}; }, "slots.0.maxmotion.cruise_velocity was in motor units; joints.json v3");
+  broken([](Json &j) { j["max_velocity_rad_s"] = 1.0; }, "cruise_velocity exceeds max_velocity_rad_s");
   broken([](Json &j) { j.erase("max_velocity_rad_s"); }, "max_velocity_rad_s is missing");
   auto data = base;
   data["period"] = 0.02;
@@ -104,7 +95,7 @@ void loader_errors() {
   const auto position = load(data).joints.at(0);
   check(position.mode == ControlMode::kPosition && position.slot == 1, "Position control not loaded");
   check(position.slots.at(1).output_min == -0.25 && position.slots.at(1).output_max == 0.5 &&
-      !position.slots.at(1).maxmotion, "Position-only slot not loaded");
+      position.slots.at(1).maxmotion.is_null(), "Position-only slot not loaded");
   check(position.slots.at(0).output_min == -1 && position.slots.at(0).output_max == 1, "Default output range");
 }
 bool sent_frame(const SimulatedSparkBus &bus, const char *name) {
@@ -268,7 +259,7 @@ int main(int argc, char **argv) {
     commission_tool();
     survey();
     std::cout << "PASS: bench joints.json valid, loader fields, parameter IDs against SparkParameters-v0.1.2.md, "
-        "v3 loader errors, Position-only slots, commissioning order, "
+        "v2 loader errors, Position-only slots, commissioning order, "
         "magic numbers and failures, spark_commission selection and refusals, bus survey.\n";
   } catch (const std::exception &e) {
     std::cerr << "FAIL: " << e.what() << '\n';

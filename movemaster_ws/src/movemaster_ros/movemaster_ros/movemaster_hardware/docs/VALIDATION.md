@@ -1,36 +1,5 @@
 # Validación realizada — 26 de septiembre de 2026
 
-## Actualización 0.3.0: `gear_ratio` en el factor de conversión del SPARK
-
-2 de octubre de 2026. Linux x86_64, CMake 3.28, sin ROS ni CAN.
-
-| Compilación | Resultado |
-|---|---|
-| g++ 13.3, Debug, `-Wall -Wextra -Wpedantic -Werror` | Sin avisos; CTest **5/5**. |
-| clang 18.1, Debug, mismas opciones | Sin avisos; CTest **5/5**. |
-| g++ 13.3 con AddressSanitizer y UBSan | CTest **5/5**, sin errores. |
-| `movemaster_control`, pytest | **6/6**. |
-
-Qué cambió en las pruebas:
-
-- **El SPARK simulado aplica los factores.** Como el firmware, reporta en
-  `STATUS_2` las vueltas y RPM de su motor multiplicadas por los IDs 112 y
-  113, y un setpoint vale `setpoint / factor` vueltas del motor.
-- **`driver_fake_bus`** comprueba que `configure()` escribe `2π / G` y
-  `2π / (60 · G)`, que la posición y la velocidad medidas salen en radianes de
-  la articulación, que un objetivo `q` gira el motor `d · (q − q0) · G / 2π`
-  vueltas y que el perfil MAXMotion llega en rad/s, rad/s² y rad. Rechaza una
-  `gear_ratio` cuyos factores no caben en float32. Con el factor de posición
-  cambiado a 1.0 a propósito, la prueba falla.
-- **`config_and_commissioning`** carga el formato v3 y rechaza las claves de
-  MAXMotion de v2 con el mensaje de migración. El `joints.json` del banco y los
-  dos ejemplos de la documentación (MANUAL §4.3 y PARAMETROS) cargan y validan.
-- **`console_input_and_cycle`** envía los SP tal cual en radianes y comprueba
-  `pv` en radianes, grados y vueltas del motor.
-
-Pendiente en el banco: confirmar con un SPARK real que el ACK de los factores
-coincide y que `pv`, tras `sp 6.2832`, marca `gear_ratio` vueltas del motor.
-
 ## Actualización 0.2.0: parámetros por nivel, modo Position y puesta en marcha
 
 1 de octubre de 2026. Linux x86_64, CMake 3.28, Python 3.11, sin ROS ni CAN.

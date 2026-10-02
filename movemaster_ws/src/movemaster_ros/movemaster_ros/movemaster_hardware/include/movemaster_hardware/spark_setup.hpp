@@ -1,6 +1,5 @@
 #pragma once
 #include "movemaster_hardware/sparkmax_json_protocol.hpp"
-#include <optional>
 #include <set>
 
 namespace movemaster {
@@ -18,8 +17,8 @@ extern const ParameterDefinition kIdleMode;                  // IdleMode
 extern const ParameterDefinition kFeedbackSensor;            // Sensor
 extern const ParameterDefinition kSmartCurrentStallLimit;    // A
 extern const ParameterDefinition kSmartCurrentFreeLimit;     // A
-extern const ParameterDefinition kPositionConversionFactor;  // joint rad per motor rotation
-extern const ParameterDefinition kVelocityConversionFactor;  // joint rad/s per motor RPM
+extern const ParameterDefinition kPositionConversionFactor;  // SPARK position unit per rotation
+extern const ParameterDefinition kVelocityConversionFactor;  // SPARK velocity unit per RPM
 extern const ParameterDefinition kPositionWrapping;
 extern const ParameterDefinition kStatus0Period;             // ms
 extern const ParameterDefinition kStatus2Period;             // ms
@@ -36,20 +35,12 @@ struct SparkBaseline {
   int current_limit_a = 0;  // smart current limit, same at stall and at free speed
 };
 
-// MAXMotion profile of a slot, in joint units: the driver sets the SPARK's conversion factors
-// from gear_ratio, so the SPARK measures the joint in radians.
-struct MAXMotionProfile {
-  double cruise_velocity_rad_s = 0;
-  double max_acceleration_rad_s2 = 0;
-  double allowed_profile_error_rad = 0;
-};
-
 // One closed-loop slot. Position and MAXMotion Position use its PIDF and output range;
 // MAXMotion adds the profile, so a slot without one only allows Position.
 struct SlotConfig {
-  Json pidf = Json::object();                  // p, i, d, f per joint radian
+  Json pidf = Json::object();                  // p, i, d, f
   double output_min = -1.0, output_max = 1.0;  // duty cycle
-  std::optional<MAXMotionProfile> maxmotion;
+  Json maxmotion = nullptr;                    // RPM, RPM/s, motor rotations
 };
 
 // Request/response exchanges with one SPARK. Only for setup: they wait for the reply, so the

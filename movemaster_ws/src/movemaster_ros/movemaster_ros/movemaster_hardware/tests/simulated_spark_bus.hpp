@@ -54,15 +54,6 @@ class SimulatedSparkBus : public CANBus {
   }
   std::uint32_t value(int id, int parameter) const { return ram.at({id, parameter}); }
   bool written(int id, int parameter) const { return ram.count({id, parameter}) != 0; }
-  // Each motor sits at id/4 rotations turning at 60 RPM. Like the firmware, the SPARK reports and
-  // takes positions and velocities scaled by its conversion factors (REV default: 1.0).
-  static double motor_rotations(int id) { return id * 0.25; }
-  static constexpr double kMotorRpm = 60.0;
-  double factor(int id, int parameter) const {
-    return written(id, parameter) ? SignalCodec::_u32_to_float(value(id, parameter)) : 1.0;
-  }
-  // The motor rotations a setpoint sent to this SPARK stands for.
-  double setpoint_rotations(int id, double setpoint) const { return setpoint / factor(id, 112); }
   // Names of the frames sent to one SPARK, in order.
   std::vector<std::string> names_sent_to(int id) const {
     std::vector<std::string> result;
@@ -108,8 +99,8 @@ class SimulatedSparkBus : public CANBus {
     for (int id : ids) {
       if (id == muted_id) continue;
       pending.push_back(frames["STATUS_0"].packet(id, {{"CURRENT", 2}, {"PRIMARY_HEARTBEAT_LOCK", true}}));
-      auto pos = frames["STATUS_2"].packet(id, {{"PRIMARY_ENCODER_POSITION", motor_rotations(id) * factor(id, 112)},
-          {"PRIMARY_ENCODER_VELOCITY", kMotorRpm * factor(id, 113)}});
+      auto pos = frames["STATUS_2"].packet(id, {{"PRIMARY_ENCODER_POSITION", id * 0.25},
+          {"PRIMARY_ENCODER_VELOCITY", 60.0}});
       if (nonfinite) { pos.data[4] = 0; pos.data[5] = 0; pos.data[6] = 0x80; pos.data[7] = 0x7f; }
       if (malformed) pos.data.resize(1);
       pending.push_back(pos);
@@ -133,7 +124,7 @@ class SimulatedSparkBus : public CANBus {
 inline SlotConfig full_slot() {
   SlotConfig slot;
   slot.pidf = {{"p", 0.05}, {"i", 0}, {"d", 0}, {"f", 0}};
-  slot.maxmotion = MAXMotionProfile{1.5, 3.0, 0.01};  // rad/s, rad/s², rad
+  slot.maxmotion = {{"cruise_velocity", 100}, {"max_acceleration", 200}, {"allowed_profile_error", 0.01}};
   return slot;
 }
 inline DriverConfig config_for(const std::filesystem::path &spec, int count = 3) {

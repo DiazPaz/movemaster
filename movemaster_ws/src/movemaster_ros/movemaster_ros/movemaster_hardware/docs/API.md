@@ -126,11 +126,9 @@ En `spark_setup.hpp`, fuera del protocolo:
 
 `configure()`, `activate()`, `deactivate()`, `read()`, `write()`,
 `set_control()`, `controls()`, `states()`, `active()`, `fault()`,
-`position_factor()`, `velocity_factor()`, `joint_to_spark()` y
-`spark_to_joint()`: los dos primeros son los factores de conversión que el
-driver escribe en el SPARK desde `gear_ratio`; los otros aplican el sentido y
-el cero. Además, `load_driver_config()` lee `joints.json` v3 y
-`validate_driver_config()` lo valida. El driver tiene un único dueño; no se llama concurrentemente desde la
+`radians_to_rotations()`, `rotations_to_radians()` y `rpm_to_rad_s()`. Además,
+`load_driver_config()` lee `joints.json` v2 y `validate_driver_config()` lo
+valida. El driver tiene un único dueño; no se llama concurrentemente desde la
 HMI y `controller_manager`. La futura HMI deberá enviar sus comandos a la capa
 ROS que controle estas interfaces.
 

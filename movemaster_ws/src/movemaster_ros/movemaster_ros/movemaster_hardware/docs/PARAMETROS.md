@@ -50,8 +50,8 @@ confirme el tipo y el valor exacto.
 | 59 | Smart Current Stall Limit | UINT32 | 80 A | `spark.current_limit_a` | Puesta en marcha | `spark_commission` y el driver |
 | 60 | Smart Current Free Limit | UINT32 | 20 A | `spark.current_limit_a` | Puesta en marcha | `spark_commission` y el driver |
 | 9 | Closed Loop Control Sensor | UINT32 | NONE (0) | MAIN_ENCODER (1) | Eje (fijo) | El driver |
-| 112 | Position Conversion Factor | FLOAT | 1.0 | `2π / gear_ratio` | Eje | El driver |
-| 113 | Velocity Conversion Factor | FLOAT | 1.0 | `2π / (60 · gear_ratio)` | Eje | El driver |
+| 112 | Position Conversion Factor | FLOAT | 1.0 | 1.0 | Eje (fijo) | El driver |
+| 113 | Velocity Conversion Factor | FLOAT | 1.0 | 1.0 | Eje (fijo) | El driver |
 | 149 | Position PID Wrap Enable | BOOL | false | false | Eje (fijo) | El driver |
 | 158, 160 | Status 0 Period, Status 2 Period | UINT32 | 10 y 20 ms | `status_period_ms` | Eje | El driver |
 | 13+8s a 16+8s | P s, I s, D s, F s | FLOAT | 0 | `slots.<s>.pidf` | Eje (slot) | El driver |
@@ -84,72 +84,36 @@ sobreviven a una actualización de firmware.
 
 ## `gear_ratio` y el factor de conversión del SPARK
 
-La reducción vive en el SPARK. En cada arranque el driver escribe en RAM:
+Los dos convierten unidades, pero no son intercambiables:
 
-| ID | Parámetro | Valor | Convierte |
-|---|---|---|---|
-| 112 | Position Conversion Factor | `2π / gear_ratio` | Rotaciones del motor a radianes de la articulación |
-| 113 | Velocity Conversion Factor | `2π / (60 · gear_ratio)` | RPM del motor a rad/s de la articulación |
+- **El SPARK** mide rotaciones del motor. Su factor de posición (ID 112)
+  multiplica lo que reporta en `STATUS_2` y lo que entiende de cada setpoint;
+  el de velocidad (ID 113) hace lo mismo con las RPM.
+- **`gear_ratio`**, junto con `direction` y `zero_offset_rad`, convierte en la
+  Pi entre radianes de la articulación, que usan ROS y MoveIt, y rotaciones del
+  motor: `q = zero_offset_rad + direction · rotaciones · 2π / gear_ratio`.
 
-Así el SPARK mide la articulación, no el motor, y todo lo que pasa por él queda
-en unidades de la articulación:
+Por qué la conversión se hace solo en la Pi y los factores del SPARK quedan en
+1.0:
 
-- La posición y la velocidad de `STATUS_2`, y el `SETPOINT` de Position y
-  MAXMotion (el spec dice de los tres que su unidad la fija el factor).
-- El error del PID: `p`, `i` y `d` son por radián de la articulación, y `f`
-  por rad/s.
-- El perfil MAXMotion: `cruise_velocity_rad_s`, `max_acceleration_rad_s2` y
-  `allowed_profile_error_rad`.
+1. **El factor solo multiplica.** No puede aplicar el offset ni el sentido, así
+   que la Pi tendría que convertir de todos modos.
+2. **El factor también cambia las unidades del lazo.** Con un factor distinto
+   de 1, el error del PID, la cruise velocity, la aceleración y el error
+   permitido de MAXMotion pasan a esas unidades nuevas, y las ganancias ya
+   ajustadas dejan de valer. Con 1.0 todo queda en rotaciones y RPM del motor,
+   como en la documentación de REV y en la hoja de datos del NEO.
+3. **Dos conversiones se suman sin avisar.** Si el SPARK tuviera guardado
+   2π/100 y la Pi dividiera además entre 100, la posición saldría mal por un
+   factor de 100. Por eso el driver escribe 1.0 en cada arranque, y la puesta
+   en marcha deja la flash con el valor de fábrica, también 1.0.
+4. **La precisión es la misma.** Los setpoints viajan como float32 en ambos
+   casos.
 
-Un factor solo multiplica, así que la Pi aplica lo que falta, el sentido y el
-cero:
-
-```text
-posición articulación   q = zero_offset_rad + direction · posición_SPARK
-setpoint al SPARK          = direction · (q − zero_offset_rad)
-velocidad articulación     = direction · velocidad_SPARK
-```
-
-Por ejemplo, con reducción 108:1, `sp 6.2832` en `spark_console` (una vuelta de
-la articulación) gira el motor 108 vueltas, y `cruise_velocity_rad_s: 1.0` son
-1.0 rad/s en la salida, unas 1031 RPM del motor.
-
-Consecuencias:
-
-- **Una sola conversión.** La Pi ya no divide entre `gear_ratio`. Lo que haya
-  en la flash no importa, porque el driver escribe los dos factores en cada
-  arranque. La puesta en marcha deja la flash en 1.0, el valor de fábrica, y el
-  backend Python, que trabaja en unidades del motor, escribe 1.0 al arrancar.
-- **El perfil describe la articulación.** Si cambias de reductor, la
-  articulación conserva su velocidad y su aceleración; el SPARK ajusta las RPM
-  del motor. Las ganancias del PID sí hay que revisarlas, porque el mismo
-  error en radianes ahora pide otro esfuerzo del motor.
-- **Mismas unidades que los límites.** `cruise_velocity_rad_s` se compara
-  directo con `max_velocity_rad_s`, y `max_following_error_rad` con el error
-  del eje.
-- **Velocidad máxima real.** Un NEO gira a unas 5676 RPM libres, así que la
-  articulación no pasa de `5676 · 2π / (60 · gear_ratio)` rad/s: 5.5 rad/s con
-  108:1. `max_velocity_rad_s` no debería superar ese valor.
-- **El driver valida el rango.** `gear_ratio` tiene que dar factores que quepan
-  en float32, el formato en que el SPARK los guarda.
-
-### Pasar de unidades del motor (v2) a unidades de la articulación (v3)
-
-Con `G = gear_ratio`:
-
-| v2, unidades del motor | v3, unidades de la articulación | Conversión |
-|---|---|---|
-| `maxmotion.cruise_velocity` (RPM) | `maxmotion.cruise_velocity_rad_s` | `RPM · 2π / (60 · G)` |
-| `maxmotion.max_acceleration` (RPM/s) | `maxmotion.max_acceleration_rad_s2` | `RPM/s · 2π / (60 · G)` |
-| `maxmotion.allowed_profile_error` (rotaciones) | `maxmotion.allowed_profile_error_rad` | `rotaciones · 2π / G` |
-| `pidf.p`, `pidf.i`, `pidf.d` (por rotación) | Mismos nombres, por radián | `· G / 2π` |
-| `pidf.f` (por RPM) | Mismo nombre, por rad/s | `· 60 · G / 2π` |
-
-El cargador rechaza las claves de MAXMotion de v2 con un mensaje que remite
-aquí; así un valor en RPM no se reinterpreta como rad/s. PIDF conserva sus
-nombres: si un slot solo tiene PIDF, conviértelo a mano. Ejemplo con 108:1:
-`p` 1.0 por rotación son 17.19 por radián; 1000 RPM son 0.97 rad/s; 500 RPM/s
-son 0.485 rad/s², y 0.3 rotaciones son 0.01745 rad (1°).
+`gear_ratio` es entonces la única reducción del sistema. La consecuencia
+práctica es que PIDF y MAXMotion se escriben en unidades del motor. Para pasar
+a la articulación: `rad/s = RPM · 2π / (60 · gear_ratio)`. Por ejemplo, con
+reducción 100:1, 1200 RPM del motor son 1.26 rad/s en la articulación.
 
 ## Slots y modos de control
 
@@ -194,7 +158,7 @@ PID.
 - **En ROS:** por ahora cada eje usa el `control` de `joints.json` desde que se
   activa. Cambiarlo desde ROS es el siguiente paso.
 
-## `joints.json` v3
+## `joints.json` v2
 
 Ejemplo de un eje con dos slots: el 0 con perfil MAXMotion y el 2 solo para
 Position. El cargador es estricto: una clave desconocida es un error, nunca un
@@ -212,10 +176,9 @@ ajuste que se queda en su valor por defecto.
   "spark": {"motor_type": "brushless", "idle_mode": "brake", "current_limit_a": 40},
   "control": {"mode": "maxmotion", "slot": 0, "max_following_error_rad": 0.1},
   "slots": {
-    "0": {"pidf": {"p": 8.0, "i": 0, "d": 0, "f": 0},
-          "maxmotion": {"cruise_velocity_rad_s": 1.2, "max_acceleration_rad_s2": 2.5,
-                        "allowed_profile_error_rad": 0.003}},
-    "2": {"pidf": {"p": 16.0, "i": 0.0016, "d": 0, "f": 0}, "output_range": [-0.3, 0.3]}
+    "0": {"pidf": {"p": 0.5, "i": 0, "d": 0, "f": 0},
+          "maxmotion": {"cruise_velocity": 1200, "max_acceleration": 2400, "allowed_profile_error": 0.05}},
+    "2": {"pidf": {"p": 1.0, "i": 0.0001, "d": 0, "f": 0}, "output_range": [-0.3, 0.3]}
   }
 }
 ```
@@ -223,11 +186,11 @@ ajuste que se queda en su valor por defecto.
 | Campo | Regla | Para qué |
 |---|---|---|
 | `can_id` | Entero 0–63, único | Dirección del SPARK; se asigna con REV Hardware Client. |
-| `gear_ratio` | > 0 | Vueltas del motor por vuelta de la articulación. El driver la escribe en el SPARK como factor de conversión. |
+| `gear_ratio` | > 0 | Vueltas del motor por vuelta de la articulación. |
 | `direction` | 1 o −1 | Sentido de la articulación respecto al motor. |
 | `zero_offset_rad` | Finito | Posición articular cuando el encoder marca 0. |
 | `min_position_rad`, `max_position_rad` | Mínimo < máximo | Límites; el driver rechaza objetivos fuera de ellos. |
-| `max_velocity_rad_s` | > 0 | Límite de velocidad del URDF, con el que planea MoveIt. Ningún `cruise_velocity_rad_s` puede superarlo. |
+| `max_velocity_rad_s` | > 0 | Límite de velocidad del URDF, con el que planea MoveIt. Ninguna cruise velocity puede superarlo. |
 | `spark.motor_type` | Solo `"brushless"` | Los NEO son brushless; el modo brushed puede dañarlos. |
 | `spark.idle_mode` | `"coast"` o `"brake"` | Qué hace el SPARK cuando su salida es neutra, como al deshabilitarse. `brake` cortocircuita el motor y frena el brazo, pero no lo sostiene. De fábrica: `coast`. |
 | `spark.current_limit_a` | Entero 1–80 | Límite de corriente del motor, igual en parada y a velocidad libre. De fábrica son 80 A en parada y 20 A libre; 40 A es un valor habitual para NEO. |
@@ -235,16 +198,13 @@ ajuste que se queda en su valor por defecto.
 | `control.slot` | Uno de `slots` | Slot con el que el eje se activa. Con `maxmotion`, debe tener perfil. |
 | `control.max_following_error_rad` | > 0 | Distancia máxima entre un objetivo en modo `position` y la posición medida. |
 | `slots."0"` a `slots."3"` | Al menos uno | Presets del eje. |
-| `slots.<n>.pidf` | `p`, `i`, `d`, `f` ≥ 0 | Ganancias del slot, por radián de la articulación (`f`, por rad/s). |
+| `slots.<n>.pidf` | `p`, `i`, `d`, `f` ≥ 0 | Ganancias del slot, en unidades del motor. |
 | `slots.<n>.output_range` | `[min, max]`, −1 ≤ min < 0 < max ≤ 1; por defecto `[-1, 1]` | Ciclo de trabajo máximo del PID. |
-| `slots.<n>.maxmotion` | Opcional: `cruise_velocity_rad_s` > 0, `max_acceleration_rad_s2` > 0, `allowed_profile_error_rad` ≥ 0 | Perfil MAXMotion del slot, en la articulación. |
+| `slots.<n>.maxmotion` | Opcional: `cruise_velocity` (RPM) > 0, `max_acceleration` (RPM/s) > 0, `allowed_profile_error` (rotaciones) ≥ 0 | Perfil MAXMotion del slot. |
 
 ### Pasar del formato anterior
 
 El driver rechaza el formato anterior con un mensaje que indica qué se movió.
-De v2 a v3 cambiaron las unidades de los slots: ver
-[Pasar de unidades del motor](#pasar-de-unidades-del-motor-v2-a-unidades-de-la-articulación-v3).
-De v1 a v2:
 
 | Antes | Ahora |
 |---|---|

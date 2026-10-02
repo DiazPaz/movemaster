@@ -9,7 +9,7 @@ namespace movemaster {
 struct JointConfig {
   std::string name;
   int device_id = -1;
-  double gear_ratio = std::numeric_limits<double>::quiet_NaN();  // motor turns / joint turn, in the SPARK
+  double gear_ratio = std::numeric_limits<double>::quiet_NaN();  // motor turns / joint turn
   int direction = 1;                                        // +1 or -1
   double zero_offset_rad = std::numeric_limits<double>::quiet_NaN();
   double min_position_rad = std::numeric_limits<double>::quiet_NaN();
@@ -69,12 +69,9 @@ class MoveMasterDriver {
   const std::vector<JointState> &states() const { return states_; }
   bool active() const { return active_; }
   const std::string &fault() const { return fault_; }
-  // The SPARK scales the motor to the joint with its conversion factors, set from gear_ratio;
-  // the driver only applies direction and zero_offset_rad.
-  static double position_factor(const JointConfig &joint);  // rad per motor rotation: 2π / G
-  static double velocity_factor(const JointConfig &joint);  // rad/s per motor RPM: 2π / (60 G)
-  static double joint_to_spark(double radians, const JointConfig &joint);   // d · (q − q0)
-  static double spark_to_joint(double position, const JointConfig &joint);  // q0 + d · p
+  static double radians_to_rotations(double radians, const JointConfig &joint);
+  static double rotations_to_radians(double rotations, const JointConfig &joint);
+  static double rpm_to_rad_s(double rpm, const JointConfig &joint);
  private:
   using Clock = std::chrono::steady_clock;
   DriverConfig config_;

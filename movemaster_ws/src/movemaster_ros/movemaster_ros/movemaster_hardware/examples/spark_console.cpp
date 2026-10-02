@@ -1,4 +1,4 @@
-// Consola de un SPARK MAX. SP absoluto en radianes de la articulacion: el SPARK aplica gear_ratio.
+// Consola de un SPARK MAX. SP absoluto en rotaciones del encoder del motor.
 // Reutiliza el driver: modos Position y MAXMotion, slots, feedback, limites y heartbeat.
 #include "movemaster_hardware/movemaster_driver.hpp"
 #include <fcntl.h>
@@ -45,7 +45,6 @@ class NonblockingInput {
 inline const char *mode_name(movemaster::ControlMode mode) {
   return mode == movemaster::ControlMode::kPosition ? "position" : "maxmotion";
 }
-inline double degrees(double radians) { return radians * 360 / kTau; }
 
 // El parametro Driver permite probar este mismo bucle sin conectar un motor.
 template<class Driver>
@@ -59,7 +58,7 @@ void run(Driver &driver, const movemaster::DriverConfig &config,
   std::vector<double> target(1, 0.0);
   const auto tick = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
       std::chrono::duration<double>(config.period_s));
-  const char *help = "Comandos: on | sp <rad> | mode position|maxmotion | slot <0-3> | pv | off | q\n";
+  const char *help = "Comandos: on | sp <rotaciones> | mode position|maxmotion | slot <0-3> | pv | off | q\n";
   // El driver valida el slot y el modo; aqui solo se informa por que no cambio.
   const auto change_control = [&](ControlMode mode, int slot) {
     try {
@@ -72,8 +71,7 @@ void run(Driver &driver, const movemaster::DriverConfig &config,
   };
   out << "SPARK MAX | CAN ID " << joint.device_id << " | " << mode_name(driver.controls().front().mode)
       << " | slot " << driver.controls().front().slot
-      << " | reduccion " << joint.gear_ratio << ":1 en el SPARK"
-      << "\nSP absoluto en radianes de la ARTICULACION. Inicialmente deshabilitado.\n" << help
+      << "\nSP absoluto en rotaciones del MOTOR. Inicialmente deshabilitado.\n" << help
       << "off/q dejan de enviar heartbeat; no son una parada de emergencia.\n" << std::flush;
 
   while (!stop_requested) {
@@ -88,24 +86,26 @@ void run(Driver &driver, const movemaster::DriverConfig &config,
       line >> command;
       const auto control = driver.controls().front();
       if (command == "sp") {
-        double radians = 0;
-        if (!(line >> radians) || (line >> extra) || !std::isfinite(radians)) {
-          out << "Formato: sp 0.5 (radianes, numero finito, punto decimal).\n";
+        double rotations = 0;
+        if (!(line >> rotations) || (line >> extra) || !std::isfinite(rotations)) {
+          out << "Formato: sp 0.5 (numero finito, punto decimal).\n";
         } else if (!driver.active()) {
           out << "Primero escribe on. No se guardo el SP.\n";
         } else {
+          const double radians = movemaster::MoveMasterDriver::rotations_to_radians(rotations, joint);
           const double measured = driver.states().front().position;
-          if (radians < joint.min_position_rad || radians > joint.max_position_rad) {
+          if (!std::isfinite(radians) || radians < joint.min_position_rad || radians > joint.max_position_rad) {
             driver.deactivate();
             out << "SP fuera de limites: eje deshabilitado.\n";
           } else if (control.mode == ControlMode::kPosition &&
               !(std::abs(radians - measured) <= joint.max_following_error_rad)) {
             // Position no tiene perfil: un salto grande iria a la salida maxima del PID.
-            out << "En modo position el SP debe quedar a menos de " << joint.max_following_error_rad
-                << " rad del PV (max_following_error_rad). Usa mode maxmotion para movimientos largos.\n";
+            out << "En modo position el SP debe quedar a menos de "
+                << joint.max_following_error_rad * joint.gear_ratio / kTau
+                << " rot del PV (max_following_error_rad). Usa mode maxmotion para movimientos largos.\n";
           } else {
             target[0] = radians;
-            out << "SP = " << radians << " rad (" << degrees(radians) << " grados) en la articulacion.\n";
+            out << "SP = " << rotations << " rot motor (" << radians << " rad articulacion).\n";
           }
         }
       } else if (command == "mode") {
@@ -140,12 +140,8 @@ void run(Driver &driver, const movemaster::DriverConfig &config,
         out << "Heartbeat detenido; deshabilitacion por watchdog del SPARK.\n";
       } else if (command == "pv") {
         const auto &state = driver.states().front();
-        using movemaster::MoveMasterDriver;
-        // Vueltas del motor desde su cero: sirven para comprobar la reduccion a mano. (+ 0.0 evita "-0".)
-        const double motor_rot = MoveMasterDriver::joint_to_spark(state.position, joint) /
-            MoveMasterDriver::position_factor(joint) + 0.0;
-        out << "Ultima PV = " << state.position << " rad (" << degrees(state.position) << " grados) | motor "
-            << motor_rot << " rot | I = " << state.current
+        out << "Ultima PV = " << movemaster::MoveMasterDriver::radians_to_rotations(state.position, joint)
+            << " rot motor | q = " << state.position << " rad | I = " << state.current
             << " A | " << mode_name(control.mode) << " slot " << control.slot << " | "
             << (driver.active() ? "habilitado" : "deshabilitado") << '\n';
       } else if (command == "q") break;

@@ -101,7 +101,7 @@ flowchart TB
 | Controladores | `ros2_controllers` (ya instalado con ROS) | `JointTrajectoryController` (JTC) recibe trayectorias y en cada ciclo escribe la posición deseada de cada eje. `JointStateBroadcaster` (JSB) publica lo que mide el hardware. |
 | `controller_manager` | `ros2_control` (ya instalado con ROS) | Carga el plugin de hardware y los controladores, y ejecuta el lazo `read → update → write`. |
 | `MovemasterHardware` | `movemaster_hardware/src/movemaster_hardware.cpp` | Traduce el ciclo de vida y las interfaces de `ros2_control` a llamadas al driver. |
-| `MoveMasterDriver` | `movemaster_hardware/src/movemaster_driver.cpp` | Configura los SPARK en RAM (incluida la reducción como factor de conversión), aplica sentido y cero, valida límites, vigila la telemetría y envía setpoints Position o MAXMotion + heartbeat. |
+| `MoveMasterDriver` | `movemaster_hardware/src/movemaster_driver.cpp` | Configura los SPARK en RAM, convierte radianes ↔ rotaciones de motor, valida límites, vigila la telemetría y envía setpoints Position o MAXMotion + heartbeat. |
 | `SparkSetup` | `movemaster_hardware/src/spark_setup.cpp` | Intercambios con ACK de la configuración (baseline, slots) y de la puesta en marcha (restablecer y persistir). |
 | `SparkMAXMotionProtocol` | `movemaster_hardware/src/sparkmax_json_protocol.cpp` | Codifica y decodifica cada trama leyendo `spec/spark-frames-2.1.0`. |
 | `SocketCAN` | `movemaster_hardware/src/socketcan.cpp` | Abre `can0` y envía/recibe tramas CAN clásicas. |
@@ -124,7 +124,7 @@ El `controller_manager` repite tres pasos con periodo fijo, `1/update_rate`
    `position`. El JSB publica `/joint_states`.
 3. **`write()`** → `MoveMasterDriver::write()`: valida **todos** los ejes
    (límites de `joints.json`, número finito, cabe en float32 y, en modo
-   Position, cerca de la posición medida), aplica sentido y cero,
+   Position, cerca de la posición medida), convierte a rotaciones de motor,
    envía el setpoint de cada eje con su modo y su slot y al final **un**
    heartbeat global. Si cualquier eje es inválido no envía nada y enclava un
    fallo.
@@ -142,25 +142,21 @@ la seguridad del sistema.
 
 ### 2.3 Unidades
 
-Todo está en unidades de la **articulación**: radianes, rad/s y rad/s². El
-SPARK también trabaja así, porque el driver le escribe la reducción como factor
-de conversión: `2π / G` para la posición y `2π / (60 · G)` para la velocidad,
-con `G = gear_ratio`. El SPARK mide entonces radianes de la articulación, y la
-Pi solo aplica lo que un factor no puede, el sentido `d = direction` y el cero
-`q0 = zero_offset_rad`:
+ROS trabaja en radianes de la **articulación**; el SPARK, en rotaciones y RPM del
+**motor**. Con `G = gear_ratio`, `d = direction` y `q0 = zero_offset_rad`:
 
 ```text
-posición articulación  q = q0 + d · posición_SPARK
-setpoint al SPARK        = d · (q − q0)
-velocidad articulación   = d · velocidad_SPARK
+posición articulación  q   = q0 + d · rotaciones_motor · 2π / G
+rotaciones de motor        = d · (q − q0) · G / 2π
+velocidad articulación     = d · RPM_motor · 2π / (60 · G)
 ```
 
-Ejemplo: `G = 100`, `d = 1`, `q0 = 0`. Mandar `q = 0.5 rad` envía 0.5 al SPARK,
-que gira el motor `0.5 · 100 / 2π = 7.96` vueltas.
+Ejemplo: `G = 100`, `d = 1`, `q0 = 0`. Mandar `q = 0.5 rad` pide al SPARK
+`0.5 · 100 / 2π = 7.96` rotaciones de motor.
 
-Como el SPARK mide la articulación, PIDF y MAXMotion también van en sus
-unidades: `p`, `i` y `d` por radián, `f` por rad/s, y el perfil en rad/s, rad/s²
-y rad. El detalle está en la [sección 2.6](#26-qué-se-guarda-en-cada-spark).
+La reducción está solo en `gear_ratio`. Los factores de conversión del SPARK
+quedan siempre en 1.0, así que PIDF y MAXMotion se escriben en unidades del
+motor. El porqué está en la [sección 2.6](#26-qué-se-guarda-en-cada-spark).
 
 `current` está en **amperes** del motor; no es par ni `effort`.
 
@@ -238,19 +234,20 @@ Cada dato vive en un solo lugar, según lo seguido que cambia:
 | 6 | Idle Mode | `spark.idle_mode`: COAST (0) o BRAKE (1); de fábrica, COAST |
 | 59, 60 | Smart Current Stall Limit, Smart Current Free Limit | `spark.current_limit_a` en los dos; de fábrica, 80 A y 20 A |
 | 9 | Closed Loop Control Sensor | MAIN_ENCODER (1) |
-| 112, 113 | Position / Velocity Conversion Factor | `2π / gear_ratio` y `2π / (60 · gear_ratio)` |
+| 112, 113 | Position / Velocity Conversion Factor | 1.0 |
 | 149 | Position PID Wrap Enable | false |
 | 158, 160 | Status 0 Period, Status 2 Period | `status_period_ms` |
 | 13+8s a 16+8s | P, I, D, F del slot `s` | `slots.<s>.pidf` |
 | 19+8s, 20+8s | Output Min y Output Max del slot `s` | `slots.<s>.output_range` |
 | 166+5s, 167+5s, 169+5s | MAXMotion Max Velocity, Max Accel y Allowed Closed Loop Error del slot `s` | `slots.<s>.maxmotion` |
 
-**`gear_ratio` es el factor de conversión del SPARK.** El driver lo escribe en
-los IDs 112 y 113 en cada arranque, así que el SPARK reporta y recibe radianes
-de la articulación, y PIDF y MAXMotion quedan en esas unidades. La Pi ya no
-divide entre `gear_ratio`: la reducción se aplica una sola vez. El factor solo
-multiplica, así que `direction` y `zero_offset_rad` siguen en la Pi. La flash
-conserva el 1.0 de fábrica; no importa, porque el driver lo reescribe en RAM.
+**`gear_ratio` frente al factor de conversión del SPARK.** Los dos convierten
+unidades, pero no son intercambiables. El factor (IDs 112 y 113) solo
+multiplica: no puede aplicar `zero_offset_rad` ni `direction`, y cambia las
+unidades del PID y de MAXMotion, así que las ganancias ajustadas dejarían de
+valer. Usar los dos aplicaría la reducción dos veces. Por eso el factor queda
+siempre en 1.0 y `gear_ratio` es la única reducción: PIDF y MAXMotion se
+escriben en rotaciones y RPM del **motor**.
 
 Tabla completa, valores de fábrica y razones: [PARAMETROS.md](../movemaster_hardware/docs/PARAMETROS.md).
 
@@ -317,11 +314,11 @@ estricto: una clave desconocida es un error.
 | Campo | Tipo | Regla | Significado |
 |---|---|---|---|
 | `can_id` | entero | 0–63, único | CAN ID del SPARK de ese eje. |
-| `gear_ratio` | número | > 0 | Vueltas del motor por cada vuelta de la articulación. El driver la escribe en el SPARK como factor de conversión. |
+| `gear_ratio` | número | > 0 | Vueltas del motor por cada vuelta de la articulación. |
 | `direction` | **entero** | `1` o `-1` (no `1.0`) | `-1` si el motor gira al revés que la articulación en ROS. |
 | `zero_offset_rad` | número | finito | Ángulo de la articulación cuando el encoder del motor marca 0. |
 | `min_position_rad`, `max_position_rad` | número | `min < max` | Límites calibrados. El driver rechaza objetivos fuera; también son los límites del URDF. |
-| `max_velocity_rad_s` | número | > 0 | Velocidad máxima de la articulación: límite del URDF, con el que planea MoveIt. Ningún `cruise_velocity_rad_s` puede superarla. Un NEO no pasa de `5676 · 2π / (60 · gear_ratio)` rad/s. |
+| `max_velocity_rad_s` | número | > 0 | Velocidad máxima de la articulación: límite del URDF, con el que planea MoveIt. Ninguna `cruise_velocity` puede superarla. |
 | `spark` | objeto | ver abajo | Lo que la puesta en marcha guarda en la flash del SPARK. El driver lo vuelve a escribir en RAM al configurar. |
 | `control` | objeto | ver abajo | Modo y slot con que se activa el eje. |
 | `slots` | objeto | `"0"` a `"3"`, al menos uno | Presets del eje: ganancias y perfiles. |
@@ -340,17 +337,17 @@ estricto: una clave desconocida es un error.
 
 | Campo de `slots.<n>` | Regla | Significado |
 |---|---|---|
-| `pidf` | exactamente `p`, `i`, `d`, `f`; finitos y ≥ 0 | Ganancias del lazo de posición, por radián de la articulación (`f`, por rad/s). Las usan los dos modos. |
+| `pidf` | exactamente `p`, `i`, `d`, `f`; finitos y ≥ 0 | Ganancias del lazo de posición, en unidades del motor. Las usan los dos modos. |
 | `output_range` | opcional, `[min, max]` con −1 ≤ min < 0 < max ≤ 1 | Ciclo de trabajo máximo del PID; `[-1, 1]` si falta. |
-| `maxmotion.cruise_velocity_rad_s` | > 0, ≤ `max_velocity_rad_s` | Velocidad máxima de la **articulación**, en rad/s. |
-| `maxmotion.max_acceleration_rad_s2` | > 0 | Aceleración máxima de la articulación, en rad/s². |
-| `maxmotion.allowed_profile_error_rad` | ≥ 0 | Error permitido, en radianes de la articulación. |
+| `maxmotion.cruise_velocity` | > 0 | Velocidad máxima del **motor**, en RPM. |
+| `maxmotion.max_acceleration` | > 0 | Aceleración máxima del motor, en RPM/s. |
+| `maxmotion.allowed_profile_error` | ≥ 0 | Error permitido, en rotaciones del motor. |
 
 `maxmotion` es opcional: un slot sin él solo sirve para el modo `position`.
 
 ### 4.3 Ejemplo de un eje
 
-Un eje con un NEO y reducción 100:1, en MAXMotion con el slot 0:
+Un eje con un NEO sin reducción, en MAXMotion con el slot 0:
 
 ```json
 {
@@ -362,14 +359,13 @@ Un eje con un NEO y reducción 100:1, en MAXMotion con el slot 0:
   "max_cycle_gap_s": 0.1,
   "joints": {
     "joint_1": {
-      "can_id": 1, "gear_ratio": 100.0, "direction": 1, "zero_offset_rad": 0,
-      "min_position_rad": -3.1416, "max_position_rad": 3.1416, "max_velocity_rad_s": 1.5,
+      "can_id": 1, "gear_ratio": 1.0, "direction": 1, "zero_offset_rad": 0,
+      "min_position_rad": -3.1416, "max_position_rad": 3.1416, "max_velocity_rad_s": 21.0,
       "spark": {"motor_type": "brushless", "idle_mode": "brake", "current_limit_a": 40},
       "control": {"mode": "maxmotion", "slot": 0, "max_following_error_rad": 0.5},
       "slots": {
-        "0": {"pidf": {"p": 8.0, "i": 0, "d": 0, "f": 0},
-              "maxmotion": {"cruise_velocity_rad_s": 1.2, "max_acceleration_rad_s2": 2.5,
-                            "allowed_profile_error_rad": 0}}
+        "0": {"pidf": {"p": 1.0, "i": 0, "d": 0, "f": 0},
+              "maxmotion": {"cruise_velocity": 200, "max_acceleration": 500, "allowed_profile_error": 0}}
       }
     }
   }
@@ -391,15 +387,6 @@ del formato anterior están en
 - El launch lee la copia **instalada** de `joints.json`. Si la editas, vuelve a
   compilar (o compila con `--symlink-install`, ver el paso 5) o pásala con
   `joint_config:=/ruta/joints.json`.
-- **Las ganancias dependen de la reducción.** PIDF está por radián de la
-  articulación: si cambias `gear_ratio`, el perfil MAXMotion conserva la
-  velocidad de la articulación, pero revisa las ganancias.
-- **`max_velocity_rad_s` debe ser alcanzable.** Un NEO gira a unas 5676 RPM
-  libres: con 108:1, la articulación no pasa de unos 5.5 rad/s. MoveIt planea
-  con este límite.
-- **Un archivo anterior (v2) no carga.** Tenía MAXMotion y PIDF en unidades del
-  motor; conviértelo con la tabla de
-  [PARAMETROS.md](../movemaster_hardware/docs/PARAMETROS.md#pasar-de-unidades-del-motor-v2-a-unidades-de-la-articulación-v3).
 
 ---
 
@@ -422,8 +409,8 @@ ejemplos y las pruebas. La carpeta `build/` está ignorada por git.
 
 | Prueba (`ctest`) | Programa | Qué verifica |
 |---|---|---|
-| `driver_fake_bus` | `tests/driver_test.cpp` | El driver completo contra un SPARK simulado (`tests/simulated_spark_bus.hpp`) que aplica los factores de conversión como el firmware: 1, 3 y 6 ejes, la reducción escrita en el SPARK y las unidades de la articulación, ACKs, orden setpoints → heartbeat, límites, envío en cada ciclo del lazo, baseline y slots en RAM, modos Position y MAXMotion por eje, error de seguimiento, telemetría vencida o corrupta, fallo de TX y lazo detenido. |
-| `config_and_commissioning` | `tests/setup_test.cpp` | Que los `joints.json` del repositorio cargan con el formato v3 y que las claves v2 de MAXMotion se rechazan; que cada parámetro que escribe el código coincide en ID, nombre, tipo y valores con `spec/SparkParameters-v0.1.2.md`; los mensajes de error del cargador; y la puesta en marcha: orden restablecer → baseline → persistir, números mágicos, fallos, `spark_commission` y la escucha del bus. |
+| `driver_fake_bus` | `tests/driver_test.cpp` | El driver completo contra un SPARK simulado (`tests/simulated_spark_bus.hpp`): 1, 3 y 6 ejes, conversiones, ACKs, orden setpoints → heartbeat, límites, envío en cada ciclo del lazo, baseline y slots en RAM, modos Position y MAXMotion por eje, error de seguimiento, telemetría vencida o corrupta, fallo de TX y lazo detenido. |
+| `config_and_commissioning` | `tests/setup_test.cpp` | Que los `joints.json` del repositorio cargan; que cada parámetro que escribe el código coincide en ID, nombre, tipo y valores con `spec/SparkParameters-v0.1.2.md`; los mensajes de error del cargador; y la puesta en marcha: orden restablecer → baseline → persistir, números mágicos, fallos, `spark_commission` y la escucha del bus. |
 | `protocol_demo_no_can` | `examples/protocol_demo.cpp` | Que se puede leer el JSON de REV y armar tramas sin abrir CAN. |
 | `console_input_and_cycle` | `tests/console_test.cpp` | La lógica de `spark_console` con un driver falso y entrada por tubería, incluidos los comandos `mode` y `slot`. |
 | `python_cpp_parity` | `tests/differential_test.py` + `tests/protocol_oracle.cpp` | Que el protocolo C++ produce exactamente los mismos bytes que la librería Python original (`tests/reference/`) en todas las tramas. |
@@ -435,7 +422,7 @@ ejemplos y las pruebas. La carpeta `build/` está ignorada por git.
 ```
 
 Muestra, sin transmitir, cómo se codifican un setpoint MAXMotion de 0.5
-(en las unidades del SPARK), una escritura del parámetro P y su lectura, para el CAN ID 1.
+rotaciones, una escritura del parámetro P y su lectura, para el CAN ID 1.
 
 ---
 
@@ -451,19 +438,8 @@ ip -details link show can0        # debe decir state ERROR-ACTIVE y bitrate 1000
 candump can0                      # muestra el tráfico; Ctrl+C para salir
 ```
 
-Recién encendido, un SPARK no transmite nada hasta ver alguna trama en el bus,
-así que `candump` solo puede quedarse en blanco. Para despertarlo, envía
-cualquier trama desde otra terminal; un ID estándar que los SPARK ignoran sirve:
-
-```bash
-cansend can0 123#00
-```
-
-A partir de ahí `candump` muestra sus tramas periódicas (`STATUS_0` cada 10 ms,
-entre otras). `driver_monitor`, `spark_console` y el nodo transmiten primero,
-así que no necesitan este paso; `spark_commission` solo escucha y sí lo
-necesita. Si después de despertarlo no aparece nada, revisa bitrate, cableado
-y terminación antes de seguir.
+Con los SPARK encendidos, `candump` suele mostrar ya tramas periódicas suyas; si
+no aparece nada, revisa bitrate, cableado y terminación antes de seguir.
 Durante el uso, para el CAN ID 1 verás:
 
 | ID | Trama | Sentido |
@@ -535,8 +511,7 @@ Escribe en RAM la configuración de cada SPARK (con ACK), habilita la telemetrí
 y muestra cada 100 ms la posición (rad), velocidad (rad/s) y corriente (A) de
 cada eje. **No envía heartbeat**: los motores no se mueven. Úsalo para
 comprobar que todos los ejes responden y que la conversión de unidades es la
-correcta: gira el eje a mano y mira el signo y la magnitud. Una vuelta de la
-articulación son 6.28 rad, sin importar la reducción.
+correcta (gira el eje a mano y mira el signo y la magnitud).
 
 ### 7.2 spark_console: mover un eje
 
@@ -550,26 +525,15 @@ eje. Comandos:
 | Comando | Acción |
 |---|---|
 | `on` | Habilita manteniendo la posición medida. |
-| `sp 0.5` | Va a la posición absoluta 0.5 **rad de la articulación**; con reducción 100:1, el motor gira 7.96 vueltas. En modo `position`, solo si queda a menos de `max_following_error_rad` de la posición medida. |
+| `sp 0.5` | Va a la posición absoluta 0.5 **rotaciones de motor**. En modo `position`, solo si queda a menos de `max_following_error_rad` de la posición medida. |
 | `mode position` / `mode maxmotion` | Cambia el modo; con el eje habilitado, mantiene la posición medida. |
 | `slot 1` | Cambia de slot (de preset). |
-| `pv` | Muestra la posición de la articulación (rad y grados), las vueltas del motor desde su cero, corriente, modo, slot y estado. |
+| `pv` | Muestra posición, corriente, modo, slot y estado. |
 | `off` | Deja de enviar heartbeat (el watchdog deshabilita). |
 | `q` | Deshabilita y sale. |
 
 En modo `position` sirve para ver la respuesta del PID a escalones pequeños.
 Más detalle en [SPARK_CONSOLE.md](../movemaster_hardware/docs/SPARK_CONSOLE.md).
-
-**Comprobar la reducción.** Al arrancar, la consola indica la reducción que
-escribió en el SPARK. Con el eje libre de obstáculos:
-
-1. `on` y `pv`: anota la posición `q` y las vueltas del motor.
-2. En modo `maxmotion`, `sp` con un objetivo cercano, por ejemplo `q + 0.5`.
-3. `pv` otra vez: las vueltas del motor deben aumentar `0.5 · gear_ratio / 2π`
-   (8.59 con 108:1), y la articulación, girar 0.5 rad (28.6°).
-
-Si el motor gira lo esperado pero la articulación no, `gear_ratio` no coincide
-con el reductor real.
 
 ---
 
@@ -799,7 +763,7 @@ compilación y rosdep para instalar lo que falta.
 
 | Bloque | Qué hace |
 |---|---|
-| `project(movemaster_hardware VERSION 0.3.0 LANGUAGES CXX)`, `CMAKE_CXX_STANDARD 17` | Proyecto C++17. |
+| `project(movemaster_hardware VERSION 0.2.0 LANGUAGES CXX)`, `CMAKE_CXX_STANDARD 17` | Proyecto C++17. |
 | `option(MOVEMASTER_BUILD_ROS2 ... ON)` | Permite compilar sin ROS con `-DMOVEMASTER_BUILD_ROS2=OFF`. |
 | `include(CTest)` | Activa `BUILD_TESTING` y `add_test`. |
 | `find_package(nlohmann_json QUIET)` + `find_path(...)` | Busca la librería JSON; si no hay paquete CMake, usa el header `nlohmann/json.hpp`. |
@@ -970,11 +934,9 @@ Ninguno de los dos se modifica.
 | `Configuration for joint_1: direction must be an integer` | `direction` escrito como `1.0`. | Escribe `1` o `-1`. |
 | `joint_1: invalid position limits` | `min_position_rad ≥ max_position_rad`. | Corrige los límites. |
 | `Configuration for joint_1: gear_ratio must be a number` | Un campo vacío, en `null` o escrito como texto. | Completa el valor. |
-| `Configuration for joint_1: slot moved in joints.json v2: ...` | `joints.json` tiene el formato v1. | Pásalo al formato actual con las tablas de [PARAMETROS.md](../movemaster_hardware/docs/PARAMETROS.md#pasar-del-formato-anterior). |
-| `Configuration for joint_1: slots.0.maxmotion.cruise_velocity was in motor units; joints.json v3 ...` | El perfil MAXMotion está en RPM del motor (formato v2). | Pásalo a unidades de la articulación, y PIDF también, con la tabla de [PARAMETROS.md](../movemaster_hardware/docs/PARAMETROS.md#pasar-de-unidades-del-motor-v2-a-unidades-de-la-articulación-v3). |
+| `Configuration for joint_1: slot moved in joints.json v2: ...` | `joints.json` tiene el formato anterior. | Pásalo al formato v2 con la tabla de [PARAMETROS.md](../movemaster_hardware/docs/PARAMETROS.md#pasar-del-formato-anterior). |
 | `Configuration for joint_1: spark.idle is not a known key` | Una clave mal escrita. | Corrige el nombre; el mensaje dice en qué bloque está. |
-| `joint_1 slot 0: MAXMotion cruise_velocity_rad_s exceeds max_velocity_rad_s` | El perfil del slot movería la articulación más rápido que su límite. | Baja `cruise_velocity_rad_s` o revisa `max_velocity_rad_s`. |
-| `joint_1: gear_ratio gives conversion factors outside float32` | `gear_ratio` absurdo (por ejemplo `1e-40`): el SPARK no puede guardar su factor. | Corrige la reducción. |
+| `joint_1 slot 0: MAXMotion cruise_velocity exceeds max_velocity_rad_s` | El perfil del slot movería la articulación más rápido que su límite. | Baja `cruise_velocity` o revisa `max_velocity_rad_s` y `gear_ratio`. |
 | `joint_1: MAXMotion control needs a maxmotion block in slot 1` | `control` arranca en `maxmotion` con un slot sin perfil. | Agrega `maxmotion` al slot o usa `"mode": "position"`. |
 | `if_nametoindex: No such device` | No existe `can0` (adaptador desconectado o con otro nombre). | `ip link`; usa `can_interface:=...`. |
 | `write(SocketCAN): Network is down` | `can0` existe pero está abajo. | Paso 3. |
@@ -985,8 +947,7 @@ Ninguno de los dos se modifica.
 | `Control loop gap exceeded; refusing automatic re-enable` | El lazo se detuvo más de `max_cycle_gap_s` (PC sobrecargado, depurador). | Recupera (paso 9); si se repite, sube `max_cycle_gap_s` con cuidado. |
 | `joint_1: position command outside calibrated limits` | El JTC pidió un objetivo fuera de los límites. | Envía objetivos dentro de `joints.json`; recupera. |
 | `joint_1: Position target exceeds max_following_error_rad from the measured position` | En modo `position`, el objetivo quedó demasiado lejos del eje: trayectoria muy rápida, ganancias bajas o un choque. | Da más `time_from_start`, revisa el PID o el obstáculo; sube `max_following_error_rad` solo con margen medido. Recupera. |
-| `spark_commission`: `NO RESPONDE` | Ese CAN ID no envía `STATUS_0`. Recién encendido, un SPARK no transmite hasta ver tráfico en el bus, y `spark_commission` solo escucha. | `cansend can0 123#00` y repite; si sigue, revisa CAN ID, alimentación y `candump`. |
-| `candump can0` en blanco con los SPARK encendidos | Ningún programa ha transmitido desde que encendieron. | `cansend can0 123#00` desde otra terminal (paso 3). |
+| `spark_commission`: `NO RESPONDE` | Ese CAN ID no envía `STATUS_0`. | Revisa CAN ID, alimentación y `candump`. |
 | `spark_commission`: `Hay un heartbeat de habilitacion en el bus` | Otro programa está habilitando motores. | Cierra el `controller_manager`, `spark_console` o el backend Python. |
 | `RESET_SAFE_PARAMETERS rejected on CAN 1: RESULT_CODE 1` o `Timeout waiting for PERSIST_PARAMETERS_RESPONSE on CAN 1` | El SPARK rechazó o no confirmó el restablecimiento o el guardado. | Repite la puesta en marcha de ese eje; si persiste, revisa el firmware con REV Hardware Client. |
 | `CAN error frame received: ...` | El adaptador reportó un error de bus; el texto dice cuál (por ejemplo `controller tx-warning`, `protocol stuff, bus-error`, `bus-off`). | `ip -details -statistics link show can0` y `candump -e can0,0~0,#FFFFFFFF` mientras se reproduce; revisa resistencias de 120 Ω, cableado y bitrate. |
@@ -994,4 +955,4 @@ Ninguno de los dos se modifica.
 | Después de la puesta en marcha, un eje gira al revés que antes | El restablecimiento dejó `Inverted` (ID 45) en `false`, y antes estaba activado en REV Hardware Client. | Corrige `direction` en `joints.json`; MoveMaster no usa `Inverted`. |
 | La posición en ROS no coincide con la real | `zero_offset_rad` o `gear_ratio` incorrectos, o el encoder perdió su cero. | Recalibra con `driver_monitor`. |
 | Cambié `joints.json` y no pasa nada | El launch lee la copia instalada. | Compila con `--symlink-install` o vuelve a compilar. |
-| La acción termina tarde | En modo `maxmotion`, el SPARK limita la velocidad a la `cruise_velocity_rad_s` del slot; la trayectoria pedía más. | Da más `time_from_start` o sube `cruise_velocity_rad_s`, sin pasar de `max_velocity_rad_s`. |
+| La acción termina tarde | En modo `maxmotion`, el SPARK limita la velocidad a la `cruise_velocity` del slot; la trayectoria pedía más. | Da más `time_from_start` o sube `cruise_velocity`, sin pasar de `max_velocity_rad_s`. |
