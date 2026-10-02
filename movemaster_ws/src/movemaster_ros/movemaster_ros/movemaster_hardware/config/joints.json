@@ -13,7 +13,7 @@
       "zero_offset_rad": 0,
       "min_position_rad": -3.1416,
       "max_position_rad": 3.1416,
-      "max_velocity_rad_s": 21.0,
+      "max_velocity_rad_s": 100,
       "spark": {
         "motor_type": "brushless",
         "idle_mode": "brake",
@@ -33,8 +33,8 @@
             "f": 0
           },
           "maxmotion": {
-            "cruise_velocity_rad_s": 0.97,
-            "max_acceleration_rad_s2": 0.485,
+            "cruise_velocity_rad_s": 200,
+            "max_acceleration_rad_s2": 100,
             "allowed_profile_error_rad": 0.01745
           }
         }
