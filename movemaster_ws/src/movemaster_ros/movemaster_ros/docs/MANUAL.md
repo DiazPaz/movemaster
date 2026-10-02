@@ -30,7 +30,6 @@ en [DICCIONARIO.md](DICCIONARIO.md).
 movemaster_ws/                                  workspace de colcon (desde aquí se compila)
 ├── colcon_defaults.yaml                        le dice a colcon dónde buscar los paquetes
 └── src/
-    ├── movemaster_hardware/COLCON_IGNORE       versión anterior del plugin, ignorada
     ├── movemaster_driver/, sparkmax_protocol/  paquetes anteriores (no los usa el nodo)
     └── movemaster_ros/                         paquete Python (prototipo movemaster_node)
         └── movemaster_ros/                     ← aquí viven los paquetes del nodo
@@ -716,7 +715,7 @@ ros2 control switch_controllers --activate joint_trajectory_controller
 
 ## 13. Los archivos, uno por uno
 
-### 13.1 `movemaster_ws/colcon_defaults.yaml` y `COLCON_IGNORE`
+### 13.1 `movemaster_ws/colcon_defaults.yaml`
 
 ```yaml
 build:
@@ -732,11 +731,6 @@ veía nada de `src/movemaster_ros/movemaster_ros/`. Este archivo, que colcon lee
 del directorio desde donde se ejecuta, le añade esa carpeta como segunda base
 de búsqueda para `build`, `test`, `list`, `graph` e `info`. `&base_paths` define
 la lista una vez y `*base_paths` la reutiliza (alias de YAML).
-
-`src/movemaster_hardware/COLCON_IGNORE` es un archivo cuya sola presencia hace
-que colcon y rosdep ignoren esa carpeta: es la versión anterior del plugin, con
-el mismo nombre de paquete, que de otro modo se compilaría en lugar de la
-vigente. Su texto es solo una nota.
 
 ### 13.2 `package.xml` (los dos paquetes)
 
@@ -929,7 +923,8 @@ Ninguno de los dos se modifica.
 | Síntoma o mensaje | Causa probable | Solución |
 |---|---|---|
 | `Package 'movemaster_control' not found` | No hiciste `source install/setup.bash` o compilaste fuera de `movemaster_ws/`. | Compila desde `movemaster_ws/` y haz `source` en cada terminal. |
-| `colcon list` muestra `movemaster_hardware` en `src/movemaster_hardware` | colcon no leyó `colcon_defaults.yaml` (no estás en `movemaster_ws/`) o falta `COLCON_IGNORE`. | Ejecuta colcon desde `movemaster_ws/`. |
+| `colcon list` no muestra `movemaster_hardware` ni `movemaster_control` | colcon no leyó `colcon_defaults.yaml`: no lo ejecutaste desde `movemaster_ws/`. | Ejecuta colcon desde `movemaster_ws/`. |
+| `CMake Error: The source ".../movemaster_hardware/CMakeLists.txt" does not match the source ".../src/movemaster_hardware/CMakeLists.txt" used to generate cache` | `build/movemaster_hardware` se configuró con la copia vieja del plugin (`src/movemaster_hardware`), que ya no existe. CMake no reutiliza un caché de otra carpeta. | Desde `movemaster_ws/`: `rm -rf build/movemaster_hardware install/movemaster_hardware` y vuelve a compilar. |
 | `Configured joints must exactly match the ros2_control joint list` | El URDF y `joints.json` declaran articulaciones distintas (por ejemplo, un URDF propio con otra lista). | Usa el macro `movemaster_ros2_control`, que las genera desde `joints.json`. |
 | `Configuration for joint_1: direction must be an integer` | `direction` escrito como `1.0`. | Escribe `1` o `-1`. |
 | `joint_1: invalid position limits` | `min_position_rad ≥ max_position_rad`. | Corrige los límites. |

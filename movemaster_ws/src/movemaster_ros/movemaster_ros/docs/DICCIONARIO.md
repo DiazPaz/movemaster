@@ -121,10 +121,6 @@ Archivo en `movemaster_ws/` con opciones por defecto de colcon. Aquí añade
 `src/movemaster_ros/movemaster_ros` a las carpetas de búsqueda, porque colcon no
 entra en el paquete Python `movemaster_ros`. MANUAL §13.1.
 
-**COLCON_IGNORE**
-Archivo cuya sola existencia hace que colcon y rosdep ignoren la carpeta. Está
-en `src/movemaster_hardware` (versión anterior del plugin).
-
 **Command interface (interfaz de comando)**
 Valor que un controlador escribe y el hardware ejecuta. MoveMaster exporta una
 por eje: `joint_N/position`, en radianes.
