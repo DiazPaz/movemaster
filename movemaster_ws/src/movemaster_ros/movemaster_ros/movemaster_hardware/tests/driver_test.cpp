@@ -4,6 +4,7 @@
 using namespace movemaster;
 using namespace movemaster::testing;
 namespace {
+constexpr double tau = 6.283185307179586;
 void pause_cycle() { std::this_thread::sleep_for(std::chrono::milliseconds(6)); }
 void healthy_session(const char *spec, int count) {
   auto config = config_for(spec, count);
@@ -21,21 +22,27 @@ void healthy_session(const char *spec, int count) {
   for (int i = 0; i < count; ++i) {
     const auto &s = driver.states()[i];
     const auto &j = config.joints[i];
-    const double expected = MoveMasterDriver::rotations_to_radians((i + 1) * 0.25, j);
-    check(std::abs(s.position - expected) < 1e-12, "Position conversion incorrect");
-    check(std::abs(s.velocity - MoveMasterDriver::rpm_to_rad_s(60, j)) < 1e-12, "Velocity conversion incorrect");
+    // The SPARK applies gear_ratio, the driver direction and zero offset.
+    const double rotations = SimulatedSparkBus::motor_rotations(i + 1);
+    const double expected = j.zero_offset_rad + j.direction * rotations * tau / j.gear_ratio;
+    check(std::abs(s.position - expected) < 1e-6, "Joint position from STATUS_2 incorrect");
+    check(std::abs(s.velocity - j.direction * SimulatedSparkBus::kMotorRpm * tau / (60 * j.gear_ratio)) < 1e-6,
+        "Joint velocity from STATUS_2 incorrect");
     check(s.primary_heartbeat_lock, "Heartbeat lock state lost");
     const auto d = spy->frames["MAXMOTION_POSITION_SETPOINT"].decode_payload(spy->sent[i].data);
-    check(d.at("SETPOINT").get<double>() == (i + 1) * 0.25, "Activation did not hold measured position");
+    check(std::abs(spy->setpoint_rotations(i + 1, d.at("SETPOINT").get<double>()) - rotations) < 1e-6,
+        "Activation did not hold measured position");
     targets.push_back(expected + 0.05);
-    check(std::abs(MoveMasterDriver::rotations_to_radians(MoveMasterDriver::radians_to_rotations(expected, j), j)
+    check(std::abs(MoveMasterDriver::spark_to_joint(MoveMasterDriver::joint_to_spark(expected, j), j)
         - expected) < 1e-12, "Conversion inverse incorrect");
   }
   pause_cycle(); driver.read(); spy->sent.clear(); driver.write(targets);
   check(spy->sent.size() == static_cast<std::size_t>(count + 1), "Runtime frame count");
   for (int i = 0; i < count; ++i) {
+    const auto &j = config.joints[i];
     const double sp = spy->frames["MAXMOTION_POSITION_SETPOINT"].decode_payload(spy->sent[i].data).at("SETPOINT");
-    check(std::abs(sp - MoveMasterDriver::radians_to_rotations(targets[i], config.joints[i])) < 1e-6, "Command units incorrect");
+    const double rotations = j.direction * (targets[i] - j.zero_offset_rad) * j.gear_ratio / tau;
+    check(std::abs(spy->setpoint_rotations(i + 1, sp) - rotations) < 1e-5, "Joint target turns the motor wrong");
   }
   driver.deactivate(); spy->sent.clear(); driver.write(targets);
   check(spy->sent.empty(), "Inactive driver transmitted");
@@ -95,9 +102,11 @@ void configures_baseline_and_slots(const char *spec) {
   check(spy->value(1, 6) == 1 && spy->value(2, 6) == 0, "Idle mode not written");
   check(spy->value(1, 59) == 40 && spy->value(1, 60) == 40 && spy->value(2, 59) == 20 && spy->value(2, 60) == 20,
       "Current limit not written at stall and free speed");
-  check(as_float(spy->value(1, 112)) == 1.0f && as_float(spy->value(1, 113)) == 1.0f,
-      "Conversion factors are not 1: the SPARK must stay in motor units");
+  check(as_float(spy->value(1, 112)) == static_cast<float>(tau / 10) &&
+      as_float(spy->value(1, 113)) == static_cast<float>(tau / 600), "Conversion factors do not carry gear_ratio 10");
   check(as_float(spy->value(1, 13)) == 0.05f && as_float(spy->value(1, 13 + 8)) == 0.2f, "Slot gains not written");
+  check(as_float(spy->value(1, 166)) == 1.5f && as_float(spy->value(1, 167)) == 3.0f &&
+      as_float(spy->value(1, 169)) == 0.01f, "MAXMotion profile not written in joint units");
   check(as_float(spy->value(1, 19)) == -1.0f && as_float(spy->value(1, 20)) == 1.0f, "Default output range not written");
   check(as_float(spy->value(1, 19 + 8)) == -0.3f && as_float(spy->value(1, 20 + 8)) == 0.3f, "Slot output range not written");
   check(spy->written(1, 166) && !spy->written(1, 166 + 5), "MAXMotion written to a Position-only slot");
@@ -132,9 +141,9 @@ void control_modes(const char *spec) {
   driver.write(near);
   const auto first = setpoint_sent(*spy, spy->sent[0]), second = setpoint_sent(*spy, spy->sent[1]);
   check(first.frame == "POSITION_SETPOINT" && first.slot == 1, "Joint 1 did not switch to Position slot 1");
-  check(std::abs(first.setpoint - MoveMasterDriver::radians_to_rotations(near[0], j1)) < 1e-6, "Position units");
+  check(std::abs(first.setpoint - MoveMasterDriver::joint_to_spark(near[0], j1)) < 1e-6, "Position units");
   check(second.frame == "MAXMOTION_POSITION_SETPOINT" && second.slot == 0, "Joint 2 control changed");
-  check(std::abs(second.setpoint - MoveMasterDriver::radians_to_rotations(near[1], j2)) < 1e-5, "MAXMotion units");
+  check(std::abs(second.setpoint - MoveMasterDriver::joint_to_spark(near[1], j2)) < 1e-6, "MAXMotion units");
   pause_cycle(); driver.read(); spy->sent.clear();
   const std::vector<double> far{driver.states()[0].position + 0.6, driver.states()[1].position};
   rejects_with([&] { driver.write(far); }, "max_following_error_rad");
@@ -153,7 +162,8 @@ void position_at_activation(const char *spec) {
   spy->sent.clear();
   driver.activate();
   const auto hold = setpoint_sent(*spy, spy->sent[0]);
-  check(hold.frame == "POSITION_SETPOINT" && hold.slot == 2 && hold.setpoint == 0.25,
+  check(hold.frame == "POSITION_SETPOINT" && hold.slot == 2 &&
+      std::abs(spy->setpoint_rotations(1, hold.setpoint) - SimulatedSparkBus::motor_rotations(1)) < 1e-6,
       "Activation did not hold the measured position in Position slot 2");
   driver.set_control(0, ControlMode::kMAXMotionPosition, 0);
   driver.deactivate();
@@ -176,6 +186,10 @@ int main(int argc, char **argv) {
     rejects([&] { MoveMasterDriver driver(duplicate); }, "Duplicate CAN IDs accepted");
     auto missing = config_for(argv[1]); missing.joints[0].gear_ratio = 0;
     rejects([&] { MoveMasterDriver driver(missing); }, "Zero reduction accepted");
+    for (double gear_ratio : {1e-39, 1e40}) {
+      auto extreme = config_for(argv[1]); extreme.joints[0].gear_ratio = gear_ratio;
+      rejects_with([&] { MoveMasterDriver driver(extreme); }, "conversion factors outside float32");
+    }
     // ACK success, type, raw value and timeout each independently guard activation.
     for (int fault = 0; fault < 4; ++fault) {
       auto c = config_for(argv[1], 1);
@@ -211,7 +225,8 @@ int main(int argc, char **argv) {
       check(!d.active() && !d.fault().empty(), "Runtime failure did not latch");
       for (const auto &p : spy->sent) check(p.arbitration_id != 0x01011840U, "Heartbeat continued after failure");
     }
-    std::cout << "PASS: 1/3/6 axes, conversions, ACK checks, activation order, limits, paced writes, "
+    std::cout << "PASS: 1/3/6 axes, gear_ratio in the SPARK's conversion factors, ACK checks, activation order, "
+        "limits, paced writes, "
         "baseline and slots in RAM, Position/MAXMotion per joint, following error, "
         "stale/malformed feedback, TX failure and loop gap.\n";
     return 0;

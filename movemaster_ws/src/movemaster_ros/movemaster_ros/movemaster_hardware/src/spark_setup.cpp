@@ -74,8 +74,12 @@ void SparkSetup::write_slot(int slot, const SlotConfig &config) const {
   for (const auto &item : config.pidf.items()) write(spark_["pidf"][slot][item.key()], item.value());
   write(rev::output_min(slot), config.output_min);
   write(rev::output_max(slot), config.output_max);
-  if (!config.maxmotion.is_null())
-    for (const auto &item : config.maxmotion.items()) write(spark_["maxmotion"][slot][item.key()], item.value());
+  if (const auto &profile = config.maxmotion) {
+    const auto &maxmotion = spark_["maxmotion"][slot];
+    write(maxmotion["cruise_velocity"], profile->cruise_velocity_rad_s);
+    write(maxmotion["max_acceleration"], profile->max_acceleration_rad_s2);
+    write(maxmotion["allowed_profile_error"], profile->allowed_profile_error_rad);
+  }
 }
 void SparkSetup::flash_command(const std::string &request, const std::string &response) const {
   const auto &frame = spark_.frames[request];

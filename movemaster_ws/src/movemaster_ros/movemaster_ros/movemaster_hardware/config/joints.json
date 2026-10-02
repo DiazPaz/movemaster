@@ -1,14 +1,14 @@
 {
-  "period_s": 0.02,
-  "status_period_ms": 20,
+  "period_s": 0.01,
+  "status_period_ms": 10,
   "feedback_timeout_s": 0.3,
   "response_timeout_s": 0.5,
   "disable_settle_s": 0.5,
-  "max_cycle_gap_s": 0.1,
+  "max_cycle_gap_s": 0.02,
   "joints": {
     "joint_1": {
-      "can_id": 2,
-      "gear_ratio": 1.0,
+      "can_id": 1,
+      "gear_ratio": 108.0,
       "direction": 1,
       "zero_offset_rad": 0,
       "min_position_rad": -3.1416,
@@ -22,20 +22,20 @@
       "control": {
         "mode": "maxmotion",
         "slot": 0,
-        "max_following_error_rad": 0.5
+        "max_following_error_rad": 0.1
       },
       "slots": {
         "0": {
           "pidf": {
-            "p": 1.0,
+            "p": 17.19,
             "i": 0,
             "d": 0,
             "f": 0
           },
           "maxmotion": {
-            "cruise_velocity": 200,
-            "max_acceleration": 500,
-            "allowed_profile_error": 0
+            "cruise_velocity_rad_s": 0.97,
+            "max_acceleration_rad_s2": 0.485,
+            "allowed_profile_error_rad": 0.01745
           }
         }
       }

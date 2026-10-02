@@ -7,7 +7,7 @@ Se organizan en cinco capas, de ROS hacia el hardware:
 |---|---|---|
 | 1. Adaptador ros2_control | `MovemasterHardware` | `movemaster_hardware.hpp`, `movemaster_hardware.cpp` |
 | 2. Driver | `MoveMasterDriver`, `DriverConfig`, `JointConfig`, `JointControl`, `JointState`, `load_driver_config()`, `validate_driver_config()` | `movemaster_driver.hpp`, `movemaster_driver.cpp`, `driver_config.cpp` |
-| 3. Configuración de los SPARK | `SparkSetup`, `SparkBaseline`, `SlotConfig`, `IdleMode`, `BusSurvey`, `survey_bus()` y los parámetros `rev::` | `spark_setup.hpp`, `spark_setup.cpp` |
+| 3. Configuración de los SPARK | `SparkSetup`, `SparkBaseline`, `SlotConfig`, `MAXMotionProfile`, `IdleMode`, `BusSurvey`, `survey_bus()` y los parámetros `rev::` | `spark_setup.hpp`, `spark_setup.cpp` |
 | 4. Protocolo SPARK | `SparkMAXMotionProtocol` (con la clase anidada `Access`), `ControlMode`, `SparkFrameDatabase`, `FrameSpec`, `ParameterGroup`, `ParameterDefinition`, `SignalCodec`, `CANPacket`, `CANBus`, `SpecError`, `TimeoutError` | `sparkmax_json_protocol.hpp`, `sparkmax_json_protocol.cpp` |
 | 5. Transporte CAN | `SocketCAN` | `socketcan.hpp`, `socketcan.cpp` |
 
@@ -51,6 +51,9 @@ classDiagram
   class SlotConfig {
     <<struct>>
   }
+  class MAXMotionProfile {
+    <<struct>>
+  }
   class SparkMAXMotionProtocol
   class Access["SparkMAXMotionProtocol::Access"] {
     <<clase anidada>>
@@ -86,6 +89,7 @@ classDiagram
   DriverConfig *-- "1..6" JointConfig : joints
   JointConfig *-- SparkBaseline : spark
   JointConfig *-- "1..4" SlotConfig : slots
+  SlotConfig *-- "0..1" MAXMotionProfile : maxmotion
   MoveMasterDriver *-- "1..6" JointControl : controls_
   MoveMasterDriver *-- "1..6" JointState : states_
   MoveMasterDriver *-- "1..6" SparkMAXMotionProtocol : protocols_
@@ -208,9 +212,10 @@ classDiagram
     +states() vector~JointState~
     +active() bool
     +fault() string
-    +radians_to_rotations(double radians, JointConfig joint) double$
-    +rotations_to_radians(double rotations, JointConfig joint) double$
-    +rpm_to_rad_s(double rpm, JointConfig joint) double$
+    +position_factor(JointConfig joint) double$
+    +velocity_factor(JointConfig joint) double$
+    +joint_to_spark(double radians, JointConfig joint) double$
+    +spark_to_joint(double position, JointConfig joint) double$
     -ensure_healthy() void
     -trip(string message) void
     -receive(CANPacket packet) void
@@ -292,7 +297,13 @@ classDiagram
     +Json pidf
     +double output_min
     +double output_max
-    +Json maxmotion
+    +optional~MAXMotionProfile~ maxmotion
+  }
+  class MAXMotionProfile {
+    <<struct>>
+    +double cruise_velocity_rad_s
+    +double max_acceleration_rad_s2
+    +double allowed_profile_error_rad
   }
   class IdleMode {
     <<enumeration>>
@@ -456,6 +467,7 @@ classDiagram
   DriverConfig *-- "1..6" JointConfig : joints
   JointConfig *-- SparkBaseline : spark
   JointConfig *-- "1..4" SlotConfig : slots
+  SlotConfig *-- "0..1" MAXMotionProfile : maxmotion
   JointConfig ..> ControlMode : mode
   SparkBaseline ..> IdleMode : idle_mode
   MoveMasterDriver *-- "1..6" JointControl : controls_

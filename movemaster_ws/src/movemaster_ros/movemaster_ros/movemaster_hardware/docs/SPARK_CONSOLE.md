@@ -36,21 +36,22 @@ compilar el resto del paquete.
 | Comando | Acción |
 |---|---|
 | `on` | Habilita con la posición medida como objetivo inicial. |
-| `sp 0.5` | Envía la posición absoluta de 0.5 rotaciones del encoder del motor. |
-| `sp -0.25` | Envía la posición absoluta de -0.25 rotaciones, si los límites la permiten. |
+| `sp 0.5` | Lleva la articulación a la posición absoluta 0.5 rad. |
+| `sp -0.25` | Lleva la articulación a -0.25 rad, si los límites la permiten. |
 | `mode position` | Cambia a Position: el PID del slot persigue el SP sin perfil. |
 | `mode maxmotion` | Cambia a MAXMotion: el SPARK perfila el movimiento con el slot. |
 | `slot 1` | Cambia de slot (de preset), conservando el modo. |
-| `pv` | Muestra la última posición recibida en rotaciones del motor y radianes articulares, corriente, modo, slot y estado de habilitación. |
+| `pv` | Muestra la última posición de la articulación en radianes y grados, las vueltas del motor desde su cero, la corriente, el modo, el slot y si está habilitado. |
 | `off` | Deja de transmitir referencias y heartbeat. |
 | `q` | Deshabilita y sale. Ctrl+C, SIGTERM o EOF también terminan la consola. |
 
-Los setpoints son **absolutos**, no incrementos. `sp 0.5` no significa avanzar
-media vuelta desde la posición actual, sino ir a la lectura 0.5 del encoder.
-Tampoco son radianes: la consola convierte rotaciones a radianes para llamar al
-driver, y el driver aplica la conversión inversa para construir el setpoint.
-Por ejemplo, con una reducción 10:1, media vuelta de motor corresponde a 1/20
-de vuelta de la articulación, además del sentido y offset configurados.
+Los setpoints son **absolutos**, no incrementos, y están en **radianes de la
+articulación**, igual que en ROS y en `joints.json`. `sp 0.5` lleva la
+articulación a 0.5 rad, con el sentido y el `zero_offset_rad` configurados. La
+reducción la aplica el SPARK con su factor de conversión: con `gear_ratio`
+108, `sp 6.2832` (una vuelta de la articulación) gira el motor 108 vueltas.
+`pv` muestra esas vueltas del motor para comprobarlo a mano. Al arrancar, la
+consola indica la reducción que escribió en el SPARK.
 
 Escribe un comando por línea. Antes de `on`, un SP se rechaza y no se guarda.
 Al volver a habilitar se obtiene otra posición medida; no se recupera un
@@ -61,7 +62,7 @@ aplicar torque para sostener su posición.
 
 - **Position no tiene perfil.** Un SP lejano llevaría el PID a su salida
   máxima. Por eso, en modo `position`, la consola solo acepta un SP a menos de
-  `max_following_error_rad` de la posición medida; si no, lo rechaza y el eje
+  `max_following_error_rad` (en rad) de la posición medida; si no, lo rechaza y el eje
   sigue donde estaba. Sirve para ver la respuesta del PID a escalones pequeños
   al ajustar ganancias. Para movimientos largos usa `mode maxmotion`.
 - **Cambiar de modo mantiene la posición medida.** Con el eje habilitado, el

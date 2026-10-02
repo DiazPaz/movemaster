@@ -25,9 +25,9 @@ Transición del ciclo de vida que habilita el hardware. En MoveMaster: espera
 `STATUS_0` y `STATUS_2` recientes de todos los ejes, toma la posición medida
 como setpoint y envía el primer heartbeat. Ver *Ciclo de vida*.
 
-**allowed_profile_error**
+**allowed_profile_error_rad**
 Campo de `slots.<n>.maxmotion` en `joints.json`: error permitido por el perfil
-MAXMotion, en rotaciones del motor.
+MAXMotion, en radianes de la articulación.
 
 **ament / ament_cmake / ament_python**
 Sistema de construcción de ROS 2. `ament_cmake` es para paquetes CMake
@@ -162,10 +162,9 @@ que carga el hardware y los controladores, y ejecuta el lazo
 Corredor de pruebas de CMake. `ctest --test-dir build` corre las cinco
 pruebas del plugin. `colcon test` lo usa por debajo.
 
-**cruise_velocity**
-Campo de `slots.<n>.maxmotion` en `joints.json`: velocidad máxima del motor en
-RPM en modo MAXMotion. Convertida a la articulación
-(`cruise_velocity · 2π / 60 / gear_ratio` rad/s) no puede superar
+**cruise_velocity_rad_s**
+Campo de `slots.<n>.maxmotion` en `joints.json`: velocidad máxima de la
+articulación en modo MAXMotion, en rad/s. No puede superar
 `max_velocity_rad_s`.
 
 **current**
@@ -227,8 +226,9 @@ Método de `SparkSetup`: envía una petición y espera su respuesta (por ejemplo
 
 **Factor de conversión (position/velocity conversion factor)**
 Parámetros 112 y 113 del SPARK: multiplican lo que reporta y lo que entiende de
-cada setpoint. El driver los deja siempre en 1.0, así que el SPARK trabaja en
-rotaciones y RPM del motor y la reducción solo está en `gear_ratio`.
+cada setpoint. El driver escribe en ellos la reducción (`2π / gear_ratio` y
+`2π / (60 · gear_ratio)`), así que el SPARK trabaja en radianes y rad/s de la
+articulación, igual que PIDF y MAXMotion.
 [PARAMETROS.md](../movemaster_hardware/docs/PARAMETROS.md).
 
 ## F
@@ -258,8 +258,9 @@ decodificarla.
 
 **gear_ratio**
 Campo de `joints.json`: vueltas del motor por cada vuelta de la articulación
-(reducción). Siempre positivo; el sentido lo da `direction`. Es la única
-reducción del sistema: los factores de conversión del SPARK quedan en 1.0.
+(reducción). Siempre positivo; el sentido lo da `direction`. El driver la
+escribe en el SPARK como factor de conversión, y es el único lugar donde se
+aplica.
 
 **GenericSystem (mock_components)**
 Hardware simulado de `ros2_control`: copia el comando al estado sin física. Se
@@ -324,7 +325,7 @@ cada ciclo escribe la posición deseada de cada eje. Configurado en
 **joints.json**
 Configuración de los ejes en `movemaster_hardware/config/`. Es la única fuente
 de las articulaciones: la lee el plugin y de ella se generan el URDF, los
-`joints` del JTC y el `update_rate`. Formato v2: cada eje con `spark`,
+`joints` del JTC y el `update_rate`. Formato v3: cada eje con `spark`,
 `control` y `slots`; una clave desconocida es un error. MANUAL §4.
 
 **joint_config_path / joint_config**
@@ -370,9 +371,9 @@ movimiento con la velocidad de crucero y la aceleración máximas del slot. Por
 eso el eje sigue al setpoint con algo de retraso. Se elige enviando
 `MAXMOTION_POSITION_SETPOINT`.
 
-**max_acceleration**
-Campo de `slots.<n>.maxmotion` en `joints.json`: aceleración máxima del motor en
-RPM/s.
+**max_acceleration_rad_s2**
+Campo de `slots.<n>.maxmotion` en `joints.json`: aceleración máxima de la
+articulación en modo MAXMotion, en rad/s².
 
 **max_cycle_gap_s**
 Campo global de `joints.json` (0.1 s): tiempo máximo sin transmitir estando
@@ -554,9 +555,10 @@ Herramienta que lee los `package.xml` e instala las dependencias del sistema
 (`rosdep install --from-paths …`).
 
 **Rotaciones de motor**
-Unidad del SPARK para posición (vueltas del encoder del motor). El driver
-convierte a radianes de articulación con `gear_ratio`, `direction` y
-`zero_offset_rad`.
+Unidad de fábrica del SPARK para posición (vueltas del encoder del motor).
+MoveMaster no la usa: con el factor de conversión, el SPARK cuenta radianes de
+la articulación. `spark_console` las muestra en `pv` para comprobar la
+reducción a mano.
 
 **RViz**
 Visualizador 3D de ROS para ver el robot, TF y trayectorias.
@@ -568,7 +570,7 @@ Método del driver para cambiar el modo y el slot de un eje en caliente; aplica
 desde el siguiente `write()`. En `spark_console`: `mode` y `slot`.
 
 **Setpoint (POSITION_SETPOINT / MAXMOTION_POSITION_SETPOINT)**
-Trama con la posición objetivo, en rotaciones de motor, y el slot (`PID_SLOT`).
+Trama con la posición objetivo, en radianes de la articulación, y el slot (`PID_SLOT`).
 La trama elige el modo de control. Se envía una por eje en cada ciclo activo.
 
 **slot**

@@ -50,6 +50,18 @@ void in(const std::string &block, Parse parse) {
   try { parse(); }
   catch (const std::exception &e) { throw std::invalid_argument(block + "." + e.what()); }
 }
+// Since v3 the SPARK works in joint units, and the keys name them. A v2 key held motor units:
+// rejecting it keeps an old value from being reread as a joint one.
+MAXMotionProfile load_maxmotion(const Json &m) {
+  for (const auto *motor_units : {"cruise_velocity", "max_acceleration", "allowed_profile_error"})
+    if (m.contains(motor_units))
+      throw std::invalid_argument(std::string(motor_units) + " was in motor units; joints.json v3 takes "
+          "cruise_velocity_rad_s, max_acceleration_rad_s2 and allowed_profile_error_rad at the joint, "
+          "and PIDF per joint radian (docs/PARAMETROS.md)");
+  only_keys(m, {"cruise_velocity_rad_s", "max_acceleration_rad_s2", "allowed_profile_error_rad"});
+  return {number(m, "cruise_velocity_rad_s"), number(m, "max_acceleration_rad_s2"),
+      number(m, "allowed_profile_error_rad")};
+}
 SlotConfig load_slot(const Json &s) {
   only_keys(s, {"pidf", "output_range", "maxmotion"});
   SlotConfig slot;
@@ -61,7 +73,10 @@ SlotConfig load_slot(const Json &s) {
     slot.output_min = range[0].get<double>();
     slot.output_max = range[1].get<double>();
   }
-  if (s.contains("maxmotion")) slot.maxmotion = s.at("maxmotion");
+  if (s.contains("maxmotion")) {
+    const auto &maxmotion = object_field(s, "maxmotion");
+    in("maxmotion", [&] { slot.maxmotion = load_maxmotion(maxmotion); });
+  }
   return slot;
 }
 JointConfig load_joint(const std::string &name, const Json &j) {

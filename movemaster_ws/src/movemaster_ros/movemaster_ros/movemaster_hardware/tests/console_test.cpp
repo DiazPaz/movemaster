@@ -39,7 +39,7 @@ DriverConfig config() {
   cfg.period_s = 0.005;
   JointConfig joint;
   joint.name = "joint_1"; joint.device_id = 1;
-  joint.gear_ratio = 10; joint.direction = -1; joint.zero_offset_rad = 0.1;
+  joint.gear_ratio = 10; joint.direction = -1; joint.zero_offset_rad = 0;
   joint.min_position_rad = -2; joint.max_position_rad = 2;
   joint.max_following_error_rad = 0.2;
   cfg.joints = {joint};
@@ -87,11 +87,12 @@ int main() {
     check(driver.sent.size() >= 12, "Control loop stalled while command was incomplete");
     check(std::count(driver.sent.begin(), driver.sent.end(), 0.1) >= 8, "Initial measured hold lost during input pause");
     check(driver.sent.front() == 0.1, "Pre-enable SP was retained instead of measured position");
-    const double expected = 0.1 - 3.14159265358979323846 / 10;
-    check(std::any_of(driver.sent.begin(), driver.sent.end(), [&](double q) { return std::abs(q - expected) < 1e-12; }),
-        "Motor rotations not converted correctly");
+    check(std::count(driver.sent.begin(), driver.sent.end(), 0.5) > 0, "SP in joint radians not sent as typed");
+    check(result.output.find("SP = 0.5 rad (28.6479 grados)") != std::string::npos, "SP not echoed in rad and degrees");
     check(result.output.find("Primero escribe on") != std::string::npos, "SP allowed while inactive");
-    check(result.output.find("Ultima PV") != std::string::npos, "PV command failed");
+    // PV 0.1 rad with direction -1 and reduction 10 is -0.1 * 10 / 2π motor turns.
+    check(result.output.find("Ultima PV = 0.1 rad (5.72958 grados) | motor -0.159155 rot") != std::string::npos,
+        "PV not shown in joint and motor units");
 
     FakeDriver eof;
     result = session(eof, {{"on\n", 70}});
@@ -115,8 +116,7 @@ int main() {
     check(std::all_of(invalid.sent.begin(), invalid.sent.end(), [](double q) { return q == 0.1; }), "Invalid syntax changed target");
 
     // Position steps stay within the following error; mode changes hold the measured position.
-    const double tau = 6.283185307179586, small = 0.1 - 0.2 * tau / 10, large = 0.1 - 0.5 * tau / 10,
-        long_move = 0.1 - 1.0 * tau / 10;
+    const double small = 0.2, large = 0.5, long_move = 1.0;  // rad; PV 0.1, following error 0.2
     FakeDriver modes;
     result = session(modes, {{"on\n", 30}, {"sp 1\n", 30}, {"mode position\n", 30}, {"sp 0.5\n", 30},
         {"sp 0.2\n", 30}, {"slot 1\n", 30}, {"mode maxmotion\n", 30}, {"slot 0\n", 30},
@@ -131,11 +131,11 @@ int main() {
     check(std::any_of(modes.sent.begin(), modes.sent.end(), at(small)), "Small Position step not sent");
     check(at(long_move)(modes.sent.back()) && modes.control[0].mode == ControlMode::kMAXMotionPosition &&
         modes.control[0].slot == 0, "MAXMotion move after the mode changes");
-    for (const auto *text : {"menos de 0.31831 rot del PV", "Slot 1 en modo position", "Sin cambios: slot 1 has no MAXMotion",
+    for (const auto *text : {"menos de 0.2 rad del PV", "Slot 1 en modo position", "Sin cambios: slot 1 has no MAXMotion",
              "Modo maxmotion, slot 0. Mantiene la posicion medida.", "maxmotion slot 0 | habilitado",
              "Sin cambios: slot is not configured", "Formato: mode position o mode maxmotion."})
       check(result.output.find(text) != std::string::npos, (std::string("Console output lacks: ") + text).c_str());
-    std::cout << "PASS: nonblocking partial commands, initial hold, motor rotations, on/off, limits, EOF, driver errors, "
+    std::cout << "PASS: nonblocking partial commands, initial hold, joint radians, on/off, limits, EOF, driver errors, "
         "modes, slots and Position step limit.\n";
     return 0;
   } catch (const std::exception &e) { std::cerr << "FAIL: " << e.what() << '\n'; return 1; }
