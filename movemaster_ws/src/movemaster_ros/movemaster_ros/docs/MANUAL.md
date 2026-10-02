@@ -30,7 +30,6 @@ en [DICCIONARIO.md](DICCIONARIO.md).
 movemaster_ws/                                  workspace de colcon (desde aquí se compila)
 ├── colcon_defaults.yaml                        le dice a colcon dónde buscar los paquetes
 └── src/
-    ├── movemaster_driver/, sparkmax_protocol/  paquetes anteriores (no los usa el nodo)
     └── movemaster_ros/                         paquete Python (prototipo movemaster_node)
         └── movemaster_ros/                     ← aquí viven los paquetes del nodo
             ├── docs/                           este manual y el diccionario
