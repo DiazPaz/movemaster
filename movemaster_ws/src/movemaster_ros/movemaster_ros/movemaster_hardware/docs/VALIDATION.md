@@ -1,5 +1,29 @@
 # Validación realizada — 26 de septiembre de 2026
 
+## Compilación con ROS 2 Jazzy real
+
+5 de octubre de 2026. La parte ROS del `CMakeLists.txt` no se había configurado
+nunca contra Jazzy: aquí solo se compilaba con `-DMOVEMASTER_BUILD_ROS2=OFF`. En
+la Raspberry Pi fallaba con "The keyword signature for target_link_libraries has
+already been used", porque `ament_target_dependencies()` agrega una llamada sin
+palabra clave al target que ya tenía `PUBLIC`. Se reemplazó por una sola llamada
+con los targets que exportan los paquetes de ROS.
+
+Se probó con ROS 2 Jazzy de RoboStack (ament_cmake 2.5.6, ros2_control 4.47,
+rclcpp 28.1), con CMake 3.28 (el de Ubuntu 24.04) y 4.4, y pytest 7.4:
+
+| Prueba | Resultado |
+|---|---|
+| `colcon build --packages-up-to movemaster_control`, archivo anterior | Falla con el error de la Pi. |
+| La misma compilación con la corrección | Correcta en los dos paquetes. |
+| `colcon test` | 12 pruebas, 0 fallos. |
+| Launch con `use_mock_hardware:=true` | Hardware, `joint_state_broadcaster` y `joint_trajectory_controller` activos. |
+| Launch con el plugin real, sin `can0` | pluginlib carga `movemaster_hardware/MovemasterHardware` y `on_init` valida `joints.json`; `configure` falla en `if_nametoindex`, como debe sin CAN. |
+
+Queda un aviso del compilador: ros2_control 4.47 marca como obsoleto
+`on_init(const HardwareInfo &)`. Se conserva porque la sustitución no existe en
+versiones anteriores de Jazzy.
+
 ## Actualización 0.2.0: parámetros por nivel, modo Position y puesta en marcha
 
 1 de octubre de 2026. Linux x86_64, CMake 3.28, Python 3.11, sin ROS ni CAN.

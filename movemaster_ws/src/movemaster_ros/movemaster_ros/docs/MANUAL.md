@@ -768,6 +768,7 @@ compilación y rosdep para instalar lo que falta.
 | `if(BUILD_TESTING) ... add_test(...)` | Las cinco pruebas de `ctest` (paso 2). |
 | `if(MOVEMASTER_BUILD_ROS2)` → `find_package(ament_cmake hardware_interface pluginlib rclcpp rclcpp_lifecycle)` | Solo con ROS: dependencias del plugin. |
 | `add_library(movemaster_hardware SHARED src/movemaster_hardware.cpp)` | El plugin: una librería **compartida** (`libmovemaster_hardware.so`) que el `controller_manager` carga en tiempo de ejecución. |
+| `target_link_libraries(movemaster_hardware PUBLIC movemaster_driver hardware_interface::hardware_interface ...)` | Enlaza el plugin con el driver y con los targets que exportan `hardware_interface`, `pluginlib`, `rclcpp` y `rclcpp_lifecycle`, en una sola llamada. No se usa `ament_target_dependencies()`: agrega una llamada sin `PUBLIC`/`PRIVATE` y CMake no permite mezclar las dos formas en el mismo target. |
 | `pluginlib_export_plugin_description_file(hardware_interface movemaster_hardware.xml)` | Registra el plugin en el índice de ament para que pluginlib lo encuentre. |
 | `install(...)` | Instala librerías, ejemplos (en `lib/movemaster_hardware`, para `ros2 run`), headers y las carpetas `spec`, `config` y `docs` en `share/movemaster_hardware`. |
 | `ament_export_*`, `ament_package()` | Exporta el paquete para otros paquetes CMake y genera los archivos de ament. |
@@ -921,6 +922,7 @@ Ninguno de los dos se modifica.
 
 | Síntoma o mensaje | Causa probable | Solución |
 |---|---|---|
+| `The keyword signature for target_link_libraries has already been used with the target "movemaster_hardware"` | Tu `CMakeLists.txt` es anterior a la corrección para Jazzy (5 de octubre de 2026). | `git pull origin chat_branch` y vuelve a compilar. |
 | `Package 'movemaster_control' not found` | No hiciste `source install/setup.bash` o compilaste fuera de `movemaster_ws/`. | Compila desde `movemaster_ws/` y haz `source` en cada terminal. |
 | `colcon list` no muestra `movemaster_hardware` ni `movemaster_control` | colcon no leyó `colcon_defaults.yaml`: no lo ejecutaste desde `movemaster_ws/`. | Ejecuta colcon desde `movemaster_ws/`. |
 | `CMake Error: The source ".../movemaster_hardware/CMakeLists.txt" does not match the source ".../src/movemaster_hardware/CMakeLists.txt" used to generate cache` | `build/movemaster_hardware` se configuró con la copia vieja del plugin (`src/movemaster_hardware`), que ya no existe. CMake no reutiliza un caché de otra carpeta. | Desde `movemaster_ws/`: `rm -rf build/movemaster_hardware install/movemaster_hardware` y vuelve a compilar. |

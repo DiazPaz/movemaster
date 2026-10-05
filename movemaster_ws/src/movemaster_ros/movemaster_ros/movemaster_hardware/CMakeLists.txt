@@ -68,8 +68,10 @@ if(MOVEMASTER_BUILD_ROS2)
   find_package(rclcpp REQUIRED)
   find_package(rclcpp_lifecycle REQUIRED)
   add_library(movemaster_hardware SHARED src/movemaster_hardware.cpp)
-  target_link_libraries(movemaster_hardware PUBLIC movemaster_driver)
-  ament_target_dependencies(movemaster_hardware hardware_interface pluginlib rclcpp rclcpp_lifecycle)
+  # One keyword call: ament_target_dependencies() would add a plain-signature one, which
+  # CMake refuses to mix with this PUBLIC on the same target.
+  target_link_libraries(movemaster_hardware PUBLIC movemaster_driver hardware_interface::hardware_interface
+    pluginlib::pluginlib rclcpp::rclcpp rclcpp_lifecycle::rclcpp_lifecycle)
   pluginlib_export_plugin_description_file(hardware_interface movemaster_hardware.xml)
   install(TARGETS movemaster_hardware EXPORT movemasterTargets LIBRARY DESTINATION lib)
   ament_export_dependencies(hardware_interface pluginlib rclcpp rclcpp_lifecycle nlohmann_json Threads)
