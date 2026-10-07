@@ -6,11 +6,13 @@
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstring>
 #include <system_error>
+#include <utility>
 
 namespace movemaster {
 namespace {
@@ -73,14 +75,27 @@ void SocketCAN::send(const CANPacket &packet, double timeout) {
   if (n != sizeof(frame)) throw std::runtime_error("Short SocketCAN write");
 }
 std::optional<CANPacket> SocketCAN::recv(double timeout) {
-  if (!ready(POLLIN, timeout)) return std::nullopt;
-  can_frame frame{};
-  const auto n = ::read(fd_, &frame, sizeof(frame));
-  if (n < 0) {
-    if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return std::nullopt;
-    fail("read(SocketCAN)");
+  const auto start = std::chrono::steady_clock::now();
+  // Bounded, so an adapter flooding error frames cannot hold up the control loop.
+  for (int skipped = 0; skipped < 256; ++skipped) {
+    const double waited = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    if (!ready(POLLIN, skipped ? std::max(0.0, timeout - waited) : timeout)) return std::nullopt;
+    can_frame frame{};
+    const auto n = ::read(fd_, &frame, sizeof(frame));
+    if (n < 0) {
+      if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return std::nullopt;
+      fail("read(SocketCAN)");
+    }
+    if (n != sizeof(frame)) throw std::runtime_error("Short SocketCAN read");
+    if (!(frame.can_id & CAN_ERR_FLAG)) return CANPacket::from_socketcan(frame);
+    if (is_fatal_error_frame(frame))
+      throw std::runtime_error("CAN error frame received: " + describe_error_frame(frame));
+    // A congested adapter (an MCP2515 HAT under CPU load) reports rx-overflow: skip it and keep
+    // reading. Callers log the count through take_error_report().
+    ++errors_.count;
+    errors_.last = describe_error_frame(frame);
   }
-  if (n != sizeof(frame)) throw std::runtime_error("Short SocketCAN read");
-  return CANPacket::from_socketcan(frame);
+  return std::nullopt;
 }
+BusErrorReport SocketCAN::take_error_report() { return std::exchange(errors_, {}); }
 }  // namespace movemaster

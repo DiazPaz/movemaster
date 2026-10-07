@@ -117,6 +117,9 @@ El `controller_manager` repite tres pasos con periodo fijo, `1/update_rate`
    posición y velocidad de su eje; por cada `STATUS_0`, la corriente. Si alguna
    telemetría tiene más de `feedback_timeout_s`, enclava un fallo. Copia los
    valores a las interfaces de estado `position`, `velocity`, `current`.
+   Las tramas de error del adaptador (por ejemplo `rx-overflow`) se saltan y
+   se reportan como advertencia; solo `bus-off` y `tx-timeout` enclavan un
+   fallo.
 2. **`update()`**: cada controlador activo calcula. El JTC interpola la
    trayectoria y escribe la posición deseada en la interfaz de comando
    `position`. El JSB publica `/joint_states`.
@@ -300,7 +303,7 @@ JTC se generan a partir de él (ver [13.6](#136-movemaster_controlurdfmovemaster
 | `feedback_timeout_s` | `0.300` | `≥ 3·period_s` | Edad máxima de la telemetría antes de enclavar un fallo. |
 | `response_timeout_s` | `0.500` | 0 – 10 s | Espera máxima de cada ACK al configurar y de la telemetría al activar. |
 | `disable_settle_s` | `0.500` | 0 – 10 s | Pausa en silencio antes de configurar y antes de reactivar, para que expire un heartbeat anterior. |
-| `max_cycle_gap_s` | `0.100` | `≥ 2·period_s` | Tiempo máximo sin transmitir estando activo; si el lazo se detiene más, fallo. |
+| `max_cycle_gap_s` | `0.100` | `≥ 2·period_s` | Tiempo máximo sin transmitir estando activo; si el lazo se detiene más, fallo. Déjalo en 0.1 también a 100 Hz: con 2 periodos (0.02 s) cualquier retraso de Linux enclava un fallo falso. |
 | `parameter_layout` | catálogo interno | avanzado | Catálogo alternativo de IDs de parámetros PIDF/MAXMotion. Normalmente no se pone. |
 
 ### 4.2 Campos de cada articulación
@@ -624,6 +627,40 @@ Argumentos del launch:
 
 Ver todos: `ros2 launch movemaster_control movemaster_control.launch.py --show-args`.
 
+### 10.1 Permiso de tiempo real (una sola vez)
+
+Si el log dice `Could not enable FIFO RT scheduling policy ... Operation not
+permitted`, el lazo corre como un proceso normal y Linux puede retrasar
+ciclos. Para que el `controller_manager` pueda usar prioridad de tiempo real:
+
+```bash
+sudo groupadd -f realtime
+sudo usermod -aG realtime $USER
+printf '%s\n' '@realtime - rtprio 99' '@realtime - memlock unlimited' \
+  | sudo tee /etc/security/limits.d/99-realtime.conf
+sudo reboot
+```
+
+Después, `ulimit -r` debe dar `99` y el aviso ya no aparece. No hace falta un
+kernel `PREEMPT_RT`.
+
+### 10.2 Si el arranque o la ejecución fallan
+
+- **Guarda el log completo** para ver la primera línea de error:
+  `ros2 launch movemaster_control movemaster_control.launch.py 2>&1 | tee ~/movemaster_launch.log`.
+- **Busca la primera línea `[MovemasterHardware]`.** Los errores que vienen
+  después (`No state interfaces found to publish`, `Failed to activate
+  controller : joint_state_broadcaster`, el spawner que muere) son
+  consecuencia: el hardware ya se había desactivado.
+- **No hace falta cerrar terminales.** Antes de volver a lanzar, comprueba que
+  no quede un proceso viejo enviando heartbeat o leyendo el bus:
+  `pgrep -af 'ros2_control_node|spark_console|driver_monitor|teach_pendant'`
+  (si aparece alguno, ciérralo con `pkill -f <nombre>`). Con el nodo vivo se
+  puede recuperar sin relanzar, como en el [paso 9](#12-paso-9--detener-fallos-y-recuperación).
+- **Mira el estado del bus** si hubo advertencias de CAN:
+  `ip -details -statistics link show can0` (contadores `overrun` y
+  `bus-error`; estado `ERROR-ACTIVE`, `ERROR-PASSIVE` o `BUS-OFF`).
+
 ---
 
 ## 11. Paso 8 · Comprobar y mover un eje
@@ -940,13 +977,16 @@ Ninguno de los dos se modifica.
 | `Parameter ACK mismatch: CAN 1, p` | El SPARK no aceptó o no confirmó el valor de un parámetro. | Revisa el valor en `joints.json` y el firmware. Si el parámetro es `motor_type`, `idle_mode`, `smart_current_*`, `output_min` u `output_max`, anótalo: son IDs que aún no se habían probado con un SPARK real. |
 | `Fresh STATUS_0 and STATUS_2 required for every joint` | Al activar, falta telemetría reciente de algún eje. | Revisa cableado, `status_period_ms` y que todos los ejes respondan en `driver_monitor`. |
 | `STATUS_0/2 watchdog expired` | Se dejó de recibir telemetría con el brazo activo. | Cable o alimentación; luego recupera (paso 9). |
-| `Control loop gap exceeded; refusing automatic re-enable` | El lazo se detuvo más de `max_cycle_gap_s` (PC sobrecargado, depurador). | Recupera (paso 9); si se repite, sube `max_cycle_gap_s` con cuidado. |
+| `Control loop gap exceeded; refusing automatic re-enable` | El lazo se detuvo más de `max_cycle_gap_s` (PC sobrecargado, depurador, sin permiso de tiempo real). Con `max_cycle_gap_s` = 2 periodos (0.02 s a 100 Hz) salta por la variación normal de Linux. | `max_cycle_gap_s: 0.1` en `joints.json` y permiso de tiempo real ([10.1](#101-permiso-de-tiempo-real-una-sola-vez)). Recupera (paso 9). |
 | `joint_1: position command outside calibrated limits` | El JTC pidió un objetivo fuera de los límites. | Envía objetivos dentro de `joints.json`; recupera. |
 | `joint_1: Position target exceeds max_following_error_rad from the measured position` | En modo `position`, el objetivo quedó demasiado lejos del eje: trayectoria muy rápida, ganancias bajas o un choque. | Da más `time_from_start`, revisa el PID o el obstáculo; sube `max_following_error_rad` solo con margen medido. Recupera. |
 | `spark_commission`: `NO RESPONDE` | Ese CAN ID no envía `STATUS_0`. | Revisa CAN ID, alimentación y `candump`. |
 | `spark_commission`: `Hay un heartbeat de habilitacion en el bus` | Otro programa está habilitando motores. | Cierra el `controller_manager`, `spark_console` o el backend Python. |
 | `RESET_SAFE_PARAMETERS rejected on CAN 1: RESULT_CODE 1` o `Timeout waiting for PERSIST_PARAMETERS_RESPONSE on CAN 1` | El SPARK rechazó o no confirmó el restablecimiento o el guardado. | Repite la puesta en marcha de ese eje; si persiste, revisa el firmware con REV Hardware Client. |
-| `CAN error frame received: ...` | El adaptador reportó un error de bus; el texto dice cuál (por ejemplo `controller tx-warning`, `protocol stuff, bus-error`, `bus-off`). | `ip -details -statistics link show can0` y `candump -e can0,0~0,#FFFFFFFF` mientras se reproduce; revisa resistencias de 120 Ω, cableado y bitrate. |
+| `CAN error frame received: bus-off ...` o `... tx-timeout ...` | El adaptador dejó de transmitir: errores de bus repetidos (cableado, terminación, bitrate). Son las únicas tramas de error que enclavan un fallo, porque el heartbeat ya no sale. | `ip -details -statistics link show can0` y `candump -e can0,0~0,#FFFFFFFF` mientras se reproduce; revisa resistencias de 120 Ω, cableado y bitrate. Para salir de `BUS-OFF`: `sudo ip link set can0 down` y `sudo ip link set can0 up`. |
+| `Ignored N CAN error frame(s), last: controller rx-overflow ...` (advertencia) | El adaptador perdió tramas recibidas porque no las leyó a tiempo. Típico de un HAT con MCP2515 en la Raspberry Pi con la CPU ocupada (por ejemplo, al arrancar ROS). No detiene el nodo: si se pierde demasiada telemetría, salta `STATUS_0/2 watchdog expired`. | Si es ocasional, ignórala. Si aparece cada segundo: permiso de tiempo real ([10.1](#101-permiso-de-tiempo-real-una-sola-vez)), menos tráfico (`period_s: 0.02` y `status_period_ms: 20`) o un adaptador USB-CAN con más búfer (`gs_usb`). Otras (`tx-warning`, `protocol ...`, `no-ack`) apuntan a cableado o terminación. |
+| `No state interfaces found to publish` / `Failed to activate controller : joint_state_broadcaster` | El hardware se desactivó antes (mira la línea `[MovemasterHardware]` anterior) y ya no tiene interfaces que publicar. | Corrige la causa de esa línea; recupera (paso 9) o vuelve a lanzar. |
+| `Could not enable FIFO RT scheduling policy ... Operation not permitted` (advertencia) | El usuario no tiene permiso de prioridad de tiempo real. | [10.1](#101-permiso-de-tiempo-real-una-sola-vez). |
 | El brazo se mueve en sentido contrario | `direction` invertido. | Cambia `direction`; verifica con `driver_monitor` antes. |
 | Después de la puesta en marcha, un eje gira al revés que antes | El restablecimiento dejó `Inverted` (ID 45) en `false`, y antes estaba activado en REV Hardware Client. | Corrige `direction` en `joints.json`; MoveMaster no usa `Inverted`. |
 | La posición en ROS no coincide con la real | `zero_offset_rad` o `gear_ratio` incorrectos, o el encoder perdió su cero. | Recalibra con `driver_monitor`. |

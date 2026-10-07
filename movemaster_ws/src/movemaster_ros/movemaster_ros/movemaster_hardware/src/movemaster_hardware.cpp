@@ -13,6 +13,21 @@ void report(const std::exception &e) {
   RCLCPP_ERROR(rclcpp::get_logger("MovemasterHardware"), "%s", e.what());
 }
 }
+void MovemasterHardware::log_bus_errors(bool now) noexcept {
+  if (!driver_) return;
+  try {
+    auto errors = driver_->take_bus_errors();
+    can_errors_ += errors.count;
+    if (!errors.last.empty()) last_can_error_ = std::move(errors.last);
+    const auto time = std::chrono::steady_clock::now();
+    if (can_errors_ == 0 || (!now && time < next_can_report_)) return;
+    RCLCPP_WARN(rclcpp::get_logger("MovemasterHardware"),
+        "Ignored %zu CAN error frame(s), last: %s. Lost telemetry is still covered by the STATUS watchdog.",
+        can_errors_, last_can_error_.c_str());
+    can_errors_ = 0;
+    next_can_report_ = time + std::chrono::seconds(1);
+  } catch (...) {}
+}
 CallbackReturn MovemasterHardware::on_init(const hardware_interface::HardwareInfo &info) {
   if (hardware_interface::SystemInterface::on_init(info) != CallbackReturn::SUCCESS)
     return CallbackReturn::ERROR;
@@ -64,8 +79,9 @@ CallbackReturn MovemasterHardware::on_configure(const rclcpp_lifecycle::State &)
   try {
     driver_ = std::make_unique<MoveMasterDriver>(config_);
     driver_->configure();
+    log_bus_errors(true);
     return CallbackReturn::SUCCESS;
-  } catch (const std::exception &e) { stop(); report(e); return CallbackReturn::ERROR; }
+  } catch (const std::exception &e) { log_bus_errors(true); stop(); report(e); return CallbackReturn::ERROR; }
 }
 void MovemasterHardware::copy_states() {
   for (std::size_t i = 0; i < positions_.size(); ++i) {
@@ -82,8 +98,9 @@ CallbackReturn MovemasterHardware::on_activate(const rclcpp_lifecycle::State &) 
     copy_states();
     // Seed exported command storage from measured position, never from zero.
     std::copy(positions_.begin(), positions_.end(), commands_.begin());
+    log_bus_errors(true);
     return CallbackReturn::SUCCESS;
-  } catch (const std::exception &e) { stop(); report(e); return CallbackReturn::ERROR; }
+  } catch (const std::exception &e) { log_bus_errors(true); stop(); report(e); return CallbackReturn::ERROR; }
 }
 void MovemasterHardware::stop() noexcept { if (driver_) driver_->deactivate(); }
 CallbackReturn MovemasterHardware::on_deactivate(const rclcpp_lifecycle::State &) {
@@ -101,8 +118,8 @@ CallbackReturn MovemasterHardware::on_error(const rclcpp_lifecycle::State &) {
 }
 Return MovemasterHardware::read(const rclcpp::Time &, const rclcpp::Duration &) {
   if (!driver_) return Return::OK;
-  try { driver_->read(); copy_states(); return Return::OK; }
-  catch (const std::exception &e) { stop(); report(e); return Return::ERROR; }
+  try { driver_->read(); copy_states(); log_bus_errors(false); return Return::OK; }
+  catch (const std::exception &e) { log_bus_errors(true); stop(); report(e); return Return::ERROR; }
 }
 Return MovemasterHardware::write(const rclcpp::Time &, const rclcpp::Duration &) {
   if (!driver_) return Return::OK;

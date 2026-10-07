@@ -372,7 +372,10 @@ RPM/s.
 
 **max_cycle_gap_s**
 Campo global de `joints.json` (0.1 s): tiempo máximo sin transmitir estando
-activo. Si el lazo se detiene más: `Control loop gap exceeded`.
+activo. Si el lazo se detiene más: `Control loop gap exceeded`. Conviene dejarlo
+en 0.1 s aunque el lazo vaya a 100 Hz: Linux sin tiempo real retrasa a veces un
+ciclo varios milisegundos, y un valor de 2 periodos (0.02 s) enclava fallos
+falsos.
 
 **max_velocity_rad_s**
 Campo de `joints.json`: velocidad máxima de la articulación en rad/s. Es el
@@ -638,7 +641,18 @@ en el tiempo. Lo alimenta `robot_state_publisher`.
 
 **Tiempo real blando**
 El lazo intenta cumplir su periodo pero sin garantía estricta de latencia. El
-driver detecta pausas largas (`max_cycle_gap_s`) y enclava un fallo.
+driver detecta pausas largas (`max_cycle_gap_s`) y enclava un fallo. Sin
+permiso de tiempo real, el `controller_manager` avisa `Could not enable FIFO RT
+scheduling policy` y el lazo tiene más variación; MANUAL §10.1 explica cómo
+darlo.
+
+**Trama de error CAN (error frame)**
+Aviso que el adaptador CAN entrega por SocketCAN en lugar de una trama de
+datos: desbordamiento de recepción (`rx-overflow`), contadores de error
+(`tx-warning`, `tx-passive`), errores de protocolo, `bus-off`... El driver solo
+enclava un fallo con `bus-off` o `tx-timeout`, porque entonces sus tramas (el
+heartbeat incluido) ya no salen. Las demás las cuenta y el plugin las reporta
+como advertencia, como mucho una vez por segundo.
 
 **time_from_start**
 Campo de cada punto de una trayectoria: en qué momento, desde el inicio, debe

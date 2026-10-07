@@ -4,7 +4,7 @@
   "feedback_timeout_s": 0.3,
   "response_timeout_s": 0.5,
   "disable_settle_s": 0.5,
-  "max_cycle_gap_s": 0.02,
+  "max_cycle_gap_s": 0.1,
   "joints": {
     "joint_1": {
       "can_id": 1,
