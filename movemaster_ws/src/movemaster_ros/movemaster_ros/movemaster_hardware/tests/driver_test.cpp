@@ -1,5 +1,4 @@
 #include "simulated_spark_bus.hpp"
-#include <linux/can/error.h>
 #include <cmath>
 
 using namespace movemaster;
@@ -164,28 +163,6 @@ void position_at_activation(const char *spec) {
   check(reactivated.frame == "MAXMOTION_POSITION_SETPOINT" && reactivated.slot == 0,
       "Runtime control lost across reactivation");
 }
-// The frame from the field log: an MCP2515 rx-overflow must not latch a fault; bus-off must.
-void error_frame_policy() {
-  can_frame overflow{};
-  overflow.can_id = CAN_ERR_FLAG | CAN_ERR_CRTL;
-  overflow.can_dlc = CAN_ERR_DLC;
-  overflow.data[1] = CAN_ERR_CRTL_RX_OVERFLOW;
-  check(!is_fatal_error_frame(overflow), "rx-overflow treated as fatal");
-  check(describe_error_frame(overflow).find("controller rx-overflow (class 0x4") == 0, "rx-overflow description");
-  can_frame passive = overflow;
-  passive.can_id |= CAN_ERR_PROT | CAN_ERR_ACK | CAN_ERR_BUSERROR;
-  passive.data[1] = CAN_ERR_CRTL_TX_PASSIVE;
-  check(!is_fatal_error_frame(passive), "Retried frame treated as fatal");
-  for (const auto cls : {CAN_ERR_BUSOFF, CAN_ERR_TX_TIMEOUT}) {
-    can_frame fatal{};
-    fatal.can_id = CAN_ERR_FLAG | cls;
-    fatal.can_dlc = CAN_ERR_DLC;
-    check(is_fatal_error_frame(fatal), "bus-off or tx-timeout not fatal");
-  }
-  can_frame data{};
-  data.can_id = CAN_EFF_FLAG | CAN_ERR_BUSOFF;  // a data frame whose ID has the same bits
-  check(!is_fatal_error_frame(data), "Data frame treated as an error frame");
-}
 }
 int main(int argc, char **argv) {
   if (argc != 2) return 2;
@@ -195,7 +172,6 @@ int main(int argc, char **argv) {
     configures_baseline_and_slots(argv[1]);
     control_modes(argv[1]);
     position_at_activation(argv[1]);
-    error_frame_policy();
     auto duplicate = config_for(argv[1]); duplicate.joints[1].device_id = 1;
     rejects([&] { MoveMasterDriver driver(duplicate); }, "Duplicate CAN IDs accepted");
     auto missing = config_for(argv[1]); missing.joints[0].gear_ratio = 0;
@@ -237,7 +213,7 @@ int main(int argc, char **argv) {
     }
     std::cout << "PASS: 1/3/6 axes, conversions, ACK checks, activation order, limits, paced writes, "
         "baseline and slots in RAM, Position/MAXMotion per joint, following error, "
-        "stale/malformed feedback, TX failure, loop gap and CAN error-frame policy.\n";
+        "stale/malformed feedback, TX failure and loop gap.\n";
     return 0;
   } catch (const std::exception &e) { std::cerr << "FAIL: " << e.what() << '\n'; return 1; }
 }

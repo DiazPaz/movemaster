@@ -126,8 +126,7 @@ using Clock = std::chrono::steady_clock;
 double remaining(Clock::time_point deadline) {
   return std::max(0.0, std::chrono::duration<double>(deadline - Clock::now()).count());
 }
-}  // namespace
-
+// Linux error frame (linux/can/error.h) in words, so a report says which error the adapter saw.
 std::string describe_error_frame(const can_frame &frame) {
   const auto cls = frame.can_id & CAN_ERR_MASK;
   const auto *d = frame.data;
@@ -161,9 +160,7 @@ std::string describe_error_frame(const can_frame &frame) {
     out << ' ' << std::setw(2) << std::setfill('0') << static_cast<int>(d[i]);
   return out.str() + ")";
 }
-bool is_fatal_error_frame(const can_frame &frame) {
-  return (frame.can_id & CAN_ERR_FLAG) && (frame.can_id & (CAN_ERR_BUSOFF | CAN_ERR_TX_TIMEOUT));
-}
+}  // namespace
 
 can_frame CANPacket::to_socketcan() const {
   const int length = dlc.value_or(static_cast<int>(data.size()));

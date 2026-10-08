@@ -20,8 +20,6 @@ int main(int argc, char **argv) {
     std::cout << "Setup acknowledged. Monitoring without enable heartbeat. Ctrl+C to exit.\n";
     while (running) {
       driver.read();
-      if (const auto errors = driver.take_bus_errors(); errors.count)
-        std::cout << "CAN: " << errors.count << " error frame(s) ignored, last: " << errors.last << '\n';
       for (std::size_t i = 0; i < driver.states().size(); ++i) {
         const auto &s = driver.states()[i];
         std::cout << config.joints[i].name << ": " << s.position << " rad, "

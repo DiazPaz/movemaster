@@ -117,9 +117,9 @@ El `controller_manager` repite tres pasos con periodo fijo, `1/update_rate`
    posición y velocidad de su eje; por cada `STATUS_0`, la corriente. Si alguna
    telemetría tiene más de `feedback_timeout_s`, enclava un fallo. Copia los
    valores a las interfaces de estado `position`, `velocity`, `current`.
-   Las tramas de error del adaptador (por ejemplo `rx-overflow`) se saltan y
-   se reportan como advertencia; solo `bus-off` y `tx-timeout` enclavan un
-   fallo.
+   De las tramas de error del adaptador, el socket solo recibe `bus-off` y
+   `tx-timeout`, que enclavan un fallo; las demás (por ejemplo `rx-overflow`)
+   las cuenta el kernel.
 2. **`update()`**: cada controlador activo calcula. El JTC interpola la
    trayectoria y escribe la posición deseada en la interfaz de comando
    `position`. El JSB publica `/joint_states`.
@@ -984,7 +984,7 @@ Ninguno de los dos se modifica.
 | `spark_commission`: `Hay un heartbeat de habilitacion en el bus` | Otro programa está habilitando motores. | Cierra el `controller_manager`, `spark_console` o el backend Python. |
 | `RESET_SAFE_PARAMETERS rejected on CAN 1: RESULT_CODE 1` o `Timeout waiting for PERSIST_PARAMETERS_RESPONSE on CAN 1` | El SPARK rechazó o no confirmó el restablecimiento o el guardado. | Repite la puesta en marcha de ese eje; si persiste, revisa el firmware con REV Hardware Client. |
 | `CAN error frame received: bus-off ...` o `... tx-timeout ...` | El adaptador dejó de transmitir: errores de bus repetidos (cableado, terminación, bitrate). Son las únicas tramas de error que enclavan un fallo, porque el heartbeat ya no sale. | `ip -details -statistics link show can0` y `candump -e can0,0~0,#FFFFFFFF` mientras se reproduce; revisa resistencias de 120 Ω, cableado y bitrate. Para salir de `BUS-OFF`: `sudo ip link set can0 down` y `sudo ip link set can0 up`. |
-| `Ignored N CAN error frame(s), last: controller rx-overflow ...` (advertencia) | El adaptador perdió tramas recibidas porque no las leyó a tiempo. Típico de un HAT con MCP2515 en la Raspberry Pi con la CPU ocupada (por ejemplo, al arrancar ROS). No detiene el nodo: si se pierde demasiada telemetría, salta `STATUS_0/2 watchdog expired`. | Si es ocasional, ignórala. Si aparece cada segundo: permiso de tiempo real ([10.1](#101-permiso-de-tiempo-real-una-sola-vez)), menos tráfico (`period_s: 0.02` y `status_period_ms: 20`) o un adaptador USB-CAN con más búfer (`gs_usb`). Otras (`tx-warning`, `protocol ...`, `no-ack`) apuntan a cableado o terminación. |
+| `STATUS_0/2 watchdog expired` y `ip -details -statistics link show can0` muestra `overrun` creciendo | El adaptador pierde tramas recibidas porque no las lee a tiempo: típico de un HAT con MCP2515 en la Raspberry Pi con la CPU ocupada. Unas pocas no afectan (el driver no las ve); muchas seguidas vencen el watchdog. | Permiso de tiempo real ([10.1](#101-permiso-de-tiempo-real-una-sola-vez)), menos tráfico (`period_s: 0.02` y `status_period_ms: 20`) o un adaptador USB-CAN con más búfer (`gs_usb`). |
 | `No state interfaces found to publish` / `Failed to activate controller : joint_state_broadcaster` | El hardware se desactivó antes (mira la línea `[MovemasterHardware]` anterior) y ya no tiene interfaces que publicar. | Corrige la causa de esa línea; recupera (paso 9) o vuelve a lanzar. |
 | `Could not enable FIFO RT scheduling policy ... Operation not permitted` (advertencia) | El usuario no tiene permiso de prioridad de tiempo real. | [10.1](#101-permiso-de-tiempo-real-una-sola-vez). |
 | El brazo se mueve en sentido contrario | `direction` invertido. | Cambia `direction`; verifica con `driver_monitor` antes. |

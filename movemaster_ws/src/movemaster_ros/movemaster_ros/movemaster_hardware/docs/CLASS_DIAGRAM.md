@@ -168,9 +168,6 @@ classDiagram
     -vector~double~ velocities_
     -vector~double~ currents_
     -vector~double~ commands_
-    -size_t can_errors_
-    -string last_can_error_
-    -time_point next_can_report_
     +on_init(HardwareInfo info) CallbackReturn
     +export_state_interfaces() vector~StateInterface~
     +export_command_interfaces() vector~CommandInterface~
@@ -183,7 +180,6 @@ classDiagram
     +read(Time, Duration) return_type
     +write(Time, Duration) return_type
     -copy_states() void
-    -log_bus_errors(bool now) void
     -stop() void
   }
 
@@ -211,7 +207,6 @@ classDiagram
     +controls() vector~JointControl~
     +states() vector~JointState~
     +active() bool
-    +take_bus_errors() BusErrorReport
     +fault() string
     +radians_to_rotations(double radians, JointConfig joint) double$
     +rotations_to_radians(double rotations, JointConfig joint) double$
@@ -431,7 +426,6 @@ classDiagram
     <<interfaz>>
     +send(CANPacket packet, double timeout) void*
     +recv(double timeout) optional~CANPacket~*
-    +take_error_report() BusErrorReport
   }
   class SpecError {
     <<excepción>>
@@ -445,12 +439,10 @@ classDiagram
   class SocketCAN {
     <<final>>
     -int fd_
-    -BusErrorReport errors_
     +SocketCAN(string channel)
     +set_filters(vector~uint32_t~ extended_ids) void
     +send(CANPacket packet, double timeout) void
     +recv(double timeout) optional~CANPacket~
-    +take_error_report() BusErrorReport
     -ready(short events, double timeout) bool
   }
 

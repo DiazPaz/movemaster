@@ -649,10 +649,10 @@ darlo.
 **Trama de error CAN (error frame)**
 Aviso que el adaptador CAN entrega por SocketCAN en lugar de una trama de
 datos: desbordamiento de recepción (`rx-overflow`), contadores de error
-(`tx-warning`, `tx-passive`), errores de protocolo, `bus-off`... El driver solo
-enclava un fallo con `bus-off` o `tx-timeout`, porque entonces sus tramas (el
-heartbeat incluido) ya no salen. Las demás las cuenta y el plugin las reporta
-como advertencia, como mucho una vez por segundo.
+(`tx-warning`, `tx-passive`), errores de protocolo, `bus-off`... El socket del
+driver solo se suscribe a `bus-off` y `tx-timeout` (`CAN_RAW_ERR_FILTER`), que
+enclavan un fallo porque entonces sus tramas, el heartbeat incluido, ya no
+salen. Las demás las cuenta el kernel: `ip -details -statistics link show can0`.
 
 **time_from_start**
 Campo de cada punto de una trayectoria: en qué momento, desde el inicio, debe

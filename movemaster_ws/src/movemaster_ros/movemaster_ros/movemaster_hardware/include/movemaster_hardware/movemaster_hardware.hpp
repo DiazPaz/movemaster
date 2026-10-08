@@ -3,7 +3,6 @@
 #include <hardware_interface/system_interface.hpp>
 #include <rclcpp/macros.hpp>
 #include <rclcpp_lifecycle/state.hpp>
-#include <chrono>
 
 namespace movemaster {
 class MovemasterHardware final : public hardware_interface::SystemInterface {
@@ -24,12 +23,7 @@ class MovemasterHardware final : public hardware_interface::SystemInterface {
   DriverConfig config_;
   std::unique_ptr<MoveMasterDriver> driver_;
   std::vector<double> positions_, velocities_, currents_, commands_;
-  // Nonfatal CAN error frames not yet logged; logged at most once per second.
-  std::size_t can_errors_ = 0;
-  std::string last_can_error_;
-  std::chrono::steady_clock::time_point next_can_report_{};
   void copy_states();
-  void log_bus_errors(bool now) noexcept;
   void stop() noexcept;
 };
 }  // namespace movemaster

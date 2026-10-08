@@ -40,28 +40,12 @@ struct CANPacket {
   std::string repr() const;
 };
 
-// Linux error frame (linux/can/error.h) in words, e.g. "controller rx-overflow (class 0x4, ...)".
-std::string describe_error_frame(const can_frame &frame);
-// Bus-off and TX timeout mean our frames, the heartbeat included, no longer leave the adapter.
-// Every other error frame (RX/TX overflow, warning or passive counters, protocol errors, lost
-// arbitration, no ACK, restart) only reports a lost or retried frame: the STATUS watchdog
-// covers lost telemetry and the next cycle resends setpoints and heartbeat.
-bool is_fatal_error_frame(const can_frame &frame);
-
-// Nonfatal error frames received since the previous report.
-struct BusErrorReport {
-  std::size_t count = 0;
-  std::string last;  // describe_error_frame() of the newest one
-};
-
 // Single-consumer transport contract, also usable with a fake bus in tests.
 class CANBus {
  public:
   virtual ~CANBus() = default;
   virtual void send(const CANPacket &packet, double timeout = 0.0) = 0;
   virtual std::optional<CANPacket> recv(double timeout = 0.0) = 0;
-  // Returns and clears the nonfatal error frames recv() skipped. A bus without them reports none.
-  virtual BusErrorReport take_error_report() { return {}; }
 };
 
 class SignalCodec {

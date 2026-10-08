@@ -68,8 +68,6 @@ class MoveMasterDriver {
   const std::vector<JointControl> &controls() const { return controls_; }
   const std::vector<JointState> &states() const { return states_; }
   bool active() const { return active_; }
-  // Nonfatal CAN error frames (e.g. rx-overflow) since the previous call, for logging.
-  BusErrorReport take_bus_errors() { return bus_ ? bus_->take_error_report() : BusErrorReport{}; }
   const std::string &fault() const { return fault_; }
   static double radians_to_rotations(double radians, const JointConfig &joint);
   static double rotations_to_radians(double rotations, const JointConfig &joint);
