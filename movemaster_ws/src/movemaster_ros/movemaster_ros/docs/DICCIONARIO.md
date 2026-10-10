@@ -31,7 +31,7 @@ MAXMotion, en rotaciones del motor.
 
 **ament / ament_cmake / ament_python**
 Sistema de construcción de ROS 2. `ament_cmake` es para paquetes CMake
-(`movemaster_hardware`, `movemaster_control`); `ament_python`, para paquetes
+(`movemaster_hardware`, `movemaster_description`, `movemaster_control`); `ament_python`, para paquetes
 Python (`movemaster_ros`). `ament_package()` al final de un `CMakeLists.txt`
 genera los archivos que ROS necesita para encontrar el paquete.
 
@@ -48,8 +48,9 @@ SPARK 1 es `0x0205B881`.
 ## B
 
 **base_link**
-Primer eslabón del URDF, fijo al mundo. En `movemaster.urdf.xacro` todas las
-articulaciones cuelgan de él en cadena.
+Primer eslabón del URDF, fijo al mundo: la base del brazo. Es el marco DH 0,
+sobre el eje de `joint_1` y al pie de la base; de él cuelga la cadena DH hasta
+`tool0`.
 
 **base-paths**
 Opción de colcon con las carpetas donde buscar paquetes. En
@@ -170,17 +171,35 @@ Se publica en `/dynamic_joint_states`. No es par (`effort`).
 
 ## D
 
+**Denavit-Hartenberg (DH)**
+Convención que describe un brazo serial con cuatro números por articulación.
+En la forma estándar, la fila *i* lleva del marco *i-1* al *i* con
+`Rz(θi) · Tz(di) · Tx(ai) · Rx(αi)`: θ es la variable del eje; d, a y α son
+fijos. La tabla del MoveMaster está en `dh.yaml`; el URDF crea un marco
+`dh_frame_i` por fila, y el último es `tool0`. MANUAL §13.6.
+
 **depend / exec_depend / test_depend / buildtool_depend**
 Tipos de dependencia en `package.xml`: para compilar y ejecutar; solo ejecutar;
 solo pruebas; herramienta de compilación. MANUAL §13.2.
 
+**dh.yaml**
+Tabla DH del brazo, en `movemaster_description/config/`: por eje, su nombre en
+ROS (`joint`), su nombre en el brazo (`label`), `a_mm`, `alpha_deg`, `d_mm`, el
+ángulo Home (`home_deg`) y un radio para dibujarlo. También el tamaño de la
+base. De ella sale la geometría del URDF.
+
 **direction**
 Campo de `joints.json`: entero `1` o `-1`. Invierte el sentido del motor
-respecto a la articulación. Debe ser entero (`1`, no `1.0`).
+respecto a la articulación. Debe ser entero (`1`, no `1.0`). El sentido
+positivo de la articulación es el giro alrededor del eje z de la tabla DH.
 
 **disable_settle_s**
 Campo global de `joints.json` (0.5 s): pausa sin transmitir antes de configurar
 y antes de reactivar, para que expire un heartbeat anterior.
+
+**display.launch.py**
+Launch de `movemaster_description` que muestra el brazo en RViz con un slider
+por eje, sin `controller_manager`. Usa el URDF con `preview:=true`. MANUAL §9.1.
 
 **DLC**
 Número de bytes de datos de una trama CAN (0–8).
@@ -259,7 +278,7 @@ reducción del sistema: los factores de conversión del SPARK quedan en 1.0.
 
 **GenericSystem (mock_components)**
 Hardware simulado de `ros2_control`: copia el comando al estado sin física. Se
-activa con `use_mock_hardware:=true`.
+activa con `use_mock_hardware:=true` y arranca en Home.
 
 ## H
 
@@ -271,6 +290,13 @@ estado y comando, y `mock_components`.
 Trama global `0x01011840` con 8 bytes `FF` que el driver envía en cada ciclo
 activo después de los setpoints. Mientras llega, los SPARK están habilitados;
 si deja de llegar, su watchdog los deshabilita. Solo debe haber un emisor.
+
+**Home**
+Postura de referencia del brazo, columna `home_deg` de `dh.yaml`:
+(0°, −90°, 90°, 0°, −90°). Brazo vertical, antebrazo horizontal y herramienta
+hacia abajo; `tool0` queda en (0.160, 0, 0.255) m de `base_link`. El brazo se
+enciende en Home (MANUAL §4.4); el hardware simulado y la vista previa arrancan
+ahí, y los ejes sin SPARK quedan fijos en ella.
 
 ## I
 
@@ -286,7 +312,8 @@ articulaciones, interfaces y parámetros (`spec_path`, `joint_config_path`,
 
 **initial_value**
 Parámetro de una interfaz de estado en el URDF. Solo lo usa el hardware
-simulado como posición inicial; el plugin real lee los encoders.
+simulado como posición inicial (Home, recortado a los límites); el plugin real
+lee los encoders.
 
 **Inverted (ID 45)**
 Parámetro del SPARK que invierte el sentido del motor. MoveMaster no lo usa: el
@@ -297,7 +324,9 @@ conviene revisar el sentido después.
 
 **Joint (URDF)**
 Articulación del URDF: une dos *links*, con tipo (`revolute`), eje, posición y
-límites. En MoveMaster se generan desde `joints.json`.
+límites. En MoveMaster hay una por fila de la tabla DH: `revolute`, con los
+límites de `joints.json`, si el eje tiene SPARK; `fixed` en Home si no. Los
+`joint_N_dh` son fijos: la parte constante de cada fila.
 
 **JointState / /joint_states**
 Mensaje y tópico estándar con nombre, posición, velocidad y esfuerzo de cada
@@ -355,8 +384,10 @@ objetivos fuera de él (y enclava un fallo); el URDF los usa como `lower` y
 `upper`.
 
 **Link (URDF)**
-Cuerpo rígido del URDF. En el modelo provisional son eslabones sin geometría
-(`joint_N_link`).
+Cuerpo rígido del URDF. En MoveMaster cada eje mueve un eslabón con el nombre
+de la tabla (`waist_link`, `shoulder_link`, `elbow_link`, `wrist_pitch_link`,
+`wrist_roll_link`), dibujado con cilindros que siguen d y a. Los `dh_frame_N` y
+`tool0` son marcos sin geometría.
 
 ## M
 
@@ -387,7 +418,7 @@ Nombre anterior de `spark_console`.
 
 **Mock hardware / use_mock_hardware**
 Argumento del launch y del macro: `true` usa `mock_components/GenericSystem` en
-lugar del plugin real, para probar sin CAN ni motores.
+lugar del plugin real, para probar sin CAN ni motores. Arranca en Home.
 
 **Modo de control (position / maxmotion)**
 Cómo persigue el SPARK cada setpoint. `maxmotion`: genera un perfil con los
@@ -398,12 +429,16 @@ cambiarlo es inmediato. Campo `control.mode`.
 
 **MoveIt**
 Planificador de movimientos de ROS 2 (cinemática, colisiones, trayectorias).
-Enviará trayectorias al JTC por la acción `follow_joint_trajectory`. Aún no
-está configurado en el proyecto.
+Enviará trayectorias al JTC por la acción `follow_joint_trajectory`, con el
+URDF de `movemaster_description`. Aún no está configurado en el proyecto.
 
 **movemaster_control**
-Paquete que configura y arranca el nodo `controller_manager`: launch, YAML de
-controladores y URDF provisional.
+Paquete que configura y arranca el nodo `controller_manager`: launch y YAML de
+controladores. El URDF viene de `movemaster_description`.
+
+**movemaster_description**
+Paquete del modelo del brazo: el URDF desde la tabla DH (`dh.yaml`) y
+`joints.json`, y la vista previa en RViz (`display.launch.py`). MANUAL §13.6.
 
 **movemaster_hardware**
 Paquete del plugin: protocolo, driver, SocketCAN, `MovemasterHardware`,
@@ -488,6 +523,10 @@ librería para pluginlib.
 Interfaz de comando (objetivo) y de estado (medida) de cada eje, en radianes.
 No confundir con el modo de control `position`.
 
+**preview**
+Argumento del xacro de `movemaster_description`: `true` mueve los cinco ejes de
+la tabla y quita el bloque `<ros2_control>`. Lo usa `display.launch.py`.
+
 **protocol_demo**
 Ejemplo que muestra tramas codificadas sin abrir CAN.
 
@@ -558,7 +597,8 @@ convierte a radianes de articulación con `gear_ratio`, `direction` y
 `zero_offset_rad`.
 
 **RViz**
-Visualizador 3D de ROS para ver el robot, TF y trayectorias.
+Visualizador 3D de ROS para ver el robot, TF y trayectorias. Configuración del
+proyecto: `movemaster_description/rviz/display.rviz`.
 
 ## S
 
@@ -662,6 +702,11 @@ alcanzarse esa posición.
 Canal con nombre por el que un nodo publica mensajes y otros los reciben
 (`/joint_states`).
 
+**tool0**
+Marco de la punta de la herramienta (TCP): el último marco de la tabla DH. Su
+eje z apunta hacia fuera de la herramienta. MoveIt planea la posición de este
+marco.
+
 ## U
 
 **update_rate**
@@ -671,7 +716,8 @@ Frecuencia del lazo del `controller_manager` en Hz. El launch la fija en
 **URDF**
 Formato XML que describe el robot: eslabones, articulaciones, límites y el
 bloque `<ros2_control>`. En MoveMaster se genera con xacro desde
-`movemaster.urdf.xacro` y `joints.json`.
+`movemaster_description/urdf/movemaster.urdf.xacro`, con la tabla DH
+(`dh.yaml`) y `joints.json`.
 
 ## W
 
@@ -688,14 +734,16 @@ Carpeta con `src/` y las carpetas que genera colcon. Se compila desde su raíz.
 **xacro**
 Lenguaje de macros que genera URDF: propiedades, condiciones, inclusiones y
 lectura de YAML/JSON. Archivos `.xacro` de este proyecto:
-`movemaster_control/urdf/movemaster.urdf.xacro` y
-`movemaster_hardware/config/ros2_control.xacro`.
+`movemaster_description/urdf/movemaster.urdf.xacro` (el robot),
+`movemaster_description/urdf/movemaster_arm.xacro` (la cadena DH) y
+`movemaster_hardware/config/ros2_control.xacro` (el bloque `<ros2_control>`).
 
 ## Y
 
 **YAML / JSON**
 Formatos de texto para datos. YAML se usa para parámetros de ROS
-(`movemaster_controllers.yaml`, `colcon_defaults.yaml`); JSON, para
+(`movemaster_controllers.yaml`, `colcon_defaults.yaml`) y para la tabla DH
+(`dh.yaml`); JSON, para
 `joints.json` y el `spec` de REV. Todo JSON válido es también YAML válido, por
 eso xacro puede leer `joints.json`.
 
@@ -703,5 +751,6 @@ eso xacro puede leer `joints.json`.
 
 **zero_offset_rad**
 Campo de `joints.json`: ángulo de la articulación cuando el encoder del motor
-marca cero. Como el encoder es relativo y no hay homing, hay que verificarlo
-tras apagar los SPARK.
+marca cero, es decir, en la postura en que se encendió el SPARK. Si el brazo se
+enciende en Home, es el ángulo Home de `dh.yaml` (MANUAL §4.4). Como el encoder
+es relativo y no hay homing, hay que verificarlo tras apagar los SPARK.

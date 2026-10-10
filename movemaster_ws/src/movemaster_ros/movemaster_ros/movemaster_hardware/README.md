@@ -268,9 +268,10 @@ Dentro del URDF del robot, incluir la macro:
 La macro declara las articulaciones de `joint_config_path`, en el orden del
 archivo, que es justo lo que `on_init()` exige; esas articulaciones deben existir
 en el URDF. Con `use_mock_hardware="true"` usa `mock_components/GenericSystem`
-con las mismas interfaces, sin CAN ni motores. La macro es un fragmento de
-hardware, no un modelo geométrico: `movemaster_control` incluye un URDF
-provisional con las articulaciones y el launch del `controller_manager`.
+con las mismas interfaces, sin CAN ni motores; el parámetro opcional
+`initial_positions` (un diccionario `{joint: rad}`) fija dónde arranca cada eje
+simulado, 0 si falta. La macro es un fragmento de hardware, no un modelo
+geométrico: el modelo del brazo, que la incluye, está en `movemaster_description`.
 
 | Callback | Comportamiento |
 |---|---|

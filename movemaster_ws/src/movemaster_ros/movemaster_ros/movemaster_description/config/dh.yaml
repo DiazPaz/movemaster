@@ -1,0 +1,25 @@
+# Cinemática del MoveMaster en Denavit-Hartenberg estándar, igual que la tabla del brazo:
+#
+#   T(i-1 → i) = Rz(θi) · Tz(di) · Tx(ai) · Rx(αi)
+#
+# Longitudes en mm y ángulos en grados; el URDF los convierte a metros y radianes.
+# θi es la variable de la articulación: θi = 0 en esta tabla es 0 rad en ROS, así que
+# zero_offset_rad de joints.json debe dejar cada eje en ese cero (MANUAL §4.4).
+#
+# joint      nombre del eje en joints.json y en el URDF
+# label      nombre del eje en el brazo; da nombre a su eslabón (<label>_link)
+# home_deg   postura Home. Un eje que todavía no está en joints.json queda fijo aquí.
+# radius_mm  radio aproximado del eslabón, para dibujarlo y para las colisiones
+chain:
+  - {joint: joint_1, label: waist,       a_mm: 0,   alpha_deg: -90, d_mm: 250, home_deg: 0,   radius_mm: 45}
+  - {joint: joint_2, label: shoulder,    a_mm: 220, alpha_deg: 0,   d_mm: 0,   home_deg: -90, radius_mm: 35}
+  - {joint: joint_3, label: elbow,       a_mm: 160, alpha_deg: 0,   d_mm: 0,   home_deg: 90,  radius_mm: 30}
+  - {joint: joint_4, label: wrist_pitch, a_mm: 0,   alpha_deg: -90, d_mm: 0,   home_deg: 0,   radius_mm: 25}
+  - {joint: joint_5, label: wrist_roll,  a_mm: 0,   alpha_deg: 0,   d_mm: 215, home_deg: -90, radius_mm: 20}
+
+# Base fija bajo el eje 1, solo para dibujo y colisiones.
+base: {radius_mm: 80, height_mm: 40}
+
+# Solo para la vista previa (launch/display.launch.py), que mueve los cinco ejes: rango de
+# los que aún no están en joints.json. No llega al hardware ni a MoveIt.
+preview_limits_deg: [-180, 180]

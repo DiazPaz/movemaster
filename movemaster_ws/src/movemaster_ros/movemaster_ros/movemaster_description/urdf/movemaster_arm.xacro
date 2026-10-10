@@ -1,0 +1,85 @@
+<?xml version="1.0"?>
+<!-- The arm from config/dh.yaml (standard Denavit-Hartenberg). Row i of the table becomes:
+
+       joint_i        rotation θi about z of DH frame i-1. Revolute if the axis is in
+                      joints.json (or preview is true); otherwise fixed at home_deg.
+       <label>_link   the link that joint moves. Its geometry runs from the joint to DH frame i.
+       joint_i_dh     fixed Tz(di) · Tx(ai) · Rx(αi), from that link to DH frame i.
+
+     DH frame i is dh_frame_i; the last one is tool0, the TCP. Keeping the rotation and the fixed
+     screw in separate joints makes every DH frame exact, also for an axis fixed at home.
+
+     joints.json sets the range and maximum velocity of every axis with a SPARK MAX. URDF requires
+     effort; it is 0 because the axes are position controlled. -->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <!-- A cylinder along z of its own origin, drawn and used for collisions. -->
+  <xacro:macro name="movemaster_cylinder" params="radius length xyz rpy:='0 0 0' material:=movemaster_grey">
+    <visual>
+      <origin xyz="${xyz}" rpy="${rpy}"/>
+      <geometry><cylinder radius="${radius}" length="${length}"/></geometry>
+      <material name="${material}"/>
+    </visual>
+    <collision>
+      <origin xyz="${xyz}" rpy="${rpy}"/>
+      <geometry><cylinder radius="${radius}" length="${length}"/></geometry>
+    </collision>
+  </xacro:macro>
+
+  <xacro:macro name="movemaster_arm" params="chain joints preview preview_limits parent index:=1">
+    <xacro:if value="${chain}">
+      <xacro:property name="row" value="${chain[0]}"/>
+      <xacro:property name="name" value="${row['joint']}"/>
+      <xacro:property name="link" value="${row['label']}_link"/>
+      <xacro:property name="frame" value="${'tool0' if len(chain) == 1 else 'dh_frame_' + str(index)}"/>
+      <xacro:property name="a" value="${row['a_mm'] / 1000.0}"/>
+      <xacro:property name="d" value="${row['d_mm'] / 1000.0}"/>
+      <xacro:property name="r" value="${row['radius_mm'] / 1000.0}"/>
+      <xacro:property name="housing_r" value="${1.25 * row['radius_mm'] / 1000.0}"/>
+      <xacro:property name="housing_l" value="${2.5 * row['radius_mm'] / 1000.0}"/>
+      <xacro:property name="configured" value="${name in joints}"/>
+
+      <xacro:if value="${preview or configured}">
+        <joint name="${name}" type="revolute">
+          <parent link="${parent}"/>
+          <child link="${link}"/>
+          <axis xyz="0 0 1"/>
+          <limit lower="${float(joints[name]['min_position_rad']) if configured else radians(preview_limits[0])}"
+                 upper="${float(joints[name]['max_position_rad']) if configured else radians(preview_limits[1])}"
+                 velocity="${float(joints[name]['max_velocity_rad_s']) if configured else 1.0}"
+                 effort="0"/>
+        </joint>
+      </xacro:if>
+      <xacro:unless value="${preview or configured}">
+        <joint name="${name}" type="fixed">
+          <parent link="${parent}"/>
+          <child link="${link}"/>
+          <origin xyz="0 0 0" rpy="0 0 ${radians(row['home_deg'])}"/>
+        </joint>
+      </xacro:unless>
+
+      <link name="${link}">
+        <!-- Housing of the joint, along its axis. -->
+        <xacro:movemaster_cylinder radius="${housing_r}" length="${housing_l}" xyz="0 0 0"
+            material="movemaster_orange"/>
+        <!-- di along z, then ai along x: the same path as the DH screw. -->
+        <xacro:if value="${python.abs(d) > 0}">
+          <xacro:movemaster_cylinder radius="${r}" length="${python.abs(d)}" xyz="0 0 ${d / 2}"/>
+        </xacro:if>
+        <xacro:if value="${python.abs(a) > 0}">
+          <xacro:movemaster_cylinder radius="${r}" length="${python.abs(a)}" xyz="${a / 2} 0 ${d}"
+              rpy="0 ${pi / 2} 0"/>
+        </xacro:if>
+      </link>
+
+      <joint name="${name}_dh" type="fixed">
+        <parent link="${link}"/>
+        <child link="${frame}"/>
+        <origin xyz="${a} 0 ${d}" rpy="${radians(row['alpha_deg'])} 0 0"/>
+      </joint>
+      <link name="${frame}"/>
+
+      <xacro:movemaster_arm chain="${chain[1:]}" joints="${joints}" preview="${preview}"
+          preview_limits="${preview_limits}" parent="${frame}" index="${index + 1}"/>
+    </xacro:if>
+  </xacro:macro>
+</robot>

@@ -44,19 +44,27 @@ movemaster_ws/                                  workspace de colcon (desde aquí
             │   ├── docs/                       PARAMETROS, API, diagrama de clases, consola, validación
             │   ├── examples/                   programas sin ROS: demo, monitor, consola, puesta en marcha
             │   └── tests/                      pruebas automáticas
+            ├── movemaster_description/         MODELO del brazo (URDF desde la tabla DH)
+            │   ├── CMakeLists.txt, package.xml
+            │   ├── config/dh.yaml              tabla Denavit-Hartenberg  ← lo editas tú
+            │   ├── urdf/movemaster.urdf.xacro  el robot: cadena DH + bloque <ros2_control>
+            │   ├── urdf/movemaster_arm.xacro   macro que convierte cada fila DH en joints y links
+            │   ├── launch/display.launch.py    vista previa en RViz con sliders
+            │   ├── rviz/display.rviz
+            │   └── test/test_description.py
             └── movemaster_control/             NODO controller_manager (configuración + launch)
                 ├── CMakeLists.txt, package.xml
                 ├── launch/movemaster_control.launch.py
                 ├── config/movemaster_controllers.yaml
-                ├── urdf/movemaster.urdf.xacro
-                └── test/test_robot_description.py
+                └── test/test_controllers.py
 ```
 
-Hay dos paquetes de ROS que importan:
+Hay tres paquetes de ROS que importan:
 
 | Paquete | Qué es | Lenguaje |
 |---|---|---|
 | `movemaster_hardware` | El plugin `MovemasterHardware` y todo lo que habla con los SPARK MAX (protocolo, driver, SocketCAN). También compila sin ROS. | C++ |
+| `movemaster_description` | El modelo del brazo: genera el URDF desde la tabla DH (`dh.yaml`) y los ejes de `joints.json`. Lo usan el `controller_manager` y, después, MoveIt. | XML (xacro), YAML |
 | `movemaster_control` | No tiene código compilado: configura y arranca el nodo `controller_manager` de `ros2_control` con el plugin y los dos controladores. | Python (launch), XML, YAML |
 
 ---
@@ -172,7 +180,7 @@ sequenceDiagram
     participant H as MovemasterHardware
     participant S as SPARK MAX
     participant P as spawner
-    L->>L: URDF y parámetros desde joints.json
+    L->>L: URDF (dh.yaml + joints.json) y parámetros
     L->>R: robot_description (URDF)
     L->>C: movemaster_controllers.yaml y parámetros derivados
     R-->>C: /robot_description
@@ -291,8 +299,10 @@ Tabla completa, valores de fábrica y razones: [PARAMETROS.md](../movemaster_har
 ## 4. Paso 1 · Configurar joints.json
 
 Archivo: `movemaster_hardware/config/joints.json`. Es la **única** fuente de las
-articulaciones: el plugin lo lee para hablar con los motores, y el URDF y el
-JTC se generan a partir de él (ver [13.6](#136-movemaster_controlurdfmovemasterurdfxacro)).
+articulaciones: el plugin lo lee para hablar con los motores, y los ejes móviles
+del URDF y el JTC se generan a partir de él. La geometría del brazo viene de la
+tabla DH, `movemaster_description/config/dh.yaml` (ver
+[13.6](#136-movemaster_descriptionurdfmovemasterurdfxacro)).
 
 ### 4.1 Campos globales (opcionales; si faltan, se usa el valor por defecto)
 
@@ -308,16 +318,18 @@ JTC se generan a partir de él (ver [13.6](#136-movemaster_controlurdfmovemaster
 
 ### 4.2 Campos de cada articulación
 
-La clave (por ejemplo `"joint_1"`) es el **nombre** de la articulación en ROS.
-El orden del archivo es el orden en el URDF y en el JTC. El cargador es
-estricto: una clave desconocida es un error.
+La clave (por ejemplo `"joint_1"`) es el **nombre** de la articulación en ROS y
+debe ser uno de los `joint` de `dh.yaml` (`joint_1` a `joint_5`, de la cintura a
+la muñeca); otro nombre detiene el xacro. El orden del archivo es el orden del
+bloque `<ros2_control>` y del JTC. El cargador es estricto: una clave desconocida
+es un error.
 
 | Campo | Tipo | Regla | Significado |
 |---|---|---|---|
 | `can_id` | entero | 0–63, único | CAN ID del SPARK de ese eje. |
 | `gear_ratio` | número | > 0 | Vueltas del motor por cada vuelta de la articulación. |
 | `direction` | **entero** | `1` o `-1` (no `1.0`) | `-1` si el motor gira al revés que la articulación en ROS. |
-| `zero_offset_rad` | número | finito | Ángulo de la articulación cuando el encoder del motor marca 0. |
+| `zero_offset_rad` | número | finito | Ángulo de la articulación cuando el encoder del motor marca 0, es decir, al encender el SPARK (ver [4.4](#44-cuidados)). |
 | `min_position_rad`, `max_position_rad` | número | `min < max` | Límites calibrados. El driver rechaza objetivos fuera; también son los límites del URDF. |
 | `max_velocity_rad_s` | número | > 0 | Velocidad máxima de la articulación: límite del URDF, con el que planea MoveIt. Ninguna `cruise_velocity` puede superarla. |
 | `spark` | objeto | ver abajo | Lo que la puesta en marcha guarda en la flash del SPARK. El driver lo vuelve a escribir en RAM al configurar. |
@@ -385,6 +397,20 @@ del formato anterior están en
 - **No hay homing.** El encoder del NEO es relativo: si su cero cambia al
   apagar el SPARK, `zero_offset_rad` deja de ser válido. Verifica la posición
   antes de activar.
+- **El cero de cada eje es el de la tabla DH.** θ = 0 en `dh.yaml` es 0 rad en
+  ROS, y el sentido positivo es el giro alrededor del eje z de la tabla; si el
+  motor gira al revés, `direction: -1`. Como el encoder marca 0 al encender, el
+  eje lee `zero_offset_rad` en la postura en que se encendió. La convención es
+  **encender el brazo en Home** y poner en `zero_offset_rad` el ángulo Home de
+  `dh.yaml`:
+
+  | Eje | `joint_1` | `joint_2` | `joint_3` | `joint_4` | `joint_5` |
+  |---|---|---|---|---|---|
+  | Home | 0° | −90° | 90° | 0° | −90° |
+  | `zero_offset_rad` | `0` | `-1.5708` | `1.5708` | `0` | `-1.5708` |
+
+  Con eso, el modelo de RViz y MoveIt coincide con el brazo real desde el
+  arranque. El hardware simulado también arranca en Home.
 - El launch lee la copia **instalada** de `joints.json`. Si la editas, vuelve a
   compilar (o compila con `--symlink-install`, ver el paso 5) o pásala con
   `joint_config:=/ruta/joints.json`.
@@ -556,18 +582,18 @@ source install/setup.bash
   (`ros2_control`, `ros2_controllers`, `xacro`, `nlohmann-json`…). Necesita las
   dos rutas porque rosdep, como colcon, no entra en el paquete Python
   `movemaster_ros`.
-- `--packages-up-to movemaster_control` compila `movemaster_hardware` y luego
-  `movemaster_control`.
+- `--packages-up-to movemaster_control` compila `movemaster_hardware`,
+  `movemaster_description` y `movemaster_control`.
 - `--symlink-install` instala enlaces a los archivos de configuración en lugar
-  de copias: los cambios en `joints.json`, el YAML o el launch se aplican sin
-  recompilar.
+  de copias: los cambios en `joints.json`, `dh.yaml`, el YAML o el launch se
+  aplican sin recompilar.
 - `source install/setup.bash` hay que hacerlo **en cada terminal** nueva.
 
 Comprobaciones:
 
 ```bash
 colcon list                                     # movemaster_hardware debe estar en src/movemaster_ros/movemaster_ros/
-colcon test --packages-select movemaster_hardware movemaster_control
+colcon test --packages-select movemaster_hardware movemaster_description movemaster_control
 colcon test-result --verbose
 ros2 pkg prefix movemaster_hardware             # debe apuntar a install/movemaster_hardware
 ```
@@ -593,6 +619,30 @@ Debes ver, entre otras, estas líneas:
 
 En otra terminal (con `source install/setup.bash`) sigue el
 [paso 8](#11-paso-8--comprobar-y-mover-un-eje).
+
+### 9.1 Ver el brazo en RViz
+
+La cinemática se puede revisar sola, sin `controller_manager`: un slider por
+eje para los cinco ejes de la tabla DH, aunque `joints.json` todavía no los
+tenga a todos. Arranca en Home.
+
+```bash
+ros2 launch movemaster_description display.launch.py
+```
+
+En Home, `tool0` (la punta de la herramienta) está en (0.160, 0, 0.255) m de
+`base_link`, apuntando hacia abajo:
+
+```bash
+ros2 run tf2_ros tf2_echo base_link tool0
+```
+
+Con el nodo corriendo (simulado o con los SPARK), RViz muestra el brazo según
+`/joint_states`; los ejes sin SPARK se quedan fijos en Home:
+
+```bash
+rviz2 -d $(ros2 pkg prefix --share movemaster_description)/rviz/display.rviz
+```
 
 ---
 
@@ -623,7 +673,7 @@ Argumentos del launch:
 | `joint_config` | `joints.json` instalado de `movemaster_hardware` | Otra calibración. |
 | `can_interface` | `can0` | Otra interfaz SocketCAN. |
 | `controllers_file` | `movemaster_controllers.yaml` de `movemaster_control` | Otros parámetros de controladores. |
-| `description_file` | `movemaster.urdf.xacro` de `movemaster_control` | Otro modelo (el futuro `movemaster_description`). |
+| `description_file` | `movemaster.urdf.xacro` de `movemaster_description` | Otro modelo; debe incluir el macro `movemaster_ros2_control`. |
 
 Ver todos: `ros2 launch movemaster_control movemaster_control.launch.py --show-args`.
 
@@ -768,7 +818,7 @@ del directorio desde donde se ejecuta, le añade esa carpeta como segunda base
 de búsqueda para `build`, `test`, `list`, `graph` e `info`. `&base_paths` define
 la lista una vez y `*base_paths` la reutiliza (alias de YAML).
 
-### 13.2 `package.xml` (los dos paquetes)
+### 13.2 `package.xml` (los tres paquetes)
 
 Es el manifiesto de un paquete ROS (formato 3): nombre, versión, descripción,
 responsable, licencia y **dependencias**. colcon lo usa para el orden de
@@ -784,10 +834,13 @@ compilación y rosdep para instalar lo que falta.
 
 - `movemaster_hardware`: `depend` de `hardware_interface`, `pluginlib`, `rclcpp`,
   `rclcpp_lifecycle` y `nlohmann-json-dev`, porque el plugin los usa al compilar.
-- `movemaster_control`: solo `exec_depend` (`controller_manager`,
+- `movemaster_description` y `movemaster_control`: solo `exec_depend`, porque
+  no compilan código: instalan archivos que se usan al ejecutar. La descripción
+  depende de `movemaster_hardware` (`joints.json` y el macro `<ros2_control>`),
+  `xacro` y lo que usa la vista previa (`robot_state_publisher`,
+  `joint_state_publisher_gui`, `rviz2`); el control, de `controller_manager`,
   `joint_trajectory_controller`, `joint_state_broadcaster`,
-  `robot_state_publisher`, `xacro`, `movemaster_hardware`…), porque no compila
-  código: solo instala archivos que se usan al ejecutar.
+  `robot_state_publisher`, `xacro` y `movemaster_description`.
 
 ### 13.3 `movemaster_hardware/CMakeLists.txt`
 
@@ -810,21 +863,23 @@ compilación y rosdep para instalar lo que falta.
 | `install(...)` | Instala librerías, ejemplos (en `lib/movemaster_hardware`, para `ros2 run`), headers y las carpetas `spec`, `config` y `docs` en `share/movemaster_hardware`. |
 | `ament_export_*`, `ament_package()` | Exporta el paquete para otros paquetes CMake y genera los archivos de ament. |
 
-### 13.4 `movemaster_control/CMakeLists.txt`
+### 13.4 `movemaster_control/CMakeLists.txt` (y el de `movemaster_description`)
 
 ```cmake
 find_package(ament_cmake REQUIRED)
-install(DIRECTORY config launch urdf DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY config launch DESTINATION share/${PROJECT_NAME})
 if(BUILD_TESTING)
   find_package(ament_cmake_pytest REQUIRED)
-  ament_add_pytest_test(robot_description test/test_robot_description.py)
+  ament_add_pytest_test(controllers test/test_controllers.py)
 endif()
 ament_package()
 ```
 
-No compila nada: copia `config/`, `launch/` y `urdf/` a
+No compila nada: copia `config/` y `launch/` a
 `install/movemaster_control/share/movemaster_control/`, de donde los lee
-`ros2 launch`, y registra la prueba de pytest para `colcon test`.
+`ros2 launch`, y registra la prueba de pytest para `colcon test`. El de
+`movemaster_description` es igual, con `config launch rviz urdf` y la prueba
+`test/test_description.py`.
 
 ### 13.5 `movemaster_hardware/movemaster_hardware.xml` (pluginlib)
 
@@ -847,23 +902,39 @@ Tres piezas deben coincidir: este XML, la macro
 al final de `movemaster_hardware.cpp` y `pluginlib_export_plugin_description_file`
 en el CMake.
 
-### 13.6 `movemaster_control/urdf/movemaster.urdf.xacro`
+### 13.6 `movemaster_description/urdf/movemaster.urdf.xacro`
 
-Genera el URDF que recibe el `controller_manager`. Recibe cuatro argumentos
-(`joint_config`, `spec_path`, `can_interface`, `use_mock_hardware`) y:
+Genera el URDF del brazo, el que reciben el `controller_manager` y, después,
+MoveIt. Junta dos archivos:
 
-1. lee `joints.json` con `xacro.load_yaml` (JSON es YAML válido);
-2. crea una cadena `base_link → joint_1 → joint_1_link → joint_2 → …`, una
-   articulación `revolute` por eje, con `lower`/`upper` = límites de
-   `joints.json` y `velocity` = `max_velocity_rad_s`;
-3. incluye el macro del plugin para el bloque `<ros2_control>`.
+| Archivo | Qué aporta |
+|---|---|
+| `movemaster_description/config/dh.yaml` | La tabla Denavit-Hartenberg (a, α, d en mm y grados), la postura Home y los radios de los eslabones. |
+| `movemaster_hardware/config/joints.json` | Qué ejes tienen SPARK MAX y sus límites. |
 
-La geometría es **provisional**: eslabones sin forma ni longitud, ejes en `z`.
-Sirve para `ros2_control` y `robot_state_publisher`, no para MoveIt. Para ver el
-URDF que se genera:
+Cada fila *i* de la tabla, `T(i-1 → i) = Rz(θi) · Tz(di) · Tx(ai) · Rx(αi)`,
+se convierte en (`urdf/movemaster_arm.xacro`):
+
+1. `joint_i`: el giro θi alrededor de z. Si el eje está en `joints.json` es
+   `revolute`, con `lower`/`upper` = límites de `joints.json` y `velocity` =
+   `max_velocity_rad_s`; si no, es `fixed` en su ángulo Home.
+2. `<label>_link` (`waist_link`, `shoulder_link`, …): el eslabón que mueve, con
+   cilindros a lo largo de di y ai para verlo y para las colisiones.
+3. `joint_i_dh`: la parte fija `Tz(di) · Tx(ai) · Rx(αi)`, hasta el marco DH
+   `dh_frame_i`. El último marco se llama `tool0`: la punta de la herramienta.
+
+Así cada marco DH es exacto aunque el eje esté fijo. Después incluye el macro
+del plugin para el bloque `<ros2_control>`, con los mismos ejes de
+`joints.json`; el hardware simulado arranca en Home. Si `joints.json` tiene un
+eje que no está en la tabla, el xacro se detiene con un error.
+
+Argumentos: `joint_config`, `dh_config`, `spec_path`, `can_interface`,
+`use_mock_hardware` y `preview`. Con `preview:=true` los cinco ejes se mueven y
+no hay bloque `<ros2_control>`; lo usa `display.launch.py`. Para ver el URDF que
+se genera:
 
 ```bash
-xacro $(ros2 pkg prefix --share movemaster_control)/urdf/movemaster.urdf.xacro use_mock_hardware:=true
+xacro $(ros2 pkg prefix --share movemaster_description)/urdf/movemaster.urdf.xacro use_mock_hardware:=true
 ```
 
 ### 13.7 `movemaster_hardware/config/ros2_control.xacro`
@@ -876,7 +947,8 @@ Macro `movemaster_ros2_control` que escribe el bloque `<ros2_control>`:
   `mock_components/GenericSystem`.
 - Un `<joint>` por eje de `joints.json`, en su orden, con la interfaz de comando
   `position` y las de estado `position`, `velocity` y `current`.
-  `initial_value` solo lo usa el hardware simulado.
+  `initial_value` solo lo usa el hardware simulado: el valor de
+  `initial_positions` para ese eje (0 si falta), recortado a sus límites.
 
 `on_init` exige exactamente un comando `position`, estados `position` y
 `velocity` (y `current` opcional), y la misma lista de articulaciones que
@@ -951,7 +1023,8 @@ Ninguno de los dos se modifica.
 | `tests/setup_test.cpp` | prueba | no | Cargador de `joints.json` y puesta en marcha contra SPARK simulado. |
 | `tests/console_test.cpp` | prueba | no | Bucle de la consola con driver falso. |
 | `tests/protocol_oracle.cpp` + `tests/differential_test.py` | prueba | no | Paridad byte a byte con la librería Python. |
-| `movemaster_control/test/test_robot_description.py` | prueba | no | El URDF generado cumple lo que exigen el plugin y `ros2_control`. |
+| `movemaster_description/test/test_description.py` | prueba | no | El URDF sigue la tabla DH (cinemática directa contra el producto DH; Home en (0.160, 0, 0.255) m) y cumple lo que exigen el plugin y `ros2_control`. |
+| `movemaster_control/test/test_controllers.py` | prueba | no | Los controladores usan las interfaces que exporta el plugin. |
 
 ---
 
@@ -963,6 +1036,7 @@ Ninguno de los dos se modifica.
 | `Package 'movemaster_control' not found` | No hiciste `source install/setup.bash` o compilaste fuera de `movemaster_ws/`. | Compila desde `movemaster_ws/` y haz `source` en cada terminal. |
 | `colcon list` no muestra `movemaster_hardware` ni `movemaster_control` | colcon no leyó `colcon_defaults.yaml`: no lo ejecutaste desde `movemaster_ws/`. | Ejecuta colcon desde `movemaster_ws/`. |
 | `CMake Error: The source ".../movemaster_hardware/CMakeLists.txt" does not match the source ".../src/movemaster_hardware/CMakeLists.txt" used to generate cache` | `build/movemaster_hardware` se configuró con la copia vieja del plugin (`src/movemaster_hardware`), que ya no existe. CMake no reutiliza un caché de otra carpeta. | Desde `movemaster_ws/`: `rm -rf build/movemaster_hardware install/movemaster_hardware` y vuelve a compilar. |
+| `joints.json has axes that are not in dh.yaml: joint_6` | Una clave de `joints.json` no es un `joint` de la tabla DH. | Usa los nombres de `dh.yaml` (`joint_1` a `joint_5`). |
 | `Configured joints must exactly match the ros2_control joint list` | El URDF y `joints.json` declaran articulaciones distintas (por ejemplo, un URDF propio con otra lista). | Usa el macro `movemaster_ros2_control`, que las genera desde `joints.json`. |
 | `Configuration for joint_1: direction must be an integer` | `direction` escrito como `1.0`. | Escribe `1` o `-1`. |
 | `joint_1: invalid position limits` | `min_position_rad ≥ max_position_rad`. | Corrige los límites. |
@@ -989,6 +1063,6 @@ Ninguno de los dos se modifica.
 | `Could not enable FIFO RT scheduling policy ... Operation not permitted` (advertencia) | El usuario no tiene permiso de prioridad de tiempo real. | [10.1](#101-permiso-de-tiempo-real-una-sola-vez). |
 | El brazo se mueve en sentido contrario | `direction` invertido. | Cambia `direction`; verifica con `driver_monitor` antes. |
 | Después de la puesta en marcha, un eje gira al revés que antes | El restablecimiento dejó `Inverted` (ID 45) en `false`, y antes estaba activado en REV Hardware Client. | Corrige `direction` en `joints.json`; MoveMaster no usa `Inverted`. |
-| La posición en ROS no coincide con la real | `zero_offset_rad` o `gear_ratio` incorrectos, o el encoder perdió su cero. | Recalibra con `driver_monitor`. |
+| La posición en ROS no coincide con la real (o el brazo de RViz con el real) | `zero_offset_rad` o `gear_ratio` incorrectos, el brazo no se encendió en Home o el encoder perdió su cero. | Enciende en Home con los `zero_offset_rad` de [4.4](#44-cuidados); recalibra con `driver_monitor`. |
 | Cambié `joints.json` y no pasa nada | El launch lee la copia instalada. | Compila con `--symlink-install` o vuelve a compilar. |
 | La acción termina tarde | En modo `maxmotion`, el SPARK limita la velocidad a la `cruise_velocity` del slot; la trayectoria pedía más. | Da más `time_from_start` o sube `cruise_velocity`, sin pasar de `max_velocity_rad_s`. |

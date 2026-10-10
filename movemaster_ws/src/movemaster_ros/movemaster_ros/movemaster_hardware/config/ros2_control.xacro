@@ -15,20 +15,25 @@
     </joint>
   </xacro:macro>
 
-  <!-- One joint per entry of joints.json; mock hardware starts at 0 rad clamped to the limits. -->
-  <xacro:macro name="movemaster_control_joints" params="joints names">
+  <!-- One joint per entry of joints.json. Mock hardware starts at initial_positions[joint],
+       0 rad if absent, clamped to the limits. -->
+  <xacro:macro name="movemaster_control_joints" params="joints names initial_positions">
     <xacro:if value="${names}">
       <xacro:property name="lower" value="${float(joints[names[0]]['min_position_rad'])}"/>
       <xacro:property name="upper" value="${float(joints[names[0]]['max_position_rad'])}"/>
-      <xacro:movemaster_control_joint name="${names[0]}" initial_position="${min(max(0.0, lower), upper)}"/>
-      <xacro:movemaster_control_joints joints="${joints}" names="${names[1:]}"/>
+      <xacro:property name="initial" value="${float(initial_positions.get(names[0], 0.0))}"/>
+      <xacro:movemaster_control_joint name="${names[0]}" initial_position="${min(max(initial, lower), upper)}"/>
+      <xacro:movemaster_control_joints joints="${joints}" names="${names[1:]}"
+          initial_positions="${initial_positions}"/>
     </xacro:if>
   </xacro:macro>
 
   <!-- use_mock_hardware:=true swaps the plugin for mock_components/GenericSystem, with the
-       same interfaces, to run the controllers without CAN or motors. -->
+       same interfaces, to run the controllers without CAN or motors. initial_positions maps
+       joint names to the radians the mock starts at. -->
   <xacro:macro name="movemaster_ros2_control"
-               params="name spec_path joint_config_path can_interface:=can0 use_mock_hardware:=false">
+               params="name spec_path joint_config_path can_interface:=can0 use_mock_hardware:=false
+                       initial_positions:=${dict()}">
     <xacro:property name="joints" value="${xacro.load_yaml(joint_config_path)['joints']}"/>
     <ros2_control name="${name}" type="system">
       <hardware>
@@ -42,7 +47,8 @@
           <param name="can_interface">${can_interface}</param>
         </xacro:unless>
       </hardware>
-      <xacro:movemaster_control_joints joints="${joints}" names="${list(joints)}"/>
+      <xacro:movemaster_control_joints joints="${joints}" names="${list(joints)}"
+          initial_positions="${initial_positions}"/>
     </ros2_control>
   </xacro:macro>
 </robot>

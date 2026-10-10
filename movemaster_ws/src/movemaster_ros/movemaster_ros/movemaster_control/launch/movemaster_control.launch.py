@@ -3,13 +3,14 @@
     ros2 launch movemaster_control movemaster_control.launch.py [use_mock_hardware:=true]
 
 Arranca:
-  robot_state_publisher  publica /robot_description, de donde el controller_manager
-                         carga el hardware, y el TF del robot.
+  robot_state_publisher  publica /robot_description (movemaster_description), de donde
+                         el controller_manager carga el hardware, y el TF del robot.
   controller_manager     ros2_control_node con MovemasterHardware o hardware simulado.
   spawner                carga y activa joint_state_broadcaster y joint_trajectory_controller.
 
-joints.json es la única fuente de las articulaciones: de él salen el URDF, los joints
-del JointTrajectoryController y la frecuencia del lazo (1 / period_s).
+joints.json es la única fuente de las articulaciones: de él salen los ejes móviles del
+URDF y su bloque ros2_control, los joints del JointTrajectoryController y la frecuencia
+del lazo (1 / period_s). La geometría sale de la tabla DH de movemaster_description.
 """
 
 import json
@@ -50,7 +51,8 @@ def generate_launch_description():
             description='Parámetros del controller_manager y de los controladores.'),
         DeclareLaunchArgument(
             'description_file',
-            default_value=PathJoinSubstitution([share, 'urdf', 'movemaster.urdf.xacro']),
+            default_value=PathJoinSubstitution(
+                [FindPackageShare('movemaster_description'), 'urdf', 'movemaster.urdf.xacro']),
             description='Xacro del robot; recibe joint_config, can_interface y '
                         'use_mock_hardware.'),
         OpaqueFunction(function=_launch_setup),

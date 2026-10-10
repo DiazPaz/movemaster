@@ -1,0 +1,55 @@
+<?xml version="1.0"?>
+<!-- MoveMaster robot description.
+
+     config/dh.yaml       kinematics: the five-axis chain in standard DH, base and link sizes.
+     joints.json          the axes that have a SPARK MAX, with their limits. Those are revolute
+                          and get the ros2_control block; the rest stay fixed at home_deg.
+
+     preview:=true moves the five axes and drops ros2_control, for launch/display.launch.py.
+     movemaster_control passes joint_config, can_interface and use_mock_hardware. -->
+<robot name="movemaster" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:arg name="joint_config" default="$(find movemaster_hardware)/config/joints.json"/>
+  <xacro:arg name="dh_config" default="$(find movemaster_description)/config/dh.yaml"/>
+  <xacro:arg name="spec_path" default="$(find movemaster_hardware)/spec/spark-frames-2.1.0"/>
+  <xacro:arg name="can_interface" default="can0"/>
+  <xacro:arg name="use_mock_hardware" default="false"/>
+  <xacro:arg name="preview" default="false"/>
+
+  <xacro:include filename="movemaster_arm.xacro"/>
+  <xacro:include filename="$(find movemaster_hardware)/config/ros2_control.xacro"/>
+
+  <xacro:property name="joint_config" value="$(arg joint_config)"/>
+  <xacro:property name="joints" value="${xacro.load_yaml(joint_config)['joints']}"/>
+  <xacro:property name="dh" value="${xacro.load_yaml('$(arg dh_config)')}"/>
+  <xacro:property name="preview" value="${'$(arg preview)' == 'true'}"/>
+
+  <!-- An axis of joints.json missing from the chain would reach ros2_control without a URDF joint. -->
+  <xacro:property name="dh_joints" value="${[row['joint'] for row in dh['chain']]}"/>
+  <xacro:property name="unknown_joints" value="${python.sorted(python.set(joints) - python.set(dh_joints))}"/>
+  <xacro:if value="${len(unknown_joints) > 0 and xacro.fatal(
+      'joints.json has axes that are not in dh.yaml: ' + ', '.join(unknown_joints))}"/>
+
+  <material name="movemaster_grey"><color rgba="0.6 0.6 0.62 1"/></material>
+  <material name="movemaster_orange"><color rgba="0.95 0.45 0.1 1"/></material>
+
+  <!-- DH frame 0: on the axis of joint_1, at the bottom of the base. -->
+  <xacro:property name="base_radius" value="${dh['base']['radius_mm'] / 1000.0}"/>
+  <xacro:property name="base_height" value="${dh['base']['height_mm'] / 1000.0}"/>
+  <link name="base_link">
+    <xacro:movemaster_cylinder radius="${base_radius}" length="${base_height}"
+        xyz="0 0 ${base_height / 2}"/>
+  </link>
+
+  <xacro:movemaster_arm chain="${dh['chain']}" joints="${joints}" preview="${preview}"
+      preview_limits="${dh['preview_limits_deg']}" parent="base_link"/>
+
+  <!-- Mock hardware starts at Home, like the arm powered up there (MANUAL §4.4). -->
+  <xacro:unless value="${preview}">
+    <xacro:movemaster_ros2_control name="MovemasterSystem"
+        spec_path="$(arg spec_path)"
+        joint_config_path="${joint_config}"
+        can_interface="$(arg can_interface)"
+        use_mock_hardware="$(arg use_mock_hardware)"
+        initial_positions="${dict((row['joint'], radians(row['home_deg'])) for row in dh['chain'])}"/>
+  </xacro:unless>
+</robot>

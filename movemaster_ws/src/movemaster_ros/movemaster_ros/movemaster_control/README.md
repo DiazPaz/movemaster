@@ -32,7 +32,7 @@ El launch arranca tres procesos:
 
 | Proceso | Para qué |
 |---|---|
-| `robot_state_publisher` | Publica `/robot_description`, de donde el `controller_manager` de Jazzy carga el hardware, y el TF a partir de `/joint_states`. |
+| `robot_state_publisher` | Publica `/robot_description` (el URDF de `movemaster_description`), de donde el `controller_manager` de Jazzy carga el hardware, y el TF a partir de `/joint_states`. |
 | `ros2_control_node` (`/controller_manager`) | Ejecuta el lazo `read → update → write` con `MovemasterHardware` o con hardware simulado. |
 | `spawner` | Carga y activa `joint_state_broadcaster` y luego `joint_trajectory_controller`. |
 
@@ -44,13 +44,16 @@ mano, todo lo demás se genera a partir de ese archivo:
 
 | Qué | De dónde sale |
 |---|---|
-| Articulaciones del URDF y del bloque `<ros2_control>`, en orden | Claves de `joints` |
+| Ejes móviles del URDF y articulaciones del bloque `<ros2_control>`, en orden | Claves de `joints` |
 | Límites `lower` / `upper` del URDF | `min_position_rad` / `max_position_rad` |
 | Límite de velocidad del URDF (rad/s) | `max_velocity_rad_s` |
 | `joints` del `JointTrajectoryController` | Claves de `joints` |
 | `update_rate` del `controller_manager` | `1 / period_s` |
 
-Para instalar un eje nuevo basta con añadirlo a `joints.json`.
+Para instalar un eje nuevo basta con añadirlo a `joints.json`, con el nombre que
+tiene en la tabla DH (`joint_1` a `joint_5`). La geometría del brazo y los ejes
+que aún no tienen SPARK, fijos en Home, vienen de
+[`movemaster_description`](../movemaster_description/README.md).
 
 ## Compilar
 
@@ -96,7 +99,7 @@ spawner termina a los 60 s.
 | `joint_config` | `joints.json` de `movemaster_hardware` | Calibración de los ejes. |
 | `can_interface` | `can0` | Interfaz SocketCAN. |
 | `controllers_file` | `config/movemaster_controllers.yaml` | Parámetros del `controller_manager` y de los controladores. |
-| `description_file` | `urdf/movemaster.urdf.xacro` | Modelo del robot; recibe `joint_config`, `can_interface` y `use_mock_hardware`. |
+| `description_file` | `urdf/movemaster.urdf.xacro` de `movemaster_description` | Modelo del robot; recibe `joint_config`, `can_interface` y `use_mock_hardware`. |
 
 ## Comprobar y mover un eje
 
@@ -139,7 +142,7 @@ vuelve a mantener la posición medida.
 - **Tolerancias del `JointTrajectoryController`.** Se dejan en sus valores por defecto: sin tolerancia de trayectoria y `goal_time = 0`, que espera a que el eje se detenga. MAXMotion perfila cada setpoint dentro del SPARK y el eje llega con retraso; si una tolerancia venciera, el controlador fijaría la posición medida en ese instante y el eje quedaría antes del objetivo.
 - **Modo de cada eje.** Lo fija el bloque `control` de `joints.json` al activar: `maxmotion` (por defecto en el banco) o `position`, que deja el perfil solo al JTC y protege con `max_following_error_rad`. Cambiarlo desde ROS es un paso pendiente; ver [PARAMETROS.md](../movemaster_hardware/docs/PARAMETROS.md).
 - **`current` no es `effort`.** El broadcaster publica la corriente en `/dynamic_joint_states` y no la hace pasar por par en `/joint_states`.
-- **Modelo provisional.** `urdf/movemaster.urdf.xacro` genera una cadena de eslabones sin geometría, suficiente para `ros2_control` y `robot_state_publisher`. Cuando exista `movemaster_description`, basta con pasar su xacro en `description_file`, incluyendo el macro `movemaster_ros2_control` del plugin.
+- **Modelo en su propio paquete.** El URDF vive en `movemaster_description` porque lo comparten este nodo, RViz y MoveIt. Otro modelo se pasa en `description_file` y debe incluir el macro `movemaster_ros2_control` del plugin.
 
 ## Archivos
 
@@ -147,5 +150,4 @@ vuelve a mantener la posición medida.
 |---|---|
 | `launch/movemaster_control.launch.py` | Arranque del nodo; deriva `update_rate` y los `joints` del JTC desde `joints.json`. |
 | `config/movemaster_controllers.yaml` | Tipos de controlador e interfaces del `JointTrajectoryController`. |
-| `urdf/movemaster.urdf.xacro` | Modelo provisional y bloque `<ros2_control>` del plugin. |
-| `test/test_robot_description.py` | Comprueba que el modelo cumple lo que exigen el plugin y `ros2_control`. |
+| `test/test_controllers.py` | Comprueba que los controladores usan las interfaces que exporta el plugin. |

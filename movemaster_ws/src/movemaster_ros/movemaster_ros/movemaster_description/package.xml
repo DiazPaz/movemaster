@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>movemaster_description</name>
+  <version>0.1.0</version>
+  <description>MoveMaster robot description: URDF from the Denavit-Hartenberg table, with the ros2_control block of the axes in joints.json, and an RViz preview.</description>
+  <maintainer email="maintainer@example.com">MoveMaster project (replace before publishing)</maintainer>
+  <license>Proprietary</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- joints.json and the ros2_control macro -->
+  <exec_depend>movemaster_hardware</exec_depend>
+  <exec_depend>xacro</exec_depend>
+
+  <!-- launch/display.launch.py -->
+  <exec_depend>joint_state_publisher</exec_depend>
+  <exec_depend>joint_state_publisher_gui</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>ros2launch</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+
+  <test_depend>ament_cmake_pytest</test_depend>
+  <test_depend>ament_index_python</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
