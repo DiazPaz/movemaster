@@ -25,9 +25,9 @@ el diagnóstico del ejecutable cuando falla. Conserva tu configuración de ejes.
 Compila en un directorio nuevo para evitar mezclar productos anteriores:
 
 ```bash
-cmake -S . -B build_fixed -DMOVEMASTER_BUILD_ROS2=OFF -DCMAKE_BUILD_TYPE=Release
-cmake --build build_fixed -j2
-ctest --test-dir build_fixed --output-on-failure
+cmake -S . -B build -DMOVEMASTER_BUILD_ROS2=OFF -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j2
+ctest --test-dir build --output-on-failure
 ```
 
 Detalles del problema original y diagnóstico:

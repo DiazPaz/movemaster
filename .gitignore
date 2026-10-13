@@ -19,6 +19,7 @@ env/
 build/
 install/
 log/
+build_fixed/
 
 # ROS bags
 *.db3
