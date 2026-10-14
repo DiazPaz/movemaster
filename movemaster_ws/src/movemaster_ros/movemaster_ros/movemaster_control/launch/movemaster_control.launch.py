@@ -7,6 +7,7 @@ Arranca:
                          el controller_manager carga el hardware, y el TF del robot.
   controller_manager     ros2_control_node con MovemasterHardware o hardware simulado.
   spawner                carga y activa joint_state_broadcaster y joint_trajectory_controller.
+  spawner                carga jog_controller inactivo (jog desde el teach pendant).
 
 joints.json es la única fuente de las articulaciones: de él salen los ejes móviles del
 URDF y su bloque ros2_control, los joints del JointTrajectoryController y la frecuencia
@@ -77,6 +78,7 @@ def _launch_setup(context):
     derived_parameters = _write_parameters({
         'controller_manager': {'ros__parameters': {'update_rate': update_rate}},
         'joint_trajectory_controller': {'ros__parameters': {'joints': joints}},
+        'jog_controller': {'ros__parameters': {'joints': joints}},
     })
 
     hardware = ('hardware simulado' if use_mock_hardware
@@ -101,6 +103,14 @@ def _launch_setup(context):
                 '--controller-manager', '/controller_manager',
                 # Los servicios del controller_manager aparecen con el hardware ya activo;
                 # si el CAN no responde, el spawner falla en vez de esperar sin fin.
+                '--controller-manager-timeout', '60',
+            ],
+        ),
+        Node(
+            package='controller_manager', executable='spawner', output='both',
+            arguments=[
+                'jog_controller', '--inactive',
+                '--controller-manager', '/controller_manager',
                 '--controller-manager-timeout', '60',
             ],
         ),

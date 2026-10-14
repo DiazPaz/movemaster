@@ -1,9 +1,10 @@
 # Nodo controller_manager de MoveMaster (ros2_control, ROS 2 Jazzy).
 #
-# movemaster_control.launch.py completa dos valores a partir de joints.json, para
+# movemaster_control.launch.py completa estos valores a partir de joints.json, para
 # que nunca se desalineen del driver:
 #   controller_manager.update_rate      = 1 / period_s
 #   joint_trajectory_controller.joints  = las articulaciones del archivo, en orden
+#   jog_controller.joints               = las mismas
 controller_manager:
   ros__parameters:
     update_rate: 50  # Hz; valor por defecto si este archivo se usa sin el launch.
@@ -15,6 +16,14 @@ controller_manager:
 
     joint_trajectory_controller:
       type: joint_trajectory_controller/JointTrajectoryController
+
+    # Jog desde el teach pendant (movemaster_teleop/jog_node). Arranca inactivo: solo
+    # un controlador puede mandar las articulaciones, y se cambia con
+    #   ros2 control switch_controllers --deactivate joint_trajectory_controller \
+    #     --activate jog_controller
+    # Copia a la interfaz position lo último que llega a /jog_controller/commands.
+    jog_controller:
+      type: position_controllers/JointGroupPositionController
 
 joint_trajectory_controller:
   ros__parameters:

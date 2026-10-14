@@ -52,20 +52,28 @@ movemaster_ws/                                  workspace de colcon (desde aquí
             │   ├── launch/display.launch.py    vista previa en RViz con sliders
             │   ├── rviz/display.rviz
             │   └── test/test_description.py
-            └── movemaster_control/             NODO controller_manager (configuración + launch)
-                ├── CMakeLists.txt, package.xml
-                ├── launch/movemaster_control.launch.py
-                ├── config/movemaster_controllers.yaml
-                └── test/test_controllers.py
+            ├── movemaster_control/             NODO controller_manager (configuración + launch)
+            │   ├── CMakeLists.txt, package.xml
+            │   ├── launch/movemaster_control.launch.py
+            │   ├── config/movemaster_controllers.yaml
+            │   └── test/test_controllers.py
+            └── movemaster_teleop/              JOG desde el teach pendant (Python + firmware ESP32)
+                ├── package.xml, setup.py
+                ├── movemaster_teleop/          jog_node, trama del pendant, enlace serie, simulador
+                ├── config/jog.yaml             velocidades y ejes del joystick  ← lo editas tú
+                ├── launch/jog.launch.py
+                ├── firmware/                   proyecto PlatformIO del ESP32
+                └── test/
 ```
 
-Hay tres paquetes de ROS que importan:
+Hay cuatro paquetes de ROS que importan:
 
 | Paquete | Qué es | Lenguaje |
 |---|---|---|
 | `movemaster_hardware` | El plugin `MovemasterHardware` y todo lo que habla con los SPARK MAX (protocolo, driver, SocketCAN). También compila sin ROS. | C++ |
 | `movemaster_description` | El modelo del brazo: genera el URDF desde la tabla DH (`dh.yaml`) y los ejes de `joints.json`. Lo usan el `controller_manager` y, después, MoveIt. | XML (xacro), YAML |
-| `movemaster_control` | No tiene código compilado: configura y arranca el nodo `controller_manager` de `ros2_control` con el plugin y los dos controladores. | Python (launch), XML, YAML |
+| `movemaster_control` | No tiene código compilado: configura y arranca el nodo `controller_manager` de `ros2_control` con el plugin y sus controladores. | Python (launch), XML, YAML |
+| `movemaster_teleop` | Jog de articulaciones desde el teach pendant (ESP32): `jog_node` y el firmware. | Python, C++ (Arduino) |
 
 ---
 
@@ -574,7 +582,7 @@ cd ~/movemaster/movemaster_ws
 sudo rosdep init        # solo la primera vez en la máquina
 rosdep update
 rosdep install --from-paths src src/movemaster_ros/movemaster_ros --ignore-src -r -y
-colcon build --symlink-install --packages-up-to movemaster_control --cmake-args -DCMAKE_BUILD_TYPE=Release
+colcon build --symlink-install --packages-up-to movemaster_control movemaster_teleop --cmake-args -DCMAKE_BUILD_TYPE=Release
 source install/setup.bash
 ```
 
@@ -582,8 +590,9 @@ source install/setup.bash
   (`ros2_control`, `ros2_controllers`, `xacro`, `nlohmann-json`…). Necesita las
   dos rutas porque rosdep, como colcon, no entra en el paquete Python
   `movemaster_ros`.
-- `--packages-up-to movemaster_control` compila `movemaster_hardware`,
-  `movemaster_description` y `movemaster_control`.
+- `--packages-up-to movemaster_control movemaster_teleop` compila
+  `movemaster_hardware`, `movemaster_description`, `movemaster_control` y
+  `movemaster_teleop`.
 - `--symlink-install` instala enlaces a los archivos de configuración en lugar
   de copias: los cambios en `joints.json`, `dh.yaml`, el YAML o el launch se
   aplican sin recompilar.
@@ -759,6 +768,21 @@ driver enclava un fallo.
 
 Seguimiento: `ros2 topic echo /joint_trajectory_controller/controller_state`
 muestra la posición deseada, la medida y el error.
+
+### 11.3 Mover con el teach pendant (jog)
+
+El launch carga también el `jog_controller`, inactivo. Con el pendant conectado:
+
+```bash
+ros2 launch movemaster_teleop jog.launch.py port:=/dev/ttyUSB0
+ros2 control switch_controllers --deactivate joint_trajectory_controller --activate jog_controller
+```
+
+Con el switch en MANUAL, el botón de cada articulación la selecciona y el
+joystick la mueve; al soltarlo, el eje se sostiene. Para volver al
+`joint_trajectory_controller`, el mismo comando con los controladores al revés.
+Detalle, parámetros y prueba sin ESP32:
+[movemaster_teleop/README.md](../movemaster_teleop/README.md).
 
 ---
 
@@ -967,6 +991,8 @@ controller_manager:
       type: joint_state_broadcaster/JointStateBroadcaster
     joint_trajectory_controller:
       type: joint_trajectory_controller/JointTrajectoryController
+    jog_controller:
+      type: position_controllers/JointGroupPositionController
 joint_trajectory_controller:
   ros__parameters:
     command_interfaces: [position]
@@ -981,6 +1007,9 @@ joint_trajectory_controller:
   eje llega con retraso, y si una tolerancia venciera el JTC fijaría la
   posición medida y el eje quedaría antes del objetivo.
 - El JSB no necesita parámetros: publica todas las articulaciones.
+- `jog_controller` copia a la interfaz `position` lo último que llega a
+  `/jog_controller/commands`; lo usa `jog_node` ([11.3](#113-mover-con-el-teach-pendant-jog)).
+  Arranca inactivo: solo un controlador puede mandar las articulaciones.
 
 ### 13.9 `movemaster_control/launch/movemaster_control.launch.py`
 
@@ -991,11 +1020,13 @@ argumentos y una `OpaqueFunction` que, ya con los valores resueltos:
    `period_s` esté en rango);
 2. calcula `update_rate = round(1/period_s)` y la lista de articulaciones;
 3. procesa el xacro y obtiene el URDF;
-4. escribe en un YAML temporal `update_rate` y los `joints` del JTC;
+4. escribe en un YAML temporal `update_rate` y los `joints` del JTC y del
+   `jog_controller`;
 5. arranca `robot_state_publisher` (con el URDF), `ros2_control_node` (con el
    YAML de controladores y luego el temporal, que manda sobre el primero) y un
-   `spawner` que carga y activa los dos controladores; si el
-   `controller_manager` no responde en 60 s, el spawner falla.
+   `spawner` que carga y activa el JSB y el JTC, y otro que carga el
+   `jog_controller` inactivo; si el `controller_manager` no responde en 60 s,
+   los spawners fallan.
 
 ### 13.10 `movemaster_hardware/spec/`
 

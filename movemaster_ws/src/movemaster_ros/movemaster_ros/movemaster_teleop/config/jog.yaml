@@ -1,0 +1,16 @@
+# jog_node: jogging from the teach pendant. Joint limits and order come from joints.json;
+# the serial port is the launch argument port.
+jog_node:
+  ros__parameters:
+    baudrate: 115200
+    rate_hz: 50.0               # same rate the ESP32 sends at
+    x_joints: [1, 5]            # joystick X: waist and wrist roll
+    y_joints: [2, 3, 4]         # joystick Y: shoulder, elbow, wrist pitch
+    # Speed at full joystick, joint_1..joint_5 (rad/s, with decimals). Capped at
+    # max_velocity_rad_s of joints.json.
+    max_speed_rad_s: [0.25, 0.25, 0.25, 0.25, 0.25]
+    deadband: 0.12              # fraction of the joystick travel that does nothing
+    max_lead_rad: 0.05          # how far a target may run ahead of the measured joint
+    link_timeout_s: 0.2         # no frames for this long: stop jogging
+    idle_timeout_s: 1.0         # after this long without motion, the next jog restarts
+                                # from the measured positions

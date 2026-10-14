@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>movemaster_teleop</name>
+  <version>0.1.0</version>
+  <description>Joint jogging of MoveMaster from the ESP32 teach pendant (USB/UART now, CAN later).</description>
+  <maintainer email="maintainer@example.com">MoveMaster project (replace before publishing)</maintainer>
+  <license>Proprietary</license>
+
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>movemaster_hardware</exec_depend>
+  <exec_depend>python3-serial</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

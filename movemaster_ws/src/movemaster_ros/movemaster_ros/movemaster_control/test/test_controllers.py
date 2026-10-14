@@ -20,5 +20,8 @@ def test_controllers_use_the_interfaces_the_plugin_exports():
     trajectory = parameters['joint_trajectory_controller']['ros__parameters']
     assert trajectory['command_interfaces'] == ['position']
     assert set(trajectory['state_interfaces']) <= {'position', 'velocity'}
-    # The launch fills the joints from joints.json.
+    assert manager['jog_controller']['type'] == (
+        'position_controllers/JointGroupPositionController')
+    # The launch fills the joints of both controllers from joints.json.
     assert 'joints' not in trajectory
+    assert 'joints' not in parameters.get('jog_controller', {}).get('ros__parameters', {})

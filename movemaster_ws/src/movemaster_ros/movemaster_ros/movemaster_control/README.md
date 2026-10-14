@@ -34,7 +34,7 @@ El launch arranca tres procesos:
 |---|---|
 | `robot_state_publisher` | Publica `/robot_description` (el URDF de `movemaster_description`), de donde el `controller_manager` de Jazzy carga el hardware, y el TF a partir de `/joint_states`. |
 | `ros2_control_node` (`/controller_manager`) | Ejecuta el lazo `read → update → write` con `MovemasterHardware` o con hardware simulado. |
-| `spawner` | Carga y activa `joint_state_broadcaster` y luego `joint_trajectory_controller`. |
+| `spawner` | Carga y activa `joint_state_broadcaster` y luego `joint_trajectory_controller`. Otro `spawner` carga `jog_controller` inactivo, para el jog desde el teach pendant ([movemaster_teleop](../movemaster_teleop/README.md)). |
 
 ## joints.json es la única fuente de las articulaciones
 
