@@ -3,6 +3,7 @@
 The robot description, with its ros2_control block, is tested in movemaster_description.
 """
 
+import importlib.util
 from pathlib import Path
 
 import yaml
@@ -25,3 +26,18 @@ def test_controllers_use_the_interfaces_the_plugin_exports():
     # The launch fills the joints of both controllers from joints.json.
     assert 'joints' not in trajectory
     assert 'joints' not in parameters.get('jog_controller', {}).get('ros__parameters', {})
+
+
+def test_derived_parameters_have_no_yaml_aliases():
+    # rcl rejects aliases ("Will not support aliasing"), which PyYAML writes for a list
+    # used twice, as the joints of both controllers are.
+    path = PACKAGE / 'launch' / 'movemaster_control.launch.py'
+    spec = importlib.util.spec_from_file_location('movemaster_control_launch', path)
+    launch = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(launch)
+    joints = ['joint_1', 'joint_2']
+    written = Path(launch._write_parameters({'a': {'joints': joints}, 'b': {'joints': joints}}))
+    text = written.read_text()
+    written.unlink()
+    assert '&' not in text and '*' not in text
+    assert yaml.safe_load(text)['b']['joints'] == joints

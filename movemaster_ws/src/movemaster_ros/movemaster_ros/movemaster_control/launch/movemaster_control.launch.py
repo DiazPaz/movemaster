@@ -133,8 +133,15 @@ def _read_joint_config(path):
     return config
 
 
+class _NoAliasDumper(yaml.SafeDumper):
+    """rcl does not parse YAML aliases: write a list used twice (the joints) twice."""
+
+    def ignore_aliases(self, data):
+        return True
+
+
 def _write_parameters(parameters):
     with tempfile.NamedTemporaryFile(
             'w', prefix='movemaster_control_', suffix='.yaml', delete=False) as file:
-        yaml.safe_dump(parameters, file)
+        yaml.dump(parameters, file, Dumper=_NoAliasDumper)
     return file.name
