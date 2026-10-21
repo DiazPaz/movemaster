@@ -125,7 +125,7 @@ En `spark_setup.hpp`, fuera del protocolo:
 ## Métodos propios del driver
 
 `configure()`, `activate()`, `deactivate()`, `read()`, `write()`,
-`set_control()`, `controls()`, `states()`, `active()`, `fault()`,
+`set_control()`, `set_current_limit()`, `controls()`, `states()`, `active()`, `fault()`,
 `radians_to_rotations()`, `rotations_to_radians()` y `rpm_to_rad_s()`. Además,
 `load_driver_config()` lee `joints.json` v2 y `validate_driver_config()` lo
 valida. El driver tiene un único dueño; no se llama concurrentemente desde la
@@ -136,3 +136,31 @@ ROS que controle estas interfaces.
 corriente), las unidades, la telemetría y todos los slots de cada eje. Nunca
 persiste: la flash la escribe solo `spark_commission`. No cambia las inversiones
 del controlador; el sentido lo da `direction`.
+
+`configure(policy)` devuelve los ejes cuyo SPARK se reinició (aviso `HAS_RESET`
+de `STATUS_1`). Con `SparkResetPolicy::kAcceptPowerOnPose`, el valor por
+defecto, toma su postura de encendido como referencia y borra el aviso con
+`CLEAR_FAULTS`; con `kFault`, un reinicio es un error. El plugin usa la primera
+en su primer `on_configure` y la segunda en los siguientes. Después, `read()`
+enclava un fallo si el aviso reaparece.
+
+`set_current_limit(eje, amperes)` escribe el Smart Current Limit (IDs 59 y 60)
+en RAM, con ACK, solo con el driver configurado y sin activar. Lo usa
+`spark_home` mientras mide.
+
+## Búsqueda de topes (`homing.hpp`)
+
+Sin E/S, para probarla sin CAN:
+
+- `HomingConfig`: el bloque `homing` de `joints.json`, en `JointConfig::homing`
+  (opcional).
+- `StopSearch(config, direction, lead)`: busca un tope como el homing de una CNC:
+  acercamiento rápido, retroceso y acercamiento lento. En cada ciclo,
+  `update(posición, corriente, dt)` devuelve el objetivo para el modo Position;
+  al terminar, `phase()` es `kFound` o `kFailed`, y `stop()`, `error()`,
+  `free_current_peak()` y `stop_current()` dan el resultado. `direction` es +1
+  (antihorario) o −1; `lead`, cuánto puede adelantarse el objetivo a la
+  posición medida, debe quedar por debajo de `max_following_error_rad`.
+- `ramp_target(objetivo, meta, velocidad, dt, posición, lead)`: el siguiente
+  objetivo de una rampa hacia la meta, nunca a más de `lead` de la posición
+  medida.

@@ -163,6 +163,68 @@ void position_at_activation(const char *spec) {
   check(reactivated.frame == "MAXMOTION_POSITION_SETPOINT" && reactivated.slot == 0,
       "Runtime control lost across reactivation");
 }
+// A SPARK that restarted counts again from where it powered up. The first configure takes that
+// pose as the reference and clears HAS_RESET; afterwards a restart is a fault.
+void spark_restarts(const char *spec) {
+  auto config = config_for(spec, 2);
+  auto bus = std::make_unique<SimulatedSparkBus>(config);
+  auto *spy = bus.get();
+  MoveMasterDriver driver(config, std::move(bus));
+  check(driver.configure() == std::vector<std::string>{"joint_1", "joint_2"}, "Powered-up SPARKs not reported");
+  check(spy->names_sent_to(1).back() == "CLEAR_FAULTS" && !spy->has_reset[1] && !spy->has_reset[2],
+      "HAS_RESET not cleared after taking the power-up pose");
+  check(spy->value(1, 159) == 100, "STATUS_1 period not written");
+  const auto enable = std::find_if(spy->sent.begin(), spy->sent.end(), [&](const CANPacket &p) {
+    return (p.arbitration_id & ~0x3FU) == spy->frames["SET_STATUSES_ENABLED"].base_arb_id(); });
+  check(enable != spy->sent.end() && spy->frames["SET_STATUSES_ENABLED"].decode_payload(enable->data).at("MASK") == 7,
+      "STATUS_0/1/2 not enabled");
+  driver.activate();
+  pause_cycle(); driver.read();
+  spy->has_reset[2] = true;  // the SPARK of joint_2 reboots mid-session
+  std::this_thread::sleep_for(std::chrono::milliseconds(110));  // its next STATUS_1
+  spy->sent.clear();
+  rejects_with([&] { driver.read(); }, "joint_2: the SPARK restarted");
+  rejects([&] { driver.write({0, 0}); }, "A restarted SPARK did not latch a fault");
+  check(spy->sent.empty() && !driver.active(), "A restarted SPARK kept the heartbeat");
+
+  // Reconfiguring in the same session: the position was lost, so it is refused and not cleared.
+  auto again = config_for(spec, 2);
+  auto restarted = std::make_unique<SimulatedSparkBus>(again);
+  auto *spy2 = restarted.get();
+  spy2->has_reset[1] = false;
+  MoveMasterDriver refused(again, std::move(restarted));
+  rejects_with([&] { refused.configure(SparkResetPolicy::kFault); }, "joint_2: the SPARK restarted");
+  check(spy2->has_reset[2] && spy2->names_sent_to(2).back() != "CLEAR_FAULTS", "A refused restart was cleared");
+  auto clean = std::make_unique<SimulatedSparkBus>(again);
+  clean->has_reset = {{1, false}, {2, false}};
+  MoveMasterDriver kept(again, std::move(clean));
+  check(kept.configure(SparkResetPolicy::kFault).empty(), "A SPARK that kept its reference was refused");
+
+  // Firmware that does not clear HAS_RESET, or that sends no STATUS_1, must not pass unnoticed.
+  auto stuck = std::make_unique<SimulatedSparkBus>(again);
+  stuck->clear_faults = false;
+  MoveMasterDriver uncleared(again, std::move(stuck));
+  rejects_with([&] { uncleared.configure(); }, "CLEAR_FAULTS did not clear HAS_RESET on CAN 1");
+  auto quiet = std::make_unique<SimulatedSparkBus>(again);
+  quiet->status1 = false;
+  MoveMasterDriver blind(again, std::move(quiet));
+  rejects_with([&] { blind.configure(); }, "STATUS_1 required from every SPARK");
+}
+// spark_home lowers the Smart Current Limit in RAM while it measures, never while enabled.
+void current_limit(const char *spec) {
+  auto config = config_for(spec, 2);
+  auto bus = std::make_unique<SimulatedSparkBus>(config);
+  auto *spy = bus.get();
+  MoveMasterDriver driver(config, std::move(bus));
+  rejects_with([&] { driver.set_current_limit(0, 6); }, "only while configured and not active");
+  driver.configure();
+  driver.set_current_limit(1, 6);
+  check(spy->value(2, 59) == 6 && spy->value(2, 60) == 6 && spy->value(1, 59) == 40, "Current limit not written");
+  rejects_with([&] { driver.set_current_limit(1, 0); }, "1..80 A");
+  driver.activate();
+  rejects_with([&] { driver.set_current_limit(1, 40); }, "only while configured and not active");
+  check(driver.active() && driver.fault().empty(), "A refused current limit tripped the driver");
+}
 }
 int main(int argc, char **argv) {
   if (argc != 2) return 2;
@@ -172,6 +234,8 @@ int main(int argc, char **argv) {
     configures_baseline_and_slots(argv[1]);
     control_modes(argv[1]);
     position_at_activation(argv[1]);
+    spark_restarts(argv[1]);
+    current_limit(argv[1]);
     auto duplicate = config_for(argv[1]); duplicate.joints[1].device_id = 1;
     rejects([&] { MoveMasterDriver driver(duplicate); }, "Duplicate CAN IDs accepted");
     auto missing = config_for(argv[1]); missing.joints[0].gear_ratio = 0;
@@ -213,7 +277,7 @@ int main(int argc, char **argv) {
     }
     std::cout << "PASS: 1/3/6 axes, conversions, ACK checks, activation order, limits, paced writes, "
         "baseline and slots in RAM, Position/MAXMotion per joint, following error, "
-        "stale/malformed feedback, TX failure and loop gap.\n";
+        "stale/malformed feedback, TX failure, loop gap, SPARK restarts and current limit.\n";
     return 0;
   } catch (const std::exception &e) { std::cerr << "FAIL: " << e.what() << '\n'; return 1; }
 }

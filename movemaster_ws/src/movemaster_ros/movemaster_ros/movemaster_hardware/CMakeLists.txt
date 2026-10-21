@@ -18,7 +18,7 @@ find_package(Threads REQUIRED)
 # with an older same-name .so through LD_LIBRARY_PATH at runtime.
 add_library(sparkmax_protocol STATIC src/sparkmax_json_protocol.cpp)
 add_library(movemaster_driver STATIC src/socketcan.cpp src/spark_setup.cpp src/movemaster_driver.cpp
-  src/driver_config.cpp)
+  src/driver_config.cpp src/homing.cpp)
 set_target_properties(sparkmax_protocol movemaster_driver PROPERTIES
   POSITION_INDEPENDENT_CODE ON)
 foreach(target sparkmax_protocol movemaster_driver)
@@ -38,6 +38,8 @@ add_executable(spark_console examples/spark_console.cpp)
 target_link_libraries(spark_console PRIVATE movemaster_driver)
 add_executable(spark_commission examples/spark_commission.cpp)
 target_link_libraries(spark_commission PRIVATE movemaster_driver)
+add_executable(spark_home examples/spark_home.cpp)
+target_link_libraries(spark_home PRIVATE movemaster_driver)
 
 if(BUILD_TESTING)
   add_executable(protocol_oracle tests/protocol_oracle.cpp)
@@ -54,6 +56,10 @@ if(BUILD_TESTING)
   target_link_libraries(console_test PRIVATE movemaster_driver)
   add_test(NAME console_input_and_cycle COMMAND console_test)
   set_tests_properties(console_input_and_cycle PROPERTIES TIMEOUT 10)
+  add_executable(homing_test tests/homing_test.cpp)
+  target_link_libraries(homing_test PRIVATE movemaster_driver)
+  add_test(NAME homing_stop_search COMMAND homing_test ${CMAKE_CURRENT_SOURCE_DIR}/spec/spark-frames-2.1.0)
+  set_tests_properties(homing_stop_search PROPERTIES TIMEOUT 30)
   find_package(Python3 COMPONENTS Interpreter QUIET)
   if(Python3_Interpreter_FOUND)
     add_test(NAME python_cpp_parity COMMAND ${Python3_EXECUTABLE}
@@ -79,7 +85,8 @@ if(MOVEMASTER_BUILD_ROS2)
 endif()
 install(TARGETS sparkmax_protocol movemaster_driver EXPORT movemasterTargets
   ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
-install(TARGETS protocol_demo driver_monitor spark_console spark_commission RUNTIME DESTINATION lib/${PROJECT_NAME})
+install(TARGETS protocol_demo driver_monitor spark_console spark_commission spark_home
+  RUNTIME DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY include/ DESTINATION include)
 install(DIRECTORY spec config docs DESTINATION share/${PROJECT_NAME})
 install(FILES README.md NOTICE.md DESTINATION share/${PROJECT_NAME})

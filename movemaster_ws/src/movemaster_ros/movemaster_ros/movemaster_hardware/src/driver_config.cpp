@@ -64,6 +64,19 @@ SlotConfig load_slot(const Json &s) {
   if (s.contains("maxmotion")) slot.maxmotion = s.at("maxmotion");
   return slot;
 }
+HomingConfig load_homing(const Json &h) {
+  only_keys(h, {"current_limit_a", "stall_current_a", "stall_time_s", "fast_speed_rad_s", "slow_speed_rad_s",
+      "backoff_rad", "max_travel_rad"});
+  HomingConfig homing;
+  homing.current_limit_a = integer(h, "current_limit_a");
+  homing.stall_current_a = number(h, "stall_current_a");
+  homing.stall_time_s = number(h, "stall_time_s");
+  homing.fast_speed_rad_s = number(h, "fast_speed_rad_s");
+  homing.slow_speed_rad_s = number(h, "slow_speed_rad_s");
+  homing.backoff_rad = number(h, "backoff_rad");
+  homing.max_travel_rad = number(h, "max_travel_rad");
+  return homing;
+}
 JointConfig load_joint(const std::string &name, const Json &j) {
   if (!j.is_object()) throw std::invalid_argument("the joint entry must be an object");
   for (const auto *moved : {"slot", "pidf", "maxmotion"})
@@ -71,7 +84,7 @@ JointConfig load_joint(const std::string &name, const Json &j) {
       throw std::invalid_argument(std::string(moved) + " moved in joints.json v2: PIDF and MAXMotion go in "
           "slots.<n>, the slot in control.slot (docs/PARAMETROS.md)");
   only_keys(j, {"can_id", "gear_ratio", "direction", "zero_offset_rad", "min_position_rad",
-      "max_position_rad", "max_velocity_rad_s", "spark", "control", "slots"});
+      "max_position_rad", "max_velocity_rad_s", "spark", "control", "slots", "homing"});
   JointConfig joint;
   joint.name = name;
   joint.device_id = integer(j, "can_id");
@@ -105,6 +118,10 @@ JointConfig load_joint(const std::string &name, const Json &j) {
       throw std::invalid_argument("slots are indexed \"0\" to \"3\", not \"" + key + "\"");
     if (!item.value().is_object()) throw std::invalid_argument("slots." + key + " must be an object");
     in("slots." + key, [&] { joint.slots.emplace(key[0] - '0', load_slot(item.value())); });
+  }
+  if (j.contains("homing")) {
+    const auto &homing = object_field(j, "homing");
+    in("homing", [&] { joint.homing = load_homing(homing); });
   }
   return joint;
 }

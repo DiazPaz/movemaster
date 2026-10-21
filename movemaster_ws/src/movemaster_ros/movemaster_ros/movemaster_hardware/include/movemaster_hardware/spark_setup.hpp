@@ -21,6 +21,7 @@ extern const ParameterDefinition kPositionConversionFactor;  // SPARK position u
 extern const ParameterDefinition kVelocityConversionFactor;  // SPARK velocity unit per RPM
 extern const ParameterDefinition kPositionWrapping;
 extern const ParameterDefinition kStatus0Period;             // ms
+extern const ParameterDefinition kStatus1Period;             // ms
 extern const ParameterDefinition kStatus2Period;             // ms
 ParameterDefinition output_min(int slot);                    // duty cycle, -1..0
 ParameterDefinition output_max(int slot);                    // duty cycle, 0..1

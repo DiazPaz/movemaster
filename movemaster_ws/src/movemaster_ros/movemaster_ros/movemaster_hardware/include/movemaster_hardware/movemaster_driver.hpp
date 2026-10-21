@@ -1,4 +1,5 @@
 #pragma once
+#include "movemaster_hardware/homing.hpp"
 #include "movemaster_hardware/spark_setup.hpp"
 #include <chrono>
 #include <limits>
@@ -23,6 +24,7 @@ struct JointConfig {
   // the measured position.
   double max_following_error_rad = std::numeric_limits<double>::quiet_NaN();
   std::map<int, SlotConfig> slots;
+  std::optional<HomingConfig> homing;  // only for spark_home
 };
 struct DriverConfig {
   std::filesystem::path spec_path;
@@ -41,6 +43,7 @@ struct JointState {
   double velocity = std::numeric_limits<double>::quiet_NaN();  // rad/s
   double current = std::numeric_limits<double>::quiet_NaN();   // A, never torque
   bool primary_heartbeat_lock = false;
+  bool spark_reset = false;  // STATUS_1: the SPARK restarted since its faults were last cleared
 };
 struct JointControl {
   ControlMode mode;
@@ -52,19 +55,30 @@ DriverConfig load_driver_config(const std::filesystem::path &config_path,
 // Throws std::invalid_argument naming the first invalid field.
 void validate_driver_config(const DriverConfig &config);
 
+// A SPARK keeps its encoder count while powered. After a restart (power-up, emergency stop) it
+// counts from where it powered up, and the joint is at zero_offset_rad only if that was Home.
+enum class SparkResetPolicy {
+  kAcceptPowerOnPose,  // the pose at power-up is the reference, as when starting in Home
+  kFault,              // a restart is a fault: the position was lost mid-session
+};
+
 // No background thread: ros2_control is the only sender/receiver and heartbeat owner.
 // Lifecycle setup may wait for ACKs. Runtime read/write never wait for RX/TX.
 class MoveMasterDriver {
  public:
   explicit MoveMasterDriver(DriverConfig config, std::unique_ptr<CANBus> bus = nullptr);
   ~MoveMasterDriver() = default;
-  void configure();
+  // Returns the joints whose SPARK restarted; with kAcceptPowerOnPose their restart is cleared,
+  // so a later one shows up in read() as a fault.
+  std::vector<std::string> configure(SparkResetPolicy policy = SparkResetPolicy::kAcceptPowerOnPose);
   void activate();
   void deactivate() noexcept;
   void read();
   void write(const std::vector<double> &positions_rad);
   // Applies from the next write(), also while active, and is kept across activations.
   void set_control(std::size_t joint, ControlMode mode, int slot);
+  // Smart Current Limit (stall and free) in RAM, with ACK; only while not active.
+  void set_current_limit(std::size_t joint, int amps);
   const std::vector<JointControl> &controls() const { return controls_; }
   const std::vector<JointState> &states() const { return states_; }
   bool active() const { return active_; }
@@ -79,7 +93,10 @@ class MoveMasterDriver {
   std::vector<std::unique_ptr<SparkMAXMotionProtocol>> protocols_;
   std::vector<JointState> states_;
   std::vector<JointControl> controls_;
-  std::vector<std::optional<Clock::time_point>> status0_at_, status2_at_;
+  std::vector<std::optional<Clock::time_point>> status0_at_, status1_at_, status2_at_;
+  // Each joint's STATUS_0/1/2 arbitration IDs, resolved once: receive() checks every frame.
+  struct StatusIds { std::uint32_t status0, status1, status2; };
+  std::vector<StatusIds> status_ids_;
   std::optional<Clock::time_point> last_tx_;
   bool configured_ = false, active_ = false;
   std::string fault_;
@@ -89,6 +106,7 @@ class MoveMasterDriver {
   void receive(const CANPacket &packet);
   bool feedback_fresh() const;
   void wait_feedback();
+  void wait_status1(const std::vector<std::size_t> &joints, bool cleared);
   void check_cycle_gap() const;
   double checked_target(double radians, const JointConfig &joint) const;
 };

@@ -20,6 +20,7 @@ const ParameterDefinition kPositionWrapping{"setup", "position_wrapping", 0, 149
     std::nullopt};
 // The table says microseconds, but its defaults (10, 20) are the JSON's defaultPeriodMs: ms.
 const ParameterDefinition kStatus0Period{"setup", "status0_period_ms", 0, 158, "uint", "Status 0 Period", "ms"};
+const ParameterDefinition kStatus1Period{"setup", "status1_period_ms", 0, 159, "uint", "Status 1 Period", "ms"};
 const ParameterDefinition kStatus2Period{"setup", "status2_period_ms", 0, 160, "uint", "Status 2 Period", "ms"};
 // Each slot holds 8 parameters from ID 13: P, I, D, F, IZone, D Filter, Output Min, Output Max.
 ParameterDefinition output_min(int slot) {

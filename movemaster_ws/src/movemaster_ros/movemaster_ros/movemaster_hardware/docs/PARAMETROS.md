@@ -47,19 +47,20 @@ confirme el tipo y el valor exacto.
 | 0 | CAN ID | UINT32 | 0 | 1 a 6, uno por eje | Puesta en marcha | REV Hardware Client |
 | 2 | Motor Type | UINT32 | BRUSHLESS (1) | BRUSHLESS (1) | Puesta en marcha | `spark_commission` (flash) y el driver (RAM) |
 | 6 | Idle Mode | UINT32 | COAST (0) | `spark.idle_mode` | Puesta en marcha | `spark_commission` y el driver |
-| 59 | Smart Current Stall Limit | UINT32 | 80 A | `spark.current_limit_a` | Puesta en marcha | `spark_commission` y el driver |
-| 60 | Smart Current Free Limit | UINT32 | 20 A | `spark.current_limit_a` | Puesta en marcha | `spark_commission` y el driver |
+| 59 | Smart Current Stall Limit | UINT32 | 80 A | `spark.current_limit_a` | Puesta en marcha | `spark_commission` y el driver; `spark_home` lo baja en RAM mientras mide |
+| 60 | Smart Current Free Limit | UINT32 | 20 A | `spark.current_limit_a` | Puesta en marcha | `spark_commission` y el driver; `spark_home` lo baja en RAM mientras mide |
 | 9 | Closed Loop Control Sensor | UINT32 | NONE (0) | MAIN_ENCODER (1) | Eje (fijo) | El driver |
 | 112 | Position Conversion Factor | FLOAT | 1.0 | 1.0 | Eje (fijo) | El driver |
 | 113 | Velocity Conversion Factor | FLOAT | 1.0 | 1.0 | Eje (fijo) | El driver |
 | 149 | Position PID Wrap Enable | BOOL | false | false | Eje (fijo) | El driver |
 | 158, 160 | Status 0 Period, Status 2 Period | UINT32 | 10 y 20 ms | `status_period_ms` | Eje | El driver |
+| 159 | Status 1 Period | UINT32 | 250 ms | 100 ms | Eje (fijo) | El driver |
 | 13+8s a 16+8s | P s, I s, D s, F s | FLOAT | 0 | `slots.<s>.pidf` | Eje (slot) | El driver |
 | 19+8s, 20+8s | Output Min s, Output Max s | FLOAT | −1 y 1 | `slots.<s>.output_range` | Eje (slot) | El driver |
 | 166+5s, 167+5s, 169+5s | MAXMotion Max Velocity s, Max Accel s, Allowed Closed Loop Error s | FLOAT | 0 | `slots.<s>.maxmotion` | Eje (slot) | El driver |
 
 Los IDs 9, 13–16, 112, 113, 149, 158, 160, 166, 167 y 169 son los que ya usaba
-el backend Python validado en el banco. Los demás (2, 6, 19, 20, 59 y 60) se
+el backend Python validado en el banco. Los demás (2, 6, 19, 20, 59, 60 y 159) se
 comprobaron contra la tabla, igual que todos los anteriores. Lo hace la prueba
 `config_and_commissioning` en cada compilación: revisa ID, nombre, tipo y los
 valores de `MotorType`, `IdleMode` y `Sensor`. Aun así, no se han probado con un
@@ -69,9 +70,9 @@ un solo SPARK en el bus y revisa el resultado en REV Hardware Client.
 
 Tres detalles de la tabla:
 
-- **Status 0/2 Period** dice "in μs", pero sus valores de fábrica (10 y 20) son
-  los `defaultPeriodMs` de `spark-frames-2.1.0`, y el backend validado escribe
-  20 para 20 ms: la unidad es ms.
+- **Status 0/1/2 Period** dice "in μs", pero sus valores de fábrica (10, 250 y
+  20) son los `defaultPeriodMs` de `spark-frames-2.1.0`, y el backend validado
+  escribe 20 para 20 ms: la unidad es ms.
 - **Control Type (ID 5)** guarda el modo activo. No hace falta escribirlo: cada
   trama de setpoint lo fija (ver [Slots y modos](#slots-y-modos-de-control)).
 - **Inverted (ID 45)** invierte el motor. MoveMaster no lo usa: el sentido lo da
@@ -81,6 +82,26 @@ Lo que el driver no escribe (I-zone, D Filter, rampas, límites suaves, Inverted
 etc.) queda en el valor de fábrica gracias al restablecimiento de la puesta en
 marcha. Según la tabla, los parámetros se guardan aparte del firmware y
 sobreviven a una actualización de firmware.
+
+## Reinicios de un SPARK
+
+Un SPARK que se apaga (corte de alimentación o paro de emergencia) pierde lo
+que el driver escribió en RAM y su posición: al encender, su encoder cuenta
+desde la postura en que está. Lo avisa con `HAS_RESET_STICKY_WARNING`, en
+`STATUS_1`, hasta que se borran sus avisos con `CLEAR_FAULTS` (REVLib 2026:
+"Sticky warnings can be cleared with SparkBase::clearFaults()"). El driver pide
+`STATUS_1` cada 100 ms (de fábrica, 250) y:
+
+- la primera vez que el `controller_manager` configura, y siempre en
+  `spark_home`, toma la postura de encendido como referencia, borra el aviso y
+  lo informa;
+- si el `controller_manager` vuelve a configurar (al recuperarse de un fallo) y
+  encuentra el aviso, se niega: la posición ya no corresponde al brazo;
+- con el brazo activo, enclava un fallo si el aviso aparece en `read()`.
+
+La configuración en RAM no es problema: el driver la escribe completa cada vez
+que configura. La posición sí; por eso los SPARK se encienden con el brazo en
+Home.
 
 ## `gear_ratio` y el factor de conversión del SPARK
 
@@ -201,6 +222,11 @@ ajuste que se queda en su valor por defecto.
 | `slots.<n>.pidf` | `p`, `i`, `d`, `f` ≥ 0 | Ganancias del slot, en unidades del motor. |
 | `slots.<n>.output_range` | `[min, max]`, −1 ≤ min < 0 < max ≤ 1; por defecto `[-1, 1]` | Ciclo de trabajo máximo del PID. |
 | `slots.<n>.maxmotion` | Opcional: `cruise_velocity` (RPM) > 0, `max_acceleration` (RPM/s) > 0, `allowed_profile_error` (rotaciones) ≥ 0 | Perfil MAXMotion del slot. |
+| `homing` | Opcional | Cómo busca `spark_home` los topes mecánicos del eje; solo lo usa esa herramienta. |
+| `homing.current_limit_a` | Entero, 1 a `spark.current_limit_a` | Límite de corriente mientras busca, solo en RAM; al terminar se restaura `spark.current_limit_a`. |
+| `homing.stall_current_a`, `homing.stall_time_s` | 0 < corriente < `current_limit_a`; 3·`period_s` ≤ tiempo ≤ 5 s | Contacto: el eje deja de seguir su objetivo con al menos esa corriente durante ese tiempo. |
+| `homing.fast_speed_rad_s`, `homing.slow_speed_rad_s` | 0 < lenta ≤ rápida ≤ `max_velocity_rad_s` | Velocidades del primer acercamiento y del segundo, que fija el tope. |
+| `homing.backoff_rad`, `homing.max_travel_rad` | Retroceso > 0; recorrido > 2·retroceso | Retroceso entre los dos acercamientos (y margen de los límites sugeridos) y recorrido máximo sin tope. |
 
 ### Pasar del formato anterior
 

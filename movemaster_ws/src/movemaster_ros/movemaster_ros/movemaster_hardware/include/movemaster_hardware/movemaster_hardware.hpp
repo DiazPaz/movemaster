@@ -23,6 +23,9 @@ class MovemasterHardware final : public hardware_interface::SystemInterface {
   DriverConfig config_;
   std::unique_ptr<MoveMasterDriver> driver_;
   std::vector<double> positions_, velocities_, currents_, commands_;
+  // The first configure takes each SPARK's power-up pose as its reference (Home, by convention);
+  // a SPARK restart found by a later one means the position was lost.
+  bool reference_taken_ = false;
   void copy_states();
   void stop() noexcept;
 };

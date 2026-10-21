@@ -32,15 +32,18 @@ class SimulatedSparkBus : public CANBus {
   bool telemetry = true, bad_ack = false, drop_ack = false, bad_value = false, reject_ack = false;
   bool malformed = false, nonfinite = false, fail_tx = false, foreign_heartbeat = false, silent_flash = false;
   int muted_id = -1;
+  bool status1 = true, clear_faults = true;       // STATUS_1 is sent; CLEAR_FAULTS clears HAS_RESET
+  std::map<int, bool> has_reset;                  // CAN ID -> HAS_RESET sticky; true at power-up
   std::map<int, int> types;                       // parameter ID -> REV type code
   std::map<std::pair<int, int>, std::uint32_t> ram;  // (CAN ID, parameter ID) -> raw value
   // Scripted RESULT_CODEs for the flash commands; 255 (pending) is followed by the next one,
   // and an empty script answers 0.
   std::deque<int> reset_codes, persist_codes;
-  std::chrono::steady_clock::time_point last_status{};
+  std::chrono::steady_clock::time_point last_status{}, last_status1{};
   SimulatedSparkBus(const std::filesystem::path &spec, std::vector<int> device_ids)
       : frames(spec), ids(std::move(device_ids)) {
-    types = {{2, 2}, {6, 2}, {9, 2}, {59, 2}, {60, 2}, {112, 3}, {113, 3}, {149, 4}, {158, 2}, {160, 2}};
+    for (int id : ids) has_reset[id] = true;
+    types = {{2, 2}, {6, 2}, {9, 2}, {59, 2}, {60, 2}, {112, 3}, {113, 3}, {149, 4}, {158, 2}, {159, 2}, {160, 2}};
     for (int slot = 0; slot < 4; ++slot) {
       for (int i = 13; i <= 20; ++i) types[i + 8 * slot] = 3;
       for (int i : {166, 167, 169}) types[i + 5 * slot] = 3;
@@ -87,18 +90,24 @@ class SimulatedSparkBus : public CANBus {
            {"VALUE", raw ^ (bad_value ? 1U : 0U)}, {"RESULT_CODE", reject_ack ? 1 : 0}}));
     } else if (base == frames["STOP_FOLLOWER_MODE"].base_arb_id())
       pending.push_back(frames["STOP_FOLLOWER_MODE_RESPONSE"].packet(id));
-    else if (base == frames["SET_STATUSES_ENABLED"].base_arb_id())
-      pending.push_back(frames["SET_STATUSES_ENABLED_RESPONSE"].packet(id,
-          {{"RESULT_CODE", 0}, {"SPECIFIED_MASK", 5}, {"ENABLED_BITFIELD", 5}}));
+    else if (base == frames["SET_STATUSES_ENABLED"].base_arb_id()) {
+      const auto request = frames["SET_STATUSES_ENABLED"].decode_payload(p.data);
+      pending.push_back(frames["SET_STATUSES_ENABLED_RESPONSE"].packet(id, {{"RESULT_CODE", 0},
+          {"SPECIFIED_MASK", request.at("MASK")}, {"ENABLED_BITFIELD", request.at("ENABLED_BITFIELD")}}));
+    } else if (base == frames["CLEAR_FAULTS"].base_arb_id()) {
+      if (clear_faults) has_reset[id] = false;
+    }
     else if (base == frames["RESET_SAFE_PARAMETERS"].base_arb_id())
       flash_reply(reset_codes, "RESET_SAFE_PARAMETERS_RESPONSE");
     else if (base == frames["PERSIST_PARAMETERS"].base_arb_id())
       flash_reply(persist_codes, "PERSIST_PARAMETERS_RESPONSE");
   }
-  void statuses() {
+  void statuses(bool with_status1) {
     for (int id : ids) {
       if (id == muted_id) continue;
       pending.push_back(frames["STATUS_0"].packet(id, {{"CURRENT", 2}, {"PRIMARY_HEARTBEAT_LOCK", true}}));
+      if (status1 && with_status1)
+        pending.push_back(frames["STATUS_1"].packet(id, {{"HAS_RESET_STICKY_WARNING", has_reset[id]}}));
       auto pos = frames["STATUS_2"].packet(id, {{"PRIMARY_ENCODER_POSITION", id * 0.25},
           {"PRIMARY_ENCODER_VELOCITY", 60.0}});
       if (nonfinite) { pos.data[4] = 0; pos.data[5] = 0; pos.data[6] = 0x80; pos.data[7] = 0x7f; }
@@ -107,11 +116,14 @@ class SimulatedSparkBus : public CANBus {
     }
     if (foreign_heartbeat) pending.push_back({kEnableHeartbeatId, Bytes(8, 0xFF), true, false, 8, std::nullopt});
   }
+  // Telemetry every 5 ms (status_period_ms of config_for); STATUS_1 every 100 ms, as the driver sets it.
   std::optional<CANPacket> recv(double timeout) override {
     const auto now = std::chrono::steady_clock::now();
     if (telemetry && now - last_status >= std::chrono::milliseconds(5)) {
       last_status = now;
-      statuses();
+      const bool status1_due = now - last_status1 >= std::chrono::milliseconds(100);
+      if (status1_due) last_status1 = now;
+      statuses(status1_due);
     }
     if (pending.empty()) {
       if (timeout > 0) std::this_thread::sleep_for(std::chrono::duration<double>(std::min(timeout, 0.001)));

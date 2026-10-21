@@ -107,6 +107,11 @@ La implementan `SocketCAN` (real) y `SimulatedSparkBus` (pruebas).
 **CANPacket**
 Estructura C++ con una trama CAN: ID, datos, tipo de ID, DLC y nombre de trama.
 
+**CLEAR_FAULTS**
+Trama que borra los fallos y avisos fijos (*sticky*) del SPARK, entre ellos
+`HAS_RESET`. El driver la envía al tomar como referencia la postura de
+encendido de un SPARK reiniciado.
+
 **CMake / CMakeLists.txt**
 Herramienta que genera la compilación de C++. `CMakeLists.txt` describe qué
 librerías y ejecutables crear, con qué dependencias, y qué instalar. Explicado
@@ -136,6 +141,9 @@ Transición que prepara el hardware sin habilitarlo. En MoveMaster: abre CAN,
 espera `disable_settle_s` y en cada SPARK envía `STOP_FOLLOWER_MODE`, el
 baseline, los parámetros de unidades y telemetría, `SET_STATUSES_ENABLED` y
 todos sus slots (PIDF, rango de salida y MAXMotion), todo con ACK. Solo en RAM.
+Después lee `HAS_RESET` de cada SPARK: la primera vez toma como referencia la
+postura de encendido de los reiniciados; en las siguientes, un reinicio es un
+fallo.
 
 **control (joints.json)**
 Bloque de cada eje con el modo (`position` o `maxmotion`) y el slot con que se
@@ -286,6 +294,11 @@ activa con `use_mock_hardware:=true` y arranca en Home.
 Paquete de `ros2_control` que define `SystemInterface`, las interfaces de
 estado y comando, y `mock_components`.
 
+**HAS_RESET**
+Aviso del SPARK, en su trama `STATUS_1`: se reinició (se apagó y volvió a
+encender) desde que se borraron sus avisos con `CLEAR_FAULTS`. Un SPARK
+reiniciado perdió su posición y su configuración en RAM. MANUAL §7.3 y §12.
+
 **Heartbeat**
 Trama global `0x01011840` con 8 bytes `FF` que el driver envía en cada ciclo
 activo después de los setpoints. Mientras llega, los SPARK están habilitados;
@@ -297,6 +310,12 @@ Postura de referencia del brazo, columna `home_deg` de `dh.yaml`:
 hacia abajo; `tool0` queda en (0.160, 0, 0.255) m de `base_link`. El brazo se
 enciende en Home (MANUAL §4.4); el hardware simulado y la vista previa arrancan
 ahí, y los ejes sin SPARK quedan fijos en ella.
+
+**Homing**
+Rutina que encuentra la posición absoluta de un eje con encoder relativo. En
+MoveMaster, contra sus topes mecánicos y por la corriente del motor: el brazo no
+tiene interruptores de fin de carrera. Aún no es automática; `spark_home` mide
+los topes de cada eje (MANUAL §7.3).
 
 ## I
 
@@ -376,7 +395,8 @@ carga en tiempo de ejecución.
 **Límite de corriente (current_limit_a)**
 Corriente máxima del motor en A (*smart current limit* de REV, IDs 59 y 60), la
 misma en parada y a velocidad libre. De fábrica son 80 A en parada y 20 A libre.
-Campo `spark.current_limit_a`; parte del baseline.
+Campo `spark.current_limit_a`; parte del baseline. `spark_home` lo baja en RAM
+a `homing.current_limit_a` mientras mide topes.
 
 **Límites (min_position_rad / max_position_rad)**
 Rango calibrado de cada articulación en `joints.json`. El driver rechaza
@@ -644,6 +664,11 @@ Herramienta de la puesta en marcha. Sin `--apply` solo escucha el bus; con
 Ejemplo interactivo para mover un eje sin ROS (`on`, `sp`, `mode`, `slot`,
 `pv`, `off`, `q`). MANUAL §7.2.
 
+**spark_home**
+Herramienta para el homing. Sin `--measure` muestra qué SPARK se reiniciaron,
+sin habilitar motores; con `--measure joint_N [+|-]` mide los topes mecánicos
+de ese eje y sugiere sus límites. MANUAL §7.3.
+
 **SparkParameters-v0.1.2.md**
 Tabla en `movemaster_hardware/spec/` con todos los parámetros del SPARK: ID,
 tipo, valor de fábrica, descripción y enumeraciones. `setup_test` comprueba
@@ -653,9 +678,10 @@ contra ella cada parámetro que escribe el código.
 Clase C++ con los intercambios que esperan respuesta (escribir parámetros con
 ACK, restablecer, persistir). La usan `configure()` y `spark_commission`.
 
-**STATUS_0 / STATUS_2**
+**STATUS_0 / STATUS_1 / STATUS_2**
 Tramas periódicas del SPARK. `STATUS_0`: corriente, tensión, temperatura y si
-recibe heartbeat. `STATUS_2`: posición y velocidad del encoder.
+recibe heartbeat. `STATUS_1`: fallos y avisos, entre ellos `HAS_RESET`.
+`STATUS_2`: posición y velocidad del encoder.
 
 **status_period_ms**
 Campo global de `joints.json` (20 ms): cada cuánto envía el SPARK `STATUS_0` y
@@ -685,6 +711,11 @@ driver detecta pausas largas (`max_cycle_gap_s`) y enclava un fallo. Sin
 permiso de tiempo real, el `controller_manager` avisa `Could not enable FIFO RT
 scheduling policy` y el lazo tiene más variación; MANUAL §10.1 explica cómo
 darlo.
+
+**Tope mecánico**
+Límite físico del recorrido de un eje. El MoveMaster tiene uno en cada sentido
+de cada eje. `spark_home` lo detecta cuando el eje deja de avanzar mientras el
+motor empuja con al menos `stall_current_a`.
 
 **Trama de error CAN (error frame)**
 Aviso que el adaptador CAN entrega por SocketCAN en lugar de una trama de
@@ -753,4 +784,5 @@ eso xacro puede leer `joints.json`.
 Campo de `joints.json`: ángulo de la articulación cuando el encoder del motor
 marca cero, es decir, en la postura en que se encendió el SPARK. Si el brazo se
 enciende en Home, es el ángulo Home de `dh.yaml` (MANUAL §4.4). Como el encoder
-es relativo y no hay homing, hay que verificarlo tras apagar los SPARK.
+es relativo y aún no hay homing automático, los SPARK deben encenderse con el
+brazo en Home; el driver detecta cada reinicio (`HAS_RESET`).

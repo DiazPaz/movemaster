@@ -53,8 +53,9 @@ uso está en [../docs/MANUAL.md](../docs/MANUAL.md) y los términos en
 | `src/sparkmax_json_protocol.cpp` | Parser JSON, codec de bits, parámetros y MAXMotion. |
 | `include/movemaster_hardware/socketcan.hpp`, `src/socketcan.cpp` | Transporte SocketCAN de Linux; apertura/cierre y tramas CAN clásicas. |
 | `include/movemaster_hardware/spark_setup.hpp`, `src/spark_setup.cpp` | Parámetros de REV fuera del catálogo Python, escrituras con ACK, baseline, slots, puesta en marcha y escucha del bus. |
-| `include/movemaster_hardware/movemaster_driver.hpp`, `src/movemaster_driver.cpp` | Inicialización de los SPARK, conversiones, modos y slots, estado, referencias y heartbeat. |
+| `include/movemaster_hardware/movemaster_driver.hpp`, `src/movemaster_driver.cpp` | Inicialización de los SPARK, detección de reinicios, conversiones, modos y slots, estado, referencias y heartbeat. |
 | `src/driver_config.cpp` | Lectura estricta de `joints.json` v2. |
+| `include/movemaster_hardware/homing.hpp`, `src/homing.cpp` | Búsqueda de un tope mecánico (acercamiento rápido, retroceso y acercamiento lento), sin E/S. |
 | `include/movemaster_hardware/movemaster_hardware.hpp`, `src/movemaster_hardware.cpp` | Adaptación al ciclo de vida de `hardware_interface::SystemInterface`. |
 | `movemaster_hardware.xml` | Registro del plugin para pluginlib. |
 | `config/joints.json` | Calibración y control de los ejes del banco. |
@@ -65,7 +66,8 @@ uso está en [../docs/MANUAL.md](../docs/MANUAL.md) y los términos en
 | `examples/driver_monitor.cpp` | Configuración RAM y lectura de telemetría, sin habilitación. |
 | `examples/spark_console.cpp` | Habilitación y envío interactivo de SP para un eje, en Position o MAXMotion. |
 | `examples/spark_commission.cpp` | Puesta en marcha: restablece, escribe el baseline y lo persiste. |
-| `tests/` | Comparación contra Python, y pruebas del driver, la configuración y la puesta en marcha con transporte simulado. |
+| `examples/spark_home.cpp` | Muestra qué SPARK se reiniciaron y mide los topes mecánicos de un eje. |
+| `tests/` | Comparación contra Python, y pruebas del driver, la configuración, la puesta en marcha y la búsqueda de topes con transporte simulado. |
 
 La dependencia es:
 
@@ -168,8 +170,9 @@ motor_rotations = d * (q_rad - q0) * G / (2*pi)
 velocity_rad_s = d * motor_rpm * (2*pi) / (60*G)
 ```
 
-No se implementa homing. Si el encoder relativo cambia su referencia al
-reiniciar, hay que restablecer la calibración antes de activar. Una transmisión
+Aún no hay homing automático. Un SPARK que se reinicia pierde la posición; el
+driver lo detecta (aviso `HAS_RESET`) y `spark_home` mide los topes mecánicos
+de cada eje ([MANUAL §7.3](../docs/MANUAL.md#73-spark_home-reinicios-y-topes-mecánicos)). Una transmisión
 diferencial o varios ejes acoplados requieren una conversión adicional; el
 modelo actual utiliza una reducción y un sentido por articulación.
 
@@ -185,13 +188,14 @@ Con la interfaz SocketCAN ya configurada a la velocidad de tu banco probado:
 ```
 
 Esta prueba escribe y confirma configuración en RAM, habilita la publicación
-de STATUS_0/2 y muestra posición, velocidad y corriente. **No envía heartbeat
+de STATUS_0/1/2 y muestra posición, velocidad y corriente. **No envía heartbeat
 de habilitación ni referencias de movimiento.** No guarda parámetros en flash.
 
 El driver reproduce del backend: salida de follower mode, encoder primario,
 factores de posición/velocidad iguales a 1, wrapping deshabilitado, períodos
-STATUS_0/2, PIDF y perfil MAXMotion. Además escribe el baseline y, en cada slot
-configurado, el rango de salida. Verifica ID de respuesta, tipo, resultado y
+STATUS_0/2, PIDF y perfil MAXMotion. Además escribe el baseline, el periodo de
+STATUS_1 (avisos, entre ellos el de reinicio) y, en cada slot configurado, el
+rango de salida. Verifica ID de respuesta, tipo, resultado y
 valor confirmado. Las respuestas y la telemetría tienen un único consumidor.
 
 La flash solo la escribe `spark_commission`, una vez por SPARK:
@@ -206,7 +210,7 @@ En una futura aplicación C++ sin ROS, el orden de uso es:
 ```cpp
 auto config = movemaster::load_driver_config("/ruta/joints.json", "/ruta/spark-frames-2.1.0");
 movemaster::MoveMasterDriver driver(config);
-driver.configure();               // Configura, no habilita.
+driver.configure();               // Configura, no habilita; devuelve los SPARK reiniciados.
 driver.activate();                // Habilita manteniendo la posición medida.
 // En cada ciclo, con la frecuencia configurada:
 driver.read();
@@ -276,9 +280,9 @@ geométrico: el modelo del brazo, que la incluye, está en `movemaster_descripti
 | Callback | Comportamiento |
 |---|---|
 | `on_init()` | Valida interfaces, configuración y JSON. No abre CAN. |
-| `on_configure()` | Abre CAN, configura los SPARK (baseline, unidades y slots) y espera ACKs. |
+| `on_configure()` | Abre CAN, configura los SPARK (baseline, unidades y slots) y espera ACKs. La primera vez toma como referencia la postura de encendido de los SPARK reiniciados; en las siguientes, un reinicio es un fallo. |
 | `on_activate()` | Espera feedback nuevo de todos los ejes; carga PV como SP y habilita. |
-| `read()` | Recibe con presupuesto limitado; actualiza `position`, `velocity` y `current`. |
+| `read()` | Recibe con presupuesto limitado; actualiza `position`, `velocity` y `current`. Un SPARK reiniciado enclava un fallo. |
 | `write()` | Valida todas las referencias; convierte radianes a rotaciones; transmite el SP de cada eje en su modo y slot, y el heartbeat. |
 | `on_deactivate()` | Deja de emitir referencias y heartbeat. |
 | `on_cleanup()`, `on_shutdown()`, `on_error()` | Desactiva y libera el transporte. |

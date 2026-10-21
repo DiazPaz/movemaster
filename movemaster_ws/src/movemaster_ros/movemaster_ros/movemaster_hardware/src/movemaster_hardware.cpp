@@ -63,7 +63,13 @@ std::vector<hardware_interface::CommandInterface> MovemasterHardware::export_com
 CallbackReturn MovemasterHardware::on_configure(const rclcpp_lifecycle::State &) {
   try {
     driver_ = std::make_unique<MoveMasterDriver>(config_);
-    driver_->configure();
+    const auto restarted = driver_->configure(
+        reference_taken_ ? SparkResetPolicy::kFault : SparkResetPolicy::kAcceptPowerOnPose);
+    for (const auto &name : restarted)
+      RCLCPP_WARN(rclcpp::get_logger("MovemasterHardware"),
+          "%s: SPARK powered up; its zero is the pose it powered up in, which zero_offset_rad assumes is Home.",
+          name.c_str());
+    reference_taken_ = true;
     return CallbackReturn::SUCCESS;
   } catch (const std::exception &e) { stop(); report(e); return CallbackReturn::ERROR; }
 }

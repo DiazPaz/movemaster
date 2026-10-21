@@ -6,7 +6,7 @@ Se organizan en cinco capas, de ROS hacia el hardware:
 | Capa | Clases | Archivos |
 |---|---|---|
 | 1. Adaptador ros2_control | `MovemasterHardware` | `movemaster_hardware.hpp`, `movemaster_hardware.cpp` |
-| 2. Driver | `MoveMasterDriver`, `DriverConfig`, `JointConfig`, `JointControl`, `JointState`, `load_driver_config()`, `validate_driver_config()` | `movemaster_driver.hpp`, `movemaster_driver.cpp`, `driver_config.cpp` |
+| 2. Driver | `MoveMasterDriver`, `SparkResetPolicy`, `DriverConfig`, `JointConfig`, `JointControl`, `JointState`, `load_driver_config()`, `validate_driver_config()`; para la búsqueda de topes, `HomingConfig`, `StopSearch` y `ramp_target()` | `movemaster_driver.hpp`, `movemaster_driver.cpp`, `driver_config.cpp`, `homing.hpp`, `homing.cpp` |
 | 3. Configuración de los SPARK | `SparkSetup`, `SparkBaseline`, `SlotConfig`, `IdleMode`, `BusSurvey`, `survey_bus()` y los parámetros `rev::` | `spark_setup.hpp`, `spark_setup.cpp` |
 | 4. Protocolo SPARK | `SparkMAXMotionProtocol` (con la clase anidada `Access`), `ControlMode`, `SparkFrameDatabase`, `FrameSpec`, `ParameterGroup`, `ParameterDefinition`, `SignalCodec`, `CANPacket`, `CANBus`, `SpecError`, `TimeoutError` | `sparkmax_json_protocol.hpp`, `sparkmax_json_protocol.cpp` |
 | 5. Transporte CAN | `SocketCAN` | `socketcan.hpp`, `socketcan.cpp` |
@@ -44,6 +44,10 @@ classDiagram
   class JointState {
     <<struct>>
   }
+  class HomingConfig {
+    <<struct>>
+  }
+  class StopSearch
   class SparkSetup
   class SparkBaseline {
     <<struct>>
@@ -86,6 +90,8 @@ classDiagram
   DriverConfig *-- "1..6" JointConfig : joints
   JointConfig *-- SparkBaseline : spark
   JointConfig *-- "1..4" SlotConfig : slots
+  JointConfig *-- "0..1" HomingConfig : homing
+  StopSearch *-- HomingConfig : config_
   MoveMasterDriver *-- "1..6" JointControl : controls_
   MoveMasterDriver *-- "1..6" JointState : states_
   MoveMasterDriver *-- "1..6" SparkMAXMotionProtocol : protocols_
@@ -117,7 +123,8 @@ Cómo leerlo:
 Por claridad, esta vista omite relaciones que sí están en el diagrama completo:
 el driver crea el `SocketCAN`, guarda un `CANPacket` constante (el heartbeat) y
 usa `SignalCodec` para cuantizar a float32; `SparkSetup` escribe un
-`SparkBaseline` y los `SlotConfig`; `CANBus` transporta `CANPacket`; `SpecError`
+`SparkBaseline` y los `SlotConfig`; `configure()` recibe una `SparkResetPolicy`;
+`StopSearch` usa `ramp_target()`; `CANBus` transporta `CANPacket`; `SpecError`
 y `TimeoutError` heredan de `std::runtime_error`. `SimulatedSparkBus` no forma
 parte de `src/`: es el bus simulado de `tests/simulated_spark_bus.hpp`.
 
@@ -168,6 +175,7 @@ classDiagram
     -vector~double~ velocities_
     -vector~double~ currents_
     -vector~double~ commands_
+    -bool reference_taken_
     +on_init(HardwareInfo info) CallbackReturn
     +export_state_interfaces() vector~StateInterface~
     +export_command_interfaces() vector~CommandInterface~
@@ -183,7 +191,7 @@ classDiagram
     -stop() void
   }
 
-  %% Capa 2 · movemaster_driver.hpp / movemaster_driver.cpp / driver_config.cpp
+  %% Capa 2 · movemaster_driver.hpp / movemaster_driver.cpp / driver_config.cpp / homing.hpp / homing.cpp
   class MoveMasterDriver {
     -DriverConfig config_
     -unique_ptr~CANBus~ bus_
@@ -191,19 +199,22 @@ classDiagram
     -vector~JointState~ states_
     -vector~JointControl~ controls_
     -vector~optional~time_point~~ status0_at_
+    -vector~optional~time_point~~ status1_at_
     -vector~optional~time_point~~ status2_at_
+    -vector~StatusIds~ status_ids_
     -optional~time_point~ last_tx_
     -bool configured_
     -bool active_
     -string fault_
     -const CANPacket heartbeat_
     +MoveMasterDriver(DriverConfig config, unique_ptr~CANBus~ bus)
-    +configure() void
+    +configure(SparkResetPolicy policy) vector~string~
     +activate() void
     +deactivate() void
     +read() void
     +write(vector~double~ positions_rad) void
     +set_control(size_t joint, ControlMode mode, int slot) void
+    +set_current_limit(size_t joint, int amps) void
     +controls() vector~JointControl~
     +states() vector~JointState~
     +active() bool
@@ -216,6 +227,7 @@ classDiagram
     -receive(CANPacket packet) void
     -feedback_fresh() bool
     -wait_feedback() void
+    -wait_status1(vector~size_t~ joints, bool cleared) void
     -check_cycle_gap() void
     -checked_target(double radians, JointConfig joint) double
   }
@@ -247,6 +259,7 @@ classDiagram
     +int slot
     +double max_following_error_rad
     +map~int, SlotConfig~ slots
+    +optional~HomingConfig~ homing
   }
   class JointControl {
     <<struct>>
@@ -259,11 +272,67 @@ classDiagram
     +double velocity
     +double current
     +bool primary_heartbeat_lock
+    +bool spark_reset
   }
   class load_driver_config["load_driver_config() y validate_driver_config()"] {
     <<funciones libres>>
     +load_driver_config(path config_path, path spec_path, string channel, vector~string~ joint_order) DriverConfig$
     +validate_driver_config(DriverConfig config) void$
+  }
+
+  class SparkResetPolicy {
+    <<enumeration>>
+    kAcceptPowerOnPose
+    kFault
+  }
+  class HomingConfig {
+    <<struct>>
+    +int current_limit_a
+    +double stall_current_a
+    +double stall_time_s
+    +double fast_speed_rad_s
+    +double slow_speed_rad_s
+    +double backoff_rad
+    +double max_travel_rad
+  }
+  class StopSearch {
+    -HomingConfig config_
+    -int direction_
+    -double lead_
+    -Phase phase_
+    -bool started_
+    -double target_
+    -double last_position_
+    -double phase_start_
+    -double phase_time_
+    -double stalled_
+    -double contact_
+    -double stop_
+    -double free_peak_
+    -double stop_current_
+    -string error_
+    +StopSearch(HomingConfig config, int direction, double lead)
+    +update(double position, double current, double dt) double
+    +phase() Phase
+    +stop() double
+    +error() string
+    +free_current_peak() double
+    +stop_current() double
+    -approach(double position, double current, double dt) void
+    -enter(Phase phase, double position) void
+    -fail(string message, double position) void
+  }
+  class Phase["StopSearch::Phase"] {
+    <<enumeration>>
+    kFastApproach
+    kBackoff
+    kSlowApproach
+    kFound
+    kFailed
+  }
+  class ramp_target["ramp_target()"] {
+    <<función libre>>
+    +ramp_target(double target, double goal, double speed, double dt, double position, double lead) double$
   }
 
   %% Capa 3 · spark_setup.hpp / .cpp
@@ -457,6 +526,10 @@ classDiagram
   JointConfig *-- SparkBaseline : spark
   JointConfig *-- "1..4" SlotConfig : slots
   JointConfig ..> ControlMode : mode
+  JointConfig *-- "0..1" HomingConfig : homing
+  StopSearch *-- HomingConfig : config_
+  StopSearch ..> Phase : phase_
+  StopSearch ..> ramp_target : retroceso
   SparkBaseline ..> IdleMode : idle_mode
   MoveMasterDriver *-- "1..6" JointControl : controls_
   JointControl ..> ControlMode : mode
@@ -465,6 +538,7 @@ classDiagram
   MoveMasterDriver *-- "0..1" CANBus : bus_
   MoveMasterDriver ..> SocketCAN : crea en configure()
   MoveMasterDriver ..> SparkSetup : uno por eje en configure()
+  MoveMasterDriver ..> SparkResetPolicy : configure()
   MoveMasterDriver *-- CANPacket : heartbeat_
   MoveMasterDriver ..> SignalCodec : float32
   SparkSetup ..> SparkMAXMotionProtocol : spark_

@@ -1,5 +1,82 @@
 # Validación realizada — 26 de septiembre de 2026
 
+## Homing, fase 1: reinicios de los SPARK y medición de topes
+
+21 de octubre de 2026. Linux x86_64, CMake 3.28, sin ROS ni CAN.
+
+| Compilación | Resultado |
+|---|---|
+| g++ 13.3, Release | CTest **6/6**. |
+| g++ 13.3, Debug, `-Wall -Wextra -Wpedantic -Werror` en todos los targets | Sin avisos; CTest **6/6**. |
+| clang 18.1, Debug, mismas opciones | Sin avisos; CTest **6/6**. |
+| g++ 13.3 con AddressSanitizer y UBSan | CTest **6/6** en tres corridas, sin errores de memoria ni comportamiento indefinido. |
+
+El plugin de ROS (`movemaster_hardware.cpp`) se comprobó solo en sintaxis, contra
+headers mínimos de ROS.
+
+Lo nuevo de cada prueba:
+
+- **`driver_fake_bus`.** Un SPARK recién encendido se acepta en el primer
+  `configure()`, que envía `CLEAR_FAULTS` y espera a que `HAS_RESET` se borre;
+  con `kFault`, el mismo SPARK se rechaza. Un reinicio con el brazo activo
+  enclava un fallo en `read()` y corta el heartbeat. Un firmware que no borre el
+  aviso, o que no envíe `STATUS_1`, se reporta. `set_current_limit()` escribe
+  los IDs 59 y 60 con ACK, solo con el driver configurado y sin activar.
+- **`config_and_commissioning`.** El bloque `homing` carga y cada regla da su
+  mensaje; Status 1 Period (ID 159) coincide con la tabla de parámetros.
+- **`homing_stop_search` (nueva).** Contra un eje simulado entre dos topes, la
+  búsqueda encuentra cada uno exactamente, no toma por tope una corriente alta
+  en movimiento (gravedad), detecta un tope falso (un tramo duro que cede) y
+  aborta sin tope dentro de `max_travel_rad` o con el eje inmóvil. `spark_home`,
+  contra un brazo simulado, mide los dos topes, regresa al inicio, sugiere los
+  límites, sostiene el otro eje y nunca adelanta el objetivo más que
+  `max_following_error_rad`. Tras un fallo, un error del driver o Ctrl+C, deja
+  de habilitar y restaura el límite de corriente.
+
+Dos correcciones salieron de esta validación:
+
+- **`receive()` sin búsquedas por trama.** Con sanitizers, `driver_fake_bus`
+  fallaba a veces por tiempo. `receive()` corre para cada trama recibida y, por
+  cada eje, buscaba en el JSON del spec el ID de `STATUS_0`, `STATUS_1` y
+  `STATUS_2`; con `STATUS_1`, esas búsquedas crecieron un 50 %. Ahora los IDs se
+  calculan una vez, al construir el driver.
+- **El SPARK simulado envía `STATUS_1` cada 100 ms**, como lo configura el
+  driver, y no cada 5 ms como `STATUS_0` y `STATUS_2`. `configure()` espera una
+  `STATUS_1` de cada SPARK y otra después de `CLEAR_FAULTS`: por eso
+  `driver_fake_bus`, con 15 configuraciones, pasa de 0.7 a 4.9 s.
+
+Mutaciones: se introdujeron 15 errores a propósito en una copia del paquete, y
+cada uno hizo fallar al menos una prueba:
+
+1. `CLEAR_FAULTS` sin enviar.
+2. Un reinicio aceptado también con `kFault`.
+3. `read()` sin revisar `HAS_RESET`.
+4. `configure()` sin exigir `STATUS_1`.
+5. Límite de corriente cambiado con el brazo activo.
+6. Límite de corriente libre (ID 60) sin escribir.
+7. `stall_current_a` sin validar.
+8. Bloque `homing` ignorado al cargar.
+9. Contacto detectado solo por corriente, sin que el eje se atrase.
+10. Sin detección de tope falso.
+11. Rampa sin límite de adelanto.
+12. Pico de corriente libre que incluye el contacto.
+13. `spark_home` sin restaurar el límite de corriente.
+14. `spark_home` sin regresar al inicio tras un tope.
+15. Eje medido sin pasar a modo Position.
+
+Contra la documentación de REV: REVLib 2026 (`robotpy-rev` 2026.0.4) dice de
+`SparkBase.clearFaults()` "Clears all sticky faults" y "Sticky warnings can be
+cleared with SparkBase::clearFaults()"; `hasReset` es uno de esos avisos. Es lo
+que hace el driver con `CLEAR_FAULTS`.
+
+**Pendiente en el equipo de destino:**
+
+- Que el SPARK encienda con `HAS_RESET` y que `CLEAR_FAULTS` lo borre. Si no, el
+  driver se detiene al configurar con `CLEAR_FAULTS did not clear HAS_RESET`.
+- Las corrientes reales en movimiento libre y contra cada tope, para ajustar
+  `stall_current_a` y `current_limit_a` de cada eje.
+- Compilación con colcon y el aviso de reinicio en el log del plugin.
+
 ## Compilación con ROS 2 Jazzy real
 
 5 de octubre de 2026. La parte ROS del `CMakeLists.txt` no se había configurado

@@ -42,7 +42,7 @@ movemaster_ws/                                  workspace de colcon (desde aquí
             │   ├── spec/spark-frames-2.1.0     descripción de las tramas CAN de REV
             │   ├── spec/SparkParameters-v0.1.2.md   tabla de parámetros del SPARK (ID, tipo, fábrica)
             │   ├── docs/                       PARAMETROS, API, diagrama de clases, consola, validación
-            │   ├── examples/                   programas sin ROS: demo, monitor, consola, puesta en marcha
+            │   ├── examples/                   programas sin ROS: demo, monitor, consola, puesta en marcha, homing
             │   └── tests/                      pruebas automáticas
             ├── movemaster_description/         MODELO del brazo (URDF desde la tabla DH)
             │   ├── CMakeLists.txt, package.xml
@@ -196,6 +196,8 @@ sequenceDiagram
     C->>H: on_init valida interfaces y joints.json, sin abrir CAN
     C->>H: on_configure
     H->>S: STOP_FOLLOWER_MODE, baseline, unidades, SET_STATUSES_ENABLED y slots, cada uno con ACK
+    S-->>H: STATUS_1 de todos los ejes, con HAS_RESET si el SPARK se reinició
+    H->>S: CLEAR_FAULTS a los reiniciados, cuya postura de encendido queda como referencia
     C->>H: on_activate
     S-->>H: STATUS_0 y STATUS_2 recientes de todos los ejes
     H->>S: setpoint igual a la posición medida y primer heartbeat
@@ -249,11 +251,12 @@ Cada dato vive en un solo lugar, según lo seguido que cambia:
 |---|---|---|
 | 2 | Motor Type | BRUSHLESS (1) |
 | 6 | Idle Mode | `spark.idle_mode`: COAST (0) o BRAKE (1); de fábrica, COAST |
-| 59, 60 | Smart Current Stall Limit, Smart Current Free Limit | `spark.current_limit_a` en los dos; de fábrica, 80 A y 20 A |
+| 59, 60 | Smart Current Stall Limit, Smart Current Free Limit | `spark.current_limit_a` en los dos; de fábrica, 80 A y 20 A. `spark_home` los baja en RAM mientras mide topes. |
 | 9 | Closed Loop Control Sensor | MAIN_ENCODER (1) |
 | 112, 113 | Position / Velocity Conversion Factor | 1.0 |
 | 149 | Position PID Wrap Enable | false |
 | 158, 160 | Status 0 Period, Status 2 Period | `status_period_ms` |
+| 159 | Status 1 Period | 100 ms: fallos y avisos, entre ellos el de reinicio (`HAS_RESET`) |
 | 13+8s a 16+8s | P, I, D, F del slot `s` | `slots.<s>.pidf` |
 | 19+8s, 20+8s | Output Min y Output Max del slot `s` | `slots.<s>.output_range` |
 | 166+5s, 167+5s, 169+5s | MAXMotion Max Velocity, Max Accel y Allowed Closed Loop Error del slot `s` | `slots.<s>.maxmotion` |
@@ -343,6 +346,7 @@ es un error.
 | `spark` | objeto | ver abajo | Lo que la puesta en marcha guarda en la flash del SPARK. El driver lo vuelve a escribir en RAM al configurar. |
 | `control` | objeto | ver abajo | Modo y slot con que se activa el eje. |
 | `slots` | objeto | `"0"` a `"3"`, al menos uno | Presets del eje: ganancias y perfiles. |
+| `homing` | objeto | opcional, ver abajo | Cómo busca `spark_home` los topes mecánicos del eje ([7.3](#73-spark_home-reinicios-y-topes-mecánicos)). |
 
 | Campo de `spark` | Regla | Significado |
 |---|---|---|
@@ -365,6 +369,15 @@ es un error.
 | `maxmotion.allowed_profile_error` | ≥ 0 | Error permitido, en rotaciones del motor. |
 
 `maxmotion` es opcional: un slot sin él solo sirve para el modo `position`.
+
+| Campo de `homing` | Regla | Significado |
+|---|---|---|
+| `current_limit_a` | entero, 1 a `spark.current_limit_a` | Límite de corriente mientras busca, solo en RAM: limita la fuerza contra el tope. |
+| `stall_current_a` | mayor que 0 y menor que `current_limit_a` | Hay contacto si el eje deja de seguir su objetivo con al menos esta corriente. Va entre la corriente en movimiento libre y la del tope; `spark_home` muestra las dos. |
+| `stall_time_s` | `3·period_s` a 5 s | Cuánto debe durar el contacto para aceptarlo. |
+| `fast_speed_rad_s`, `slow_speed_rad_s` | `0 < slow_speed_rad_s ≤ fast_speed_rad_s ≤ max_velocity_rad_s` | Velocidades del primer acercamiento y del segundo, que fija el tope. |
+| `backoff_rad` | > 0 | Retroceso entre los dos acercamientos; también el margen de los límites sugeridos. |
+| `max_travel_rad` | > `2·backoff_rad` | Recorrido máximo sin encontrar tope; más allá, aborta. |
 
 ### 4.3 Ejemplo de un eje
 
@@ -403,9 +416,11 @@ del formato anterior están en
 
 ### 4.4 Cuidados
 
-- **No hay homing.** El encoder del NEO es relativo: si su cero cambia al
-  apagar el SPARK, `zero_offset_rad` deja de ser válido. Verifica la posición
-  antes de activar.
+- **Aún no hay homing automático.** El encoder del NEO es relativo: al
+  apagarse (corte de alimentación o paro de emergencia), el SPARK pierde la
+  posición y, al encender, cuenta desde la postura en que está. El driver
+  detecta cada reinicio ([7.3](#73-spark_home-reinicios-y-topes-mecánicos)),
+  pero no recupera la posición; de ahí la convención del punto siguiente.
 - **El cero de cada eje es el de la tabla DH.** θ = 0 en `dh.yaml` es 0 rad en
   ROS, y el sentido positivo es el giro alrededor del eje z de la tabla; si el
   motor gira al revés, `direction: -1`. Como el encoder marca 0 al encender, el
@@ -510,10 +525,11 @@ ejemplos y las pruebas. La carpeta `build/` está ignorada por git.
 
 | Prueba (`ctest`) | Programa | Qué verifica |
 |---|---|---|
-| `driver_fake_bus` | `tests/driver_test.cpp` | El driver completo contra un SPARK simulado (`tests/simulated_spark_bus.hpp`): 1, 3 y 6 ejes, conversiones, ACKs, orden setpoints → heartbeat, límites, envío en cada ciclo del lazo, baseline y slots en RAM, modos Position y MAXMotion por eje, error de seguimiento, telemetría vencida o corrupta, fallo de TX y lazo detenido. |
-| `config_and_commissioning` | `tests/setup_test.cpp` | Que los `joints.json` del repositorio cargan; que cada parámetro que escribe el código coincide en ID, nombre, tipo y valores con `spec/SparkParameters-v0.1.2.md`; los mensajes de error del cargador; y la puesta en marcha: orden restablecer → baseline → persistir, números mágicos, fallos, `spark_commission` y la escucha del bus. |
+| `driver_fake_bus` | `tests/driver_test.cpp` | El driver completo contra un SPARK simulado (`tests/simulated_spark_bus.hpp`): 1, 3 y 6 ejes, conversiones, ACKs, orden setpoints → heartbeat, límites, envío en cada ciclo del lazo, baseline y slots en RAM, modos Position y MAXMotion por eje, error de seguimiento, telemetría vencida o corrupta, fallo de TX, lazo detenido, reinicio de un SPARK (`HAS_RESET`) y cambio del límite de corriente. |
+| `config_and_commissioning` | `tests/setup_test.cpp` | Que los `joints.json` del repositorio cargan; que cada parámetro que escribe el código coincide en ID, nombre, tipo y valores con `spec/SparkParameters-v0.1.2.md`; los mensajes de error del cargador, también los del bloque `homing`; y la puesta en marcha: orden restablecer → baseline → persistir, números mágicos, fallos, `spark_commission` y la escucha del bus. |
 | `protocol_demo_no_can` | `examples/protocol_demo.cpp` | Que se puede leer el JSON de REV y armar tramas sin abrir CAN. |
 | `console_input_and_cycle` | `tests/console_test.cpp` | La lógica de `spark_console` con un driver falso y entrada por tubería, incluidos los comandos `mode` y `slot`. |
+| `homing_stop_search` | `tests/homing_test.cpp` | La búsqueda de topes contra un eje simulado: los dos topes, corriente alta en movimiento que no es tope, tope falso, sin tope dentro de `max_travel_rad` y eje que no avanza. Y `spark_home` contra un brazo simulado: medición, regreso al inicio, límites sugeridos, límite de corriente restaurado también tras un fallo o Ctrl+C, argumentos y estado. |
 | `python_cpp_parity` | `tests/differential_test.py` + `tests/protocol_oracle.cpp` | Que el protocolo C++ produce exactamente los mismos bytes que la librería Python original (`tests/reference/`) en todas las tramas. |
 
 ### 5.2 Ver tramas sin hardware
@@ -546,6 +562,7 @@ Durante el uso, para el CAN ID 1 verás:
 | ID | Trama | Sentido |
 |---|---|---|
 | `0205B801` | `STATUS_0` (corriente, tensión, temperatura…) | SPARK → PC |
+| `0205B841` | `STATUS_1` (fallos y avisos, entre ellos `HAS_RESET`) | SPARK → PC |
 | `0205B881` | `STATUS_2` (posición y velocidad del encoder) | SPARK → PC |
 | `02050201` | `MAXMOTION_POSITION_SETPOINT` | PC → SPARK |
 | `02050101` | `POSITION_SETPOINT` | PC → SPARK |
@@ -553,6 +570,7 @@ Durante el uso, para el CAN ID 1 verás:
 | `02053801` / `02053841` | `PARAMETER_WRITE` y su respuesta | configuración |
 | `02050541` / `02050581` | `RESET_SAFE_PARAMETERS` y su respuesta | puesta en marcha |
 | `0205FFC1` / `02050501` | `PERSIST_PARAMETERS` y su respuesta | puesta en marcha |
+| `02051B81` | `CLEAR_FAULTS` (borra el aviso de reinicio) | configuración |
 
 Los últimos dos dígitos hex dependen del CAN ID: el ID es
 `(arbId & ~0x3F) | can_id`. Con `can_id = 2`, `STATUS_2` sería `0205B882`.
@@ -598,7 +616,7 @@ el resultado en REV Hardware Client después de apagarlo y encenderlo. Detalle e
 
 ## 7. Paso 4 · Probar en el banco sin ROS
 
-Antes de usar ROS conviene validar cada eje con estos dos programas (están en
+Antes de usar ROS conviene validar cada eje con estos programas (están en
 `build/` tras el paso 2, o como `ros2 run movemaster_hardware <programa>` tras
 el paso 5). `spark_commission` está en el mismo lugar.
 
@@ -635,6 +653,103 @@ eje. Comandos:
 
 En modo `position` sirve para ver la respuesta del PID a escalones pequeños.
 Más detalle en [SPARK_CONSOLE.md](../movemaster_hardware/docs/SPARK_CONSOLE.md).
+
+### 7.3 spark_home: reinicios y topes mecánicos
+
+El encoder del NEO es relativo. Cuando el SPARK se apaga, por un corte de
+alimentación o por el paro de emergencia, pierde la posición; al encender
+cuenta desde la postura en que está y lo avisa con `HAS_RESET`, en su trama
+`STATUS_1`, hasta que se borran sus avisos (`CLEAR_FAULTS`). `spark_home`
+muestra ese aviso y mide los topes mecánicos de un eje. Cierra antes el
+`controller_manager` y cualquier otro programa que use el bus.
+
+**Estado.** No habilita motores:
+
+```bash
+./build/spark_home spec/spark-frames-2.1.0 config/joints.json can0
+```
+
+Con SPARK simulados recién encendidos:
+
+```text
+Estado de los SPARK en can0:
+  joint_1  CAN 1  reiniciado    posicion 0.014 rad (0.8 grados)
+  joint_2  CAN 2  reiniciado    posicion -0.015 rad (-0.8 grados)
+  joint_3  CAN 3  reiniciado    posicion -0.022 rad (-1.2 grados)
+  joint_4  CAN 4  reiniciado    posicion -0.029 rad (-1.7 grados)
+Los SPARK reiniciados cuentan desde la postura en que se encendieron, que zero_offset_rad
+supone Home. Su aviso de reinicio quedo borrado: si vuelven a reiniciarse, el
+controller_manager lo detecta como fallo.
+```
+
+Si lo ejecutas otra vez sin apagarlos, todos dicen `sin reinicio`. El
+`controller_manager` hace lo mismo la primera vez que configura: toma la postura
+de encendido como referencia. Un reinicio posterior es un fallo
+([paso 9](#12-paso-9--detener-fallos-y-recuperación)).
+
+**Medir los topes de un eje.** Necesita su bloque `homing`
+([4.2](#42-campos-de-cada-articulación)). El sentido es el de la tabla DH: `+`
+es antihorario alrededor del eje z de la articulación y `-`, horario. Sin
+sentido mide los dos:
+
+```bash
+./build/spark_home spec/spark-frames-2.1.0 config/joints.json can0 --measure joint_2     # los dos topes
+./build/spark_home spec/spark-frames-2.1.0 config/joints.json can0 --measure joint_2 +   # solo el antihorario
+```
+
+Baja el límite de corriente de ese SPARK a `homing.current_limit_a`, solo en
+RAM, y habilita todos los ejes; los demás se sostienen en su posición. Para cada
+tope, como el homing de una CNC:
+
+1. Se acerca a `fast_speed_rad_s` hasta que el eje deja de seguir su objetivo
+   con al menos `stall_current_a` durante `stall_time_s`: contacto.
+2. Retrocede `backoff_rad` y se acerca de nuevo a `slow_speed_rad_s`. Ese
+   segundo contacto, más lento y repetible, es el tope.
+3. Regresa a la posición inicial.
+
+Al terminar, al fallar o con Ctrl+C deja de enviar heartbeat y restaura
+`spark.current_limit_a`. Salida con un eje simulado, con topes en −0.4 y 0.6 rad:
+
+```text
+joint_1: angulos respecto a la referencia actual (la postura de encendido del SPARK,
+Home por convencion). Limite de corriente 6 A mientras mide.
++: buscando el tope antihorario...
+   contacto; retrocede y se acerca despacio
+   tope + en 0.600 rad (34.4 grados)
+   corriente: pico en movimiento libre 1.0 A, al topar 6.0 A
+-: buscando el tope horario...
+   contacto; retrocede y se acerca despacio
+   tope - en -0.400 rad (-22.9 grados)
+   corriente: pico en movimiento libre 1.0 A, al topar 6.0 A
+Resultado de joint_1 (convencion DH, + = antihorario):
+  tope -: -0.400 rad (-22.9 grados)
+  tope +: 0.600 rad (34.4 grados)
+  recorrido entre topes: 1.000 rad (57.3 grados)
+Para joints.json, con backoff_rad de margen:
+  "min_position_rad": -0.350, "max_position_rad": 0.550
+```
+
+Cómo usar el resultado:
+
+- **Límites.** Copia a `joints.json` los `min_position_rad` y `max_position_rad`
+  sugeridos: quedan a `backoff_rad` de cada tope.
+- **Corrientes.** `stall_current_a` debe quedar entre el pico en movimiento
+  libre y la corriente al topar, con margen a ambos lados. Si el pico libre se
+  le acerca, un tramo pesado puede parecer un tope.
+- **Referencia.** Los ángulos se cuentan desde la postura de encendido: mide
+  con los SPARK encendidos en Home, o los topes saldrán desplazados.
+
+Cuidados:
+
+- La primera vez, con velocidades bajas (las del repositorio: 0.1 y 0.02
+  rad/s), un límite de corriente bajo (6 A) y el paro de emergencia a la mano.
+  Sube `current_limit_a` solo si el eje no logra moverse.
+- Mientras mide, el eje puede pasar de sus límites actuales, hasta
+  `max_travel_rad`: son justo los que se están midiendo.
+- Con Ctrl+C se detiene: sin heartbeat los SPARK se deshabilitan, y el brazo
+  puede caer por gravedad.
+- Si una búsqueda falla, muestra el motivo y la corriente, y regresa a la
+  posición inicial. Qué hacer con cada mensaje: [14](#14-problemas-frecuentes).
 
 ---
 
@@ -879,6 +994,21 @@ ros2 control switch_controllers --activate joint_state_broadcaster joint_traject
 La reactivación crea un driver nuevo, repite la configuración de los SPARK y
 vuelve a mantener la posición medida.
 
+**Paro de emergencia o corte de alimentación**: los SPARK se apagan y pierden
+la posición. El driver enclava un fallo (vence la telemetría o, si el corte fue
+breve, `the SPARK restarted (HAS_RESET)`) y después ya no permite reactivar:
+`joint_1: the SPARK restarted (power cut or emergency stop) and lost its
+position; power it up with the arm in Home and restart the node`. El SPARK
+cuenta desde que enciende, así que el brazo debe estar en Home **al encenderlo**:
+
+1. cierra el nodo (Ctrl+C);
+2. con el paro de emergencia presionado, lleva el brazo a Home;
+3. suelta el paro y vuelve a lanzar el nodo.
+
+Al configurar, el log confirma qué SPARK tomaron su postura de encendido como
+referencia: `joint_1: SPARK powered up; its zero is the pose it powered up in,
+which zero_offset_rad assumes is Home.`
+
 Deshabilitar sin cerrar el nodo. Cambiar el estado del hardware no desactiva los
 controladores, así que primero se desactiva el JTC y al volver se activa al final:
 
@@ -943,12 +1073,12 @@ compilación y rosdep para instalar lo que falta.
 | `option(MOVEMASTER_BUILD_ROS2 ... ON)` | Permite compilar sin ROS con `-DMOVEMASTER_BUILD_ROS2=OFF`. |
 | `include(CTest)` | Activa `BUILD_TESTING` y `add_test`. |
 | `find_package(nlohmann_json QUIET)` + `find_path(...)` | Busca la librería JSON; si no hay paquete CMake, usa el header `nlohmann/json.hpp`. |
-| `add_library(sparkmax_protocol STATIC ...)`, `add_library(movemaster_driver STATIC ...)` | Dos librerías **estáticas**: protocolo y driver (+ SocketCAN, `spark_setup.cpp` y `driver_config.cpp`). |
+| `add_library(sparkmax_protocol STATIC ...)`, `add_library(movemaster_driver STATIC ...)` | Dos librerías **estáticas**: protocolo y driver (+ SocketCAN, `spark_setup.cpp`, `driver_config.cpp` y `homing.cpp`). |
 | `POSITION_INDEPENDENT_CODE ON` | Permite meterlas dentro de la librería compartida del plugin (ver `docs/LINKING_FIX.md`). |
 | `target_include_directories(... include)`, `-Wall -Wextra -Wpedantic` | Headers públicos y avisos del compilador. |
 | `target_link_libraries(... nlohmann_json, Threads)` | Dependencias de las librerías. |
-| `add_executable(protocol_demo / driver_monitor / spark_console / spark_commission ...)` | Programas de ejemplo y la herramienta de puesta en marcha. |
-| `if(BUILD_TESTING) ... add_test(...)` | Las cinco pruebas de `ctest` (paso 2). |
+| `add_executable(protocol_demo / driver_monitor / spark_console / spark_commission / spark_home ...)` | Programas de ejemplo y las herramientas de puesta en marcha y de homing. |
+| `if(BUILD_TESTING) ... add_test(...)` | Las seis pruebas de `ctest` (paso 2). |
 | `if(MOVEMASTER_BUILD_ROS2)` → `find_package(ament_cmake hardware_interface pluginlib rclcpp rclcpp_lifecycle)` | Solo con ROS: dependencias del plugin. |
 | `add_library(movemaster_hardware SHARED src/movemaster_hardware.cpp)` | El plugin: una librería **compartida** (`libmovemaster_hardware.so`) que el `controller_manager` carga en tiempo de ejecución. |
 | `target_link_libraries(movemaster_hardware PUBLIC movemaster_driver hardware_interface::hardware_interface ...)` | Enlaza el plugin con el driver y con los targets que exportan `hardware_interface`, `pluginlib`, `rclcpp` y `rclcpp_lifecycle`, en una sola llamada. No se usa `ament_target_dependencies()`: agrega una llamada sin `PUBLIC`/`PRIVATE` y CMake no permite mezclar las dos formas en el mismo target. |
@@ -1119,9 +1249,11 @@ Ninguno de los dos se modifica.
 | `examples/driver_monitor.cpp` | ejemplo | sí | Configurar y leer telemetría sin habilitar (paso 4). |
 | `examples/spark_console.cpp` | ejemplo | sí | Mover un eje desde el teclado, en Position o MAXMotion (paso 4). |
 | `examples/spark_commission.cpp` | herramienta | sí | Puesta en marcha: restablecer, escribir el baseline y persistir (paso 3). |
+| `examples/spark_home.cpp` | herramienta | sí | Ver qué SPARK se reiniciaron y medir los topes mecánicos de un eje (paso 4). |
 | `tests/driver_test.cpp` | prueba | no | Driver contra SPARK simulado. |
 | `tests/setup_test.cpp` | prueba | no | Cargador de `joints.json` y puesta en marcha contra SPARK simulado. |
 | `tests/console_test.cpp` | prueba | no | Bucle de la consola con driver falso. |
+| `tests/homing_test.cpp` | prueba | no | Búsqueda de topes contra un eje simulado y `spark_home`. |
 | `tests/protocol_oracle.cpp` + `tests/differential_test.py` | prueba | no | Paridad byte a byte con la librería Python. |
 | `movemaster_description/test/test_description.py` | prueba | no | El URDF sigue la tabla DH (cinemática directa contra el producto DH; Home en (0.160, 0, 0.255) m) y cumple lo que exigen el plugin y `ros2_control`. |
 | `movemaster_control/test/test_controllers.py` | prueba | no | Los controladores usan las interfaces que exporta el plugin. |
@@ -1151,12 +1283,20 @@ Ninguno de los dos se modifica.
 | `Parameter ACK mismatch: CAN 1, p` | El SPARK no aceptó o no confirmó el valor de un parámetro. | Revisa el valor en `joints.json` y el firmware. Si el parámetro es `motor_type`, `idle_mode`, `smart_current_*`, `output_min` u `output_max`, anótalo: son IDs que aún no se habían probado con un SPARK real. |
 | `Fresh STATUS_0 and STATUS_2 required for every joint` | Al activar, falta telemetría reciente de algún eje. | Revisa cableado, `status_period_ms` y que todos los ejes respondan en `driver_monitor`. |
 | `STATUS_0/2 watchdog expired` | Se dejó de recibir telemetría con el brazo activo. | Cable o alimentación; luego recupera (paso 9). |
+| `joint_1: the SPARK restarted (HAS_RESET); its position and RAM configuration are lost` | El SPARK se reinició con el brazo activo: un corte breve o una caída de tensión. | Revisa la alimentación y las conexiones de ese SPARK; después, como la fila siguiente. |
+| `joint_1: the SPARK restarted (power cut or emergency stop) and lost its position; ...` al recuperar | El SPARK se apagó y volvió a encender con el nodo vivo: cuenta desde otra postura. | Cierra el nodo, lleva el brazo a Home con el paro presionado, suéltalo y vuelve a lanzar ([paso 9](#12-paso-9--detener-fallos-y-recuperación)). |
+| `joint_1: SPARK powered up; its zero is the pose it powered up in, ...` (advertencia) | Normal en el primer arranque tras encender los SPARK. | Nada, si se encendieron en Home ([4.4](#44-cuidados)). Si no, la posición en ROS está desplazada: cierra el nodo y enciende los SPARK en Home. |
+| `CLEAR_FAULTS did not clear HAS_RESET on CAN 1` o `STATUS_1 required from every SPARK; none from CAN 1` | El SPARK no borró su aviso de reinicio o no envía `STATUS_1`. | Revisa el firmware con REV Hardware Client (25 o posterior) y anótalo: el manejo de `HAS_RESET` aún no se ha probado con un SPARK real. |
 | `Control loop gap exceeded; refusing automatic re-enable` | El lazo se detuvo más de `max_cycle_gap_s` (PC sobrecargado, depurador, sin permiso de tiempo real). Con `max_cycle_gap_s` = 2 periodos (0.02 s a 100 Hz) salta por la variación normal de Linux. | `max_cycle_gap_s: 0.1` en `joints.json` y permiso de tiempo real ([10.1](#101-permiso-de-tiempo-real-una-sola-vez)). Recupera (paso 9). |
 | `joint_1: position command outside calibrated limits` | El JTC pidió un objetivo fuera de los límites. | Envía objetivos dentro de `joints.json`; recupera. |
 | `joint_1: Position target exceeds max_following_error_rad from the measured position` | En modo `position`, el objetivo quedó demasiado lejos del eje: trayectoria muy rápida, ganancias bajas o un choque. | Da más `time_from_start`, revisa el PID o el obstáculo; sube `max_following_error_rad` solo con margen medido. Recupera. |
 | `spark_commission`: `NO RESPONDE` | Ese CAN ID no envía `STATUS_0`. | Revisa CAN ID, alimentación y `candump`. |
 | `spark_commission`: `Hay un heartbeat de habilitacion en el bus` | Otro programa está habilitando motores. | Cierra el `controller_manager`, `spark_console` o el backend Python. |
 | `RESET_SAFE_PARAMETERS rejected on CAN 1: RESULT_CODE 1` o `Timeout waiting for PERSIST_PARAMETERS_RESPONSE on CAN 1` | El SPARK rechazó o no confirmó el restablecimiento o el guardado. | Repite la puesta en marcha de ese eje; si persiste, revisa el firmware con REV Hardware Client. |
+| `spark_home`: `no stop within max_travel_rad` | No hay tope en ese sentido dentro del recorrido, o está más lejos. | Revisa el sentido (`+` antihorario) y el brazo; sube `max_travel_rad` con cuidado. |
+| `spark_home`: `... it was a false stop ...` | El acercamiento rápido se detuvo antes del tope: un tramo duro o la inercia. | Sube `stall_current_a` (sin llegar a la corriente al topar) o `current_limit_a`, o baja `fast_speed_rad_s`. |
+| `spark_home`: `the joint stopped advancing without reaching stall_current_a ...` | El eje se detuvo, en un tope o por la carga, con menos corriente que `stall_current_a`. | Mira la corriente `al final`: si está en el tope, baja `stall_current_a` por debajo de ella y por encima del pico libre. Cerca de 0 A, el motor no empuja: revisa el PIDF del slot. |
+| `spark_home`: `Aviso: el eje casi no se movio` | El tope quedó a menos de `backoff_rad` del inicio: hay un tope ahí o el límite de corriente no alcanza para mover el eje. | Si no hay tope ahí, sube `current_limit_a`. |
 | `CAN error frame received: bus-off ...` o `... tx-timeout ...` | El adaptador dejó de transmitir: errores de bus repetidos (cableado, terminación, bitrate). Son las únicas tramas de error que enclavan un fallo, porque el heartbeat ya no sale. | `ip -details -statistics link show can0` y `candump -e can0,0~0,#FFFFFFFF` mientras se reproduce; revisa resistencias de 120 Ω, cableado y bitrate. Para salir de `BUS-OFF`: `sudo ip link set can0 down` y `sudo ip link set can0 up`. |
 | `STATUS_0/2 watchdog expired` y `ip -details -statistics link show can0` muestra `overrun` creciendo | El adaptador pierde tramas recibidas porque no las lee a tiempo: típico de un HAT con MCP2515 en la Raspberry Pi con la CPU ocupada. Unas pocas no afectan (el driver no las ve); muchas seguidas vencen el watchdog. | Permiso de tiempo real ([10.1](#101-permiso-de-tiempo-real-una-sola-vez)), menos tráfico (`period_s: 0.02` y `status_period_ms: 20`) o un adaptador USB-CAN con más búfer (`gs_usb`). |
 | `No state interfaces found to publish` / `Failed to activate controller : joint_state_broadcaster` | El hardware se desactivó antes (mira la línea `[MovemasterHardware]` anterior) y ya no tiene interfaces que publicar. | Corrige la causa de esa línea; recupera (paso 9) o vuelve a lanzar. |

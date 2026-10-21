@@ -38,6 +38,15 @@
             "allowed_profile_error": 0.5
           }
         }
+      },
+      "homing": {
+        "current_limit_a": 6,
+        "stall_current_a": 4,
+        "stall_time_s": 0.2,
+        "fast_speed_rad_s": 0.1,
+        "slow_speed_rad_s": 0.02,
+        "backoff_rad": 0.05,
+        "max_travel_rad": 6.3
       }
     },     
     "joint_2": {
@@ -72,6 +81,15 @@
             "allowed_profile_error": 0.5
           }
         }
+      },
+      "homing": {
+        "current_limit_a": 6,
+        "stall_current_a": 4,
+        "stall_time_s": 0.2,
+        "fast_speed_rad_s": 0.1,
+        "slow_speed_rad_s": 0.02,
+        "backoff_rad": 0.05,
+        "max_travel_rad": 6.3
       }
     },     
     "joint_3": {
@@ -106,8 +124,16 @@
             "allowed_profile_error": 0.5
           }
         }
+      },
+      "homing": {
+        "current_limit_a": 6,
+        "stall_current_a": 4,
+        "stall_time_s": 0.2,
+        "fast_speed_rad_s": 0.1,
+        "slow_speed_rad_s": 0.02,
+        "backoff_rad": 0.05,
+        "max_travel_rad": 6.3
       }
-    
     },     
     "joint_4": {
       "can_id": 4,
@@ -141,8 +167,16 @@
             "allowed_profile_error": 0.5
           }
         }
+      },
+      "homing": {
+        "current_limit_a": 6,
+        "stall_current_a": 4,
+        "stall_time_s": 0.2,
+        "fast_speed_rad_s": 0.1,
+        "slow_speed_rad_s": 0.02,
+        "backoff_rad": 0.05,
+        "max_travel_rad": 6.3
       }
-    
     }
   }
 }

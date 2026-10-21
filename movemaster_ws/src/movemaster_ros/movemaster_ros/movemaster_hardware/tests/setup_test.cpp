@@ -98,6 +98,35 @@ void loader_errors() {
       position.slots.at(1).maxmotion.is_null(), "Position-only slot not loaded");
   check(position.slots.at(0).output_min == -1 && position.slots.at(0).output_max == 1, "Default output range");
 }
+// The optional homing block: loaded as written, and every rule names its field.
+void homing_block() {
+  auto data = Json::parse(kFixture);
+  auto &j = data["joints"]["joint_1"];
+  check(!load(data).joints.at(0).homing, "A joint without homing block got one");
+  j["homing"] = {{"current_limit_a", 6}, {"stall_current_a", 4}, {"stall_time_s", 0.2}, {"fast_speed_rad_s", 0.1},
+      {"slow_speed_rad_s", 0.02}, {"backoff_rad", 0.05}, {"max_travel_rad", 6.3}};
+  const auto h = load(data).joints.at(0).homing.value();
+  check(h.current_limit_a == 6 && h.stall_current_a == 4 && h.stall_time_s == 0.2 && h.fast_speed_rad_s == 0.1 &&
+      h.slow_speed_rad_s == 0.02 && h.backoff_rad == 0.05 && h.max_travel_rad == 6.3, "homing block not loaded");
+  const auto broken = [&](auto mutate, const std::string &expected) {
+    auto copy = data;
+    mutate(copy["joints"]["joint_1"]["homing"]);
+    rejects_with([&] { load(copy); }, expected);
+  };
+  broken([](Json &h) { h["stop_rad"] = 1.0; }, "homing.stop_rad is not a known key");
+  broken([](Json &h) { h.erase("backoff_rad"); }, "homing.backoff_rad is missing");
+  broken([](Json &h) { h["current_limit_a"] = 6.5; }, "homing.current_limit_a must be an integer");
+  broken([](Json &h) { h["current_limit_a"] = 41; }, "current_limit_a must be in 1..spark.current_limit_a");
+  broken([](Json &h) { h["stall_current_a"] = 6; }, "stall_current_a must be between 0 and current_limit_a");
+  broken([](Json &h) { h["stall_time_s"] = 0.01; }, "stall_time_s must be in 3 * period_s..5 s");
+  broken([](Json &h) { h["slow_speed_rad_s"] = 0.2; }, "speeds must satisfy");
+  broken([](Json &h) { h["fast_speed_rad_s"] = 4.0; }, "speeds must satisfy");
+  broken([](Json &h) { h["backoff_rad"] = 0; }, "backoff_rad must be positive");
+  broken([](Json &h) { h["max_travel_rad"] = 0.1; }, "max_travel_rad must exceed twice backoff_rad");
+  auto wrong = data;
+  wrong["joints"]["joint_1"]["homing"] = 3;
+  rejects_with([&] { load(wrong); }, "homing must be an object");
+}
 bool sent_frame(const SimulatedSparkBus &bus, const char *name) {
   for (const auto &p : bus.sent)
     if ((p.arbitration_id & ~0x3FU) == (bus.frames[name].base_arb_id() & ~0x3FU)) return true;
@@ -216,7 +245,7 @@ void parameter_table() {
   };
   for (const auto *p : {&rev::kMotorType, &rev::kIdleMode, &rev::kFeedbackSensor, &rev::kSmartCurrentStallLimit,
            &rev::kSmartCurrentFreeLimit, &rev::kPositionConversionFactor, &rev::kVelocityConversionFactor,
-           &rev::kPositionWrapping, &rev::kStatus0Period, &rev::kStatus2Period})
+           &rev::kPositionWrapping, &rev::kStatus0Period, &rev::kStatus1Period, &rev::kStatus2Period})
     agrees(*p, p->description);
   // DEFAULT_PARAMETER_LAYOUT keeps the Python descriptions; these are its names in the table.
   const std::map<std::string, std::string> layout_name{{"p", "P"}, {"i", "I"}, {"d", "D"}, {"f", "F"},
@@ -255,11 +284,12 @@ int main(int argc, char **argv) {
     fixture_loads();
     parameter_table();
     loader_errors();
+    homing_block();
     commissioning();
     commission_tool();
     survey();
     std::cout << "PASS: bench joints.json valid, loader fields, parameter IDs against SparkParameters-v0.1.2.md, "
-        "v2 loader errors, Position-only slots, commissioning order, "
+        "v2 loader errors, Position-only slots, homing block, commissioning order, "
         "magic numbers and failures, spark_commission selection and refusals, bus survey.\n";
   } catch (const std::exception &e) {
     std::cerr << "FAIL: " << e.what() << '\n';

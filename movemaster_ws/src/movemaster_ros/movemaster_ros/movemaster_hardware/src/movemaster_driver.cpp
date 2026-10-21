@@ -2,6 +2,7 @@
 #include "movemaster_hardware/socketcan.hpp"
 #include <algorithm>
 #include <cmath>
+#include <numeric>
 #include <set>
 #include <thread>
 
@@ -9,8 +10,14 @@ namespace movemaster {
 namespace {
 constexpr double tau = 6.283185307179586476925286766559;
 constexpr std::size_t rx_budget = 256;
+constexpr int kStatus1PeriodMs = 100;  // faults and warnings, HAS_RESET among them
 void require(bool condition, const std::string &message) {
   if (!condition) throw std::invalid_argument(message);
+}
+std::string join(const std::vector<std::string> &names) {
+  std::string text;
+  for (const auto &name : names) text += (text.empty() ? "" : ", ") + name;
+  return text;
 }
 bool finite(const Json &value) {
   return value.is_number() && std::isfinite(value.get<double>());
@@ -80,6 +87,22 @@ void validate_driver_config(const DriverConfig &config) {
     require(selected != j.slots.end(), j.name + ": control slot " + std::to_string(j.slot) + " is not configured");
     require(j.mode == ControlMode::kPosition || !selected->second.maxmotion.is_null(),
         j.name + ": MAXMotion control needs a maxmotion block in slot " + std::to_string(j.slot));
+    if (j.homing) {
+      const auto &h = *j.homing;
+      const auto where = j.name + " homing";
+      require(h.current_limit_a >= 1 && h.current_limit_a <= j.spark.current_limit_a,
+          where + ": current_limit_a must be in 1..spark.current_limit_a");
+      require(std::isfinite(h.stall_current_a) && h.stall_current_a > 0 && h.stall_current_a < h.current_limit_a,
+          where + ": stall_current_a must be between 0 and current_limit_a");
+      require(std::isfinite(h.stall_time_s) && h.stall_time_s >= 3 * config.period_s && h.stall_time_s <= 5,
+          where + ": stall_time_s must be in 3 * period_s..5 s");
+      require(std::isfinite(h.slow_speed_rad_s) && h.slow_speed_rad_s > 0 &&
+          h.slow_speed_rad_s <= h.fast_speed_rad_s && h.fast_speed_rad_s <= j.max_velocity_rad_s,
+          where + ": speeds must satisfy 0 < slow_speed_rad_s <= fast_speed_rad_s <= max_velocity_rad_s");
+      require(std::isfinite(h.backoff_rad) && h.backoff_rad > 0, where + ": backoff_rad must be positive");
+      require(std::isfinite(h.max_travel_rad) && h.max_travel_rad > 2 * h.backoff_rad,
+          where + ": max_travel_rad must exceed twice backoff_rad");
+    }
   }
 }
 MoveMasterDriver::MoveMasterDriver(DriverConfig config, std::unique_ptr<CANBus> bus)
@@ -88,10 +111,14 @@ MoveMasterDriver::MoveMasterDriver(DriverConfig config, std::unique_ptr<CANBus> 
   for (const auto &joint : config_.joints) {
     protocols_.push_back(std::make_unique<SparkMAXMotionProtocol>(
         config_.spec_path, joint.device_id, config_.parameter_layout));
+    const auto &frames = protocols_.back()->frames;
+    status_ids_.push_back({frames["STATUS_0"].arbitration_id(joint.device_id),
+        frames["STATUS_1"].arbitration_id(joint.device_id), frames["STATUS_2"].arbitration_id(joint.device_id)});
     controls_.push_back({joint.mode, joint.slot});
   }
   states_.resize(config_.joints.size());
   status0_at_.resize(states_.size());
+  status1_at_.resize(states_.size());
   status2_at_.resize(states_.size());
 }
 double MoveMasterDriver::radians_to_rotations(double radians, const JointConfig &j) {
@@ -110,7 +137,7 @@ void MoveMasterDriver::trip(const std::string &message) noexcept {
   active_ = false;
   if (fault_.empty()) fault_ = message;
 }
-void MoveMasterDriver::configure() {
+std::vector<std::string> MoveMasterDriver::configure(SparkResetPolicy policy) {
   ensure_healthy();
   if (configured_ || active_) throw std::logic_error("Driver already configured");
   try {
@@ -118,7 +145,7 @@ void MoveMasterDriver::configure() {
       auto bus = std::make_unique<SocketCAN>(config_.channel);
       std::vector<std::uint32_t> filters;
       for (const auto &p : protocols_)
-        for (const auto *name : {"STATUS_0", "STATUS_2", "PARAMETER_WRITE_RESPONSE",
+        for (const auto *name : {"STATUS_0", "STATUS_1", "STATUS_2", "PARAMETER_WRITE_RESPONSE",
             "STOP_FOLLOWER_MODE_RESPONSE", "SET_STATUSES_ENABLED_RESPONSE"})
           filters.push_back(p->frames[name].arbitration_id(p->device_id));
       bus->set_filters(filters);
@@ -139,15 +166,33 @@ void MoveMasterDriver::configure() {
       spark.write(rev::kVelocityConversionFactor, 1.0);
       spark.write(rev::kPositionWrapping, false);
       spark.write(rev::kStatus0Period, config_.status_period_ms);
+      spark.write(rev::kStatus1Period, kStatus1PeriodMs);
       spark.write(rev::kStatus2Period, config_.status_period_ms);
       const auto enabled = spark.exchange("SET_STATUSES_ENABLED", "SET_STATUSES_ENABLED_RESPONSE",
-          {{"MASK", 5}, {"ENABLED_BITFIELD", 5}});
-      if (enabled.at("RESULT_CODE").get<int>() != 0 || enabled.at("SPECIFIED_MASK").get<int>() != 5 ||
-          (enabled.at("ENABLED_BITFIELD").get<int>() & 5) != 5)
-        throw std::runtime_error("Cannot enable STATUS_0/2");
+          {{"MASK", 7}, {"ENABLED_BITFIELD", 7}});
+      if (enabled.at("RESULT_CODE").get<int>() != 0 || enabled.at("SPECIFIED_MASK").get<int>() != 7 ||
+          (enabled.at("ENABLED_BITFIELD").get<int>() & 7) != 7)
+        throw std::runtime_error("Cannot enable STATUS_0/1/2");
       for (const auto &[slot, slot_config] : j.slots) spark.write_slot(slot, slot_config);
     }
+    std::vector<std::size_t> all(protocols_.size()), restarted;
+    std::iota(all.begin(), all.end(), 0);
+    wait_status1(all, false);
+    std::vector<std::string> names;
+    for (const auto i : all)
+      if (states_[i].spark_reset) {
+        restarted.push_back(i);
+        names.push_back(config_.joints[i].name);
+      }
+    if (!names.empty() && policy == SparkResetPolicy::kFault)
+      throw std::runtime_error(join(names) + ": the SPARK restarted (power cut or emergency stop) and lost its "
+          "position; power it up with the arm in Home and restart the node");
+    // Cleared now, HAS_RESET flags the next restart.
+    for (const auto i : restarted)
+      bus_->send(protocols_[i]->frames["CLEAR_FAULTS"].packet(protocols_[i]->device_id), config_.response_timeout_s);
+    wait_status1(restarted, true);
     configured_ = true;  // RAM only; no PERSIST_PARAMETERS.
+    return names;
   } catch (const std::exception &e) { trip(e.what()); throw; }
 }
 void MoveMasterDriver::receive(const CANPacket &packet) {
@@ -155,7 +200,8 @@ void MoveMasterDriver::receive(const CANPacket &packet) {
   for (std::size_t i = 0; i < protocols_.size(); ++i) {
     const auto &p = *protocols_[i];
     const auto &j = config_.joints[i];
-    if (packet.arbitration_id == p.frames["STATUS_2"].arbitration_id(j.device_id)) {
+    const auto &ids = status_ids_[i];
+    if (packet.arbitration_id == ids.status2) {
       const auto d = p.frames["STATUS_2"].decode_payload(packet.data);
       const double pos = d.at("PRIMARY_ENCODER_POSITION").get<double>();
       const double vel = d.at("PRIMARY_ENCODER_VELOCITY").get<double>();
@@ -167,11 +213,17 @@ void MoveMasterDriver::receive(const CANPacket &packet) {
       status2_at_[i] = Clock::now();
       return;
     }
-    if (packet.arbitration_id == p.frames["STATUS_0"].arbitration_id(j.device_id)) {
+    if (packet.arbitration_id == ids.status0) {
       const auto d = p.frames["STATUS_0"].decode_payload(packet.data);
       states_[i].current = d.at("CURRENT").get<double>();
       states_[i].primary_heartbeat_lock = d.at("PRIMARY_HEARTBEAT_LOCK").get<bool>();
       status0_at_[i] = Clock::now();
+      return;
+    }
+    if (packet.arbitration_id == ids.status1) {
+      const auto d = p.frames["STATUS_1"].decode_payload(packet.data);
+      states_[i].spark_reset = d.at("HAS_RESET_STICKY_WARNING").get<bool>();
+      status1_at_[i] = Clock::now();
       return;
     }
   }
@@ -193,6 +245,24 @@ void MoveMasterDriver::wait_feedback() {
   const auto deadline = Clock::now() + std::chrono::duration<double>(config_.response_timeout_s);
   while (!feedback_fresh()) {
     if (Clock::now() >= deadline) throw TimeoutError("Fresh STATUS_0 and STATUS_2 required for every joint");
+    const auto rx = bus_->recv(0.005);
+    if (rx) receive(*rx);
+  }
+}
+void MoveMasterDriver::wait_status1(const std::vector<std::size_t> &joints, bool cleared) {
+  const auto since = Clock::now();
+  const auto deadline = since + std::chrono::duration<double>(
+      std::max(config_.response_timeout_s, 3 * kStatus1PeriodMs / 1000.0));
+  // The first joint without a STATUS_1 received since the call (and, if cleared, without HAS_RESET).
+  const auto missing = [&]() -> const JointConfig * {
+    for (const auto i : joints)
+      if (!status1_at_[i] || *status1_at_[i] < since || (cleared && states_[i].spark_reset)) return &config_.joints[i];
+    return nullptr;
+  };
+  for (auto *joint = missing(); joint; joint = missing()) {
+    if (Clock::now() >= deadline)
+      throw TimeoutError((cleared ? "CLEAR_FAULTS did not clear HAS_RESET on CAN "
+                                  : "STATUS_1 required from every SPARK; none from CAN ") + std::to_string(joint->device_id));
     const auto rx = bus_->recv(0.005);
     if (rx) receive(*rx);
   }
@@ -241,6 +311,17 @@ void MoveMasterDriver::set_control(std::size_t joint, ControlMode mode, int slot
       j.name + ": slot " + std::to_string(slot) + " has no MAXMotion profile");
   controls_[joint] = {mode, slot};
 }
+void MoveMasterDriver::set_current_limit(std::size_t joint, int amps) {
+  ensure_healthy();
+  require(joint < config_.joints.size(), "Unknown joint index");
+  require(amps >= 1 && amps <= 80, "Current limit must be in 1..80 A");
+  if (!configured_ || active_) throw std::logic_error("The current limit changes only while configured and not active");
+  try {
+    const SparkSetup spark(*bus_, *protocols_[joint], config_.response_timeout_s);
+    spark.write(rev::kSmartCurrentStallLimit, amps);
+    spark.write(rev::kSmartCurrentFreeLimit, amps);
+  } catch (const std::exception &e) { trip(e.what()); throw; }
+}
 void MoveMasterDriver::read() {
   ensure_healthy();
   if (!configured_) throw std::logic_error("Driver is not configured");
@@ -254,6 +335,10 @@ void MoveMasterDriver::read() {
       ++count;
     }
     if (count == rx_budget) throw std::runtime_error("RX budget exceeded; feedback could be queued/stale");
+    for (std::size_t i = 0; i < states_.size(); ++i)
+      if (states_[i].spark_reset)
+        throw std::runtime_error(config_.joints[i].name + ": the SPARK restarted (HAS_RESET); its position "
+            "and RAM configuration are lost");
     if (active_ && !feedback_fresh()) throw std::runtime_error("STATUS_0/2 watchdog expired");
   } catch (const std::exception &e) { trip(e.what()); throw; }
 }
