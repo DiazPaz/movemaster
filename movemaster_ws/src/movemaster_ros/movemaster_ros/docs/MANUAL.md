@@ -394,7 +394,8 @@ Un eje con un NEO sin reducción, en MAXMotion con el slot 0:
 ```
 
 Para agregar un eje, copia el bloque de `joint_1`, cambia el nombre (`joint_2`),
-el `can_id` y sus valores. No hay que tocar nada más.
+el `can_id` y sus valores; el procedimiento completo, con la puesta en marcha
+del SPARK, está en [4.5](#45-agregar-un-eje).
 
 Qué guarda cada nivel, la tabla de parámetros de REV y cómo pasar un archivo
 del formato anterior están en
@@ -422,6 +423,71 @@ del formato anterior están en
 - El launch lee la copia **instalada** de `joints.json`. Si la editas, vuelve a
   compilar (o compila con `--symlink-install`, ver el paso 5) o pásala con
   `joint_config:=/ruta/joints.json`.
+
+### 4.5 Agregar un eje
+
+Un eje nuevo necesita su SPARK preparado y su bloque en `joints.json`. Con
+`--symlink-install` (paso 5) no hay que compilar: el URDF, los controladores,
+el driver y `jog_node` toman los ejes de `joints.json` al arrancar. Antes, el
+bus debe estar sano: sin `bus-off` y con ≈ 60 Ω entre CANH y CANL (paso 3).
+El ejemplo agrega `joint_3`.
+
+1. **CAN ID.** Conecta ese SPARK por USB a REV Hardware Client y asígnale un
+   CAN ID que no tenga ningún otro (3 para `joint_3`).
+2. **Bloque en `joints.json`.** Copia el de un eje existente después del último,
+   separado por una coma. El nombre es el de la tabla DH (`joint_1` a
+   `joint_5`). Cambia `can_id` y pon los valores reales del eje: `gear_ratio`,
+   límites, `max_velocity_rad_s`, `zero_offset_rad` (convención de
+   [4.4](#44-cuidados)) y el bloque `spark`. `direction` es un entero.
+3. **Terminal.** Cierra todo lo que use el bus (`controller_manager`,
+   `jog_node`, `spark_console`…) y prepara las rutas:
+
+   ```bash
+   source /opt/ros/jazzy/setup.bash && source ~/movemaster/movemaster_ws/install/setup.bash
+   sudo ip link set can0 down && sudo ip link set can0 up
+   SPEC=$(ros2 pkg prefix --share movemaster_hardware)/spec/spark-frames-2.1.0
+   JOINTS=~/movemaster/movemaster_ws/src/movemaster_ros/movemaster_ros/movemaster_hardware/config/joints.json
+   ```
+
+4. **Revisión sin cambios.** Solo escucha el bus:
+
+   ```bash
+   ros2 run movemaster_hardware spark_commission $SPEC $JOINTS can0
+   ```
+
+   El eje nuevo debe aparecer con su CAN ID y sin aviso de heartbeat. Si dice
+   `NO RESPONDE`, revisa CAN ID, alimentación y cableado.
+5. **Puesta en marcha** ([6.1](#61-puesta-en-marcha-de-cada-spark)). Graba en
+   flash el bloque `spark` de ese eje; lo demás lo escribe el driver en RAM al
+   arrancar ([2.6](#26-qué-se-guarda-en-cada-spark)):
+
+   ```bash
+   ros2 run movemaster_hardware spark_commission $SPEC $JOINTS can0 --apply joint_3
+   ```
+
+   Debe terminar con `joint_3: guardado en flash`.
+6. **Validar sin habilitar** ([7.1](#71-driver_monitor-configurar-y-leer-sin-habilitar)):
+
+   ```bash
+   ros2 run movemaster_hardware driver_monitor $SPEC $JOINTS can0
+   ```
+
+   Gira el eje a mano: la posición debe cambiar con el signo y la magnitud
+   correctos. Si el signo sale al revés, `direction: -1`. Sal con Ctrl+C.
+7. **Arrancar:** `ros2 launch movemaster_control movemaster_control.launch.py`.
+8. **Comprobar:**
+
+   ```bash
+   ros2 control list_hardware_interfaces     # aparece joint_3/position
+   ros2 topic echo /joint_states --once      # name incluye joint_3
+   ```
+
+9. **Primer movimiento, despacio.** Con `rqt_joint_trajectory_controller` (un
+   slider por eje y velocidad ajustable) o con el jog del teach pendant
+   ([11.3](#113-mover-con-el-teach-pendant-jog)), y con RViz abierto
+   ([9.1](#91-ver-el-brazo-en-rviz)) para confirmar que el modelo y el brazo
+   giran en el mismo sentido. Desde ese momento, los goals de la acción llevan
+   también el eje nuevo ([11.2](#112-mover)).
 
 ---
 
@@ -759,8 +825,11 @@ ros2 topic pub --once /joint_trajectory_controller/joint_trajectory \
   "{joint_names: [joint_1], points: [{positions: [0.0], time_from_start: {sec: 3}}]}"
 ```
 
-Con varios ejes, `joint_names` y `positions` llevan un valor por eje en el mismo
-orden. `time_from_start` debe dar tiempo. En modo `maxmotion` el SPARK no
+`joint_names` debe incluir **todos** los ejes de `joints.json`: el JTC rechaza
+un goal al que le falte alguno. `positions` lleva un valor por eje en el mismo
+orden y son absolutas: para mover un solo eje, lee las posiciones con
+`ros2 topic echo /joint_states --once --field position` y repite las de los
+demás. `time_from_start` debe dar tiempo. En modo `maxmotion` el SPARK no
 supera la `cruise_velocity` del slot, así que un movimiento demasiado rápido
 llega tarde y la acción espera a que el eje se detenga. En modo `position` no
 hay ese límite: si el eje se queda más de `max_following_error_rad` atrás, el
