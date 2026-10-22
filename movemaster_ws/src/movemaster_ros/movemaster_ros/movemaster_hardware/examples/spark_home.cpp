@@ -181,9 +181,11 @@ int measure(Driver &driver, const DriverConfig &config, std::size_t index, const
 
 #ifndef MOVEMASTER_HOME_NO_MAIN
 int main(int argc, char **argv) {
-  if (argc < 4) {
+  // An option among the first three arguments means an empty $SPEC or $JOINTS shifted them.
+  if (argc < 4 || argv[1][0] == '-' || argv[2][0] == '-' || argv[3][0] == '-') {
     std::cerr << "Uso: spark_home SPEC.json JOINTS.json can0 [--measure joint_N [+|-]]\n"
-        << "Sin --measure muestra que SPARK se reiniciaron, sin habilitar motores.\n";
+        << "Sin --measure muestra que SPARK se reiniciaron, sin habilitar motores.\n"
+        << "Si usas $SPEC y $JOINTS, definelos en esta terminal (MANUAL 4.5, paso 3).\n";
     return 2;
   }
   try {

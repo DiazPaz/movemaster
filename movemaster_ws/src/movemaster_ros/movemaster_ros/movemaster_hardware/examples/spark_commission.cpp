@@ -81,9 +81,11 @@ inline int run(const DriverConfig &config, const Request &request, CANBus &bus, 
 
 #ifndef MOVEMASTER_COMMISSION_NO_MAIN
 int main(int argc, char **argv) {
-  if (argc < 4) {
+  // An option among the first three arguments means an empty $SPEC or $JOINTS shifted them.
+  if (argc < 4 || argv[1][0] == '-' || argv[2][0] == '-' || argv[3][0] == '-') {
     std::cerr << "Uso: spark_commission SPEC.json JOINTS.json can0 [--apply] [joint ...]\n"
-        << "Sin --apply solo escucha el bus y muestra lo que quedaria en la flash.\n";
+        << "Sin --apply solo escucha el bus y muestra lo que quedaria en la flash.\n"
+        << "Si usas $SPEC y $JOINTS, definelos en esta terminal (MANUAL 4.5, paso 3).\n";
     return 2;
   }
   try {

@@ -890,8 +890,9 @@ kernel `PREEMPT_RT`.
   `ros2 launch movemaster_control movemaster_control.launch.py 2>&1 | tee ~/movemaster_launch.log`.
 - **Busca la primera línea `[MovemasterHardware]`.** Los errores que vienen
   después (`No state interfaces found to publish`, `Failed to activate
-  controller : joint_state_broadcaster`, el spawner que muere) son
-  consecuencia: el hardware ya se había desactivado.
+  controller : joint_state_broadcaster`, `Not acceptable command interfaces
+  combination`, el spawner que muere) son consecuencia: el hardware ya se había
+  desactivado.
 - **No hace falta cerrar terminales.** Antes de volver a lanzar, comprueba que
   no quede un proceso viejo enviando heartbeat o leyendo el bus:
   `pgrep -af 'ros2_control_node|spark_console|driver_monitor|teach_pendant'`
@@ -974,7 +975,10 @@ Detalle, parámetros y prueba sin ESP32:
 
 **Detener**: `Ctrl+C` en la terminal del launch. El hardware deja de enviar
 heartbeat y el watchdog del SPARK deshabilita los motores. El brazo puede caer
-por gravedad al perder el par.
+por gravedad al perder el par. Al cerrar, sobre todo después de un fallo,
+ros2_control puede imprimir `... (hint: multiple cleanup calls)` o
+`pal_statistics ... context cannot be slept with`: vienen de su propio apagado y
+no indican un problema.
 
 **Fallos**: el driver **enclava** cualquier fallo (ACK incorrecto, telemetría
 vencida, objetivo fuera de límites, lazo detenido, error de CAN):
@@ -995,11 +999,14 @@ La reactivación crea un driver nuevo, repite la configuración de los SPARK y
 vuelve a mantener la posición medida.
 
 **Paro de emergencia o corte de alimentación**: los SPARK se apagan y pierden
-la posición. El driver enclava un fallo (vence la telemetría o, si el corte fue
-breve, `the SPARK restarted (HAS_RESET)`) y después ya no permite reactivar:
-`joint_1: the SPARK restarted (power cut or emergency stop) and lost its
-position; power it up with the arm in Home and restart the node`. El SPARK
-cuenta desde que enciende, así que el brazo debe estar en Home **al encenderlo**:
+la posición. Sin ellos nadie confirma (ACK) las tramas del bus, la cola de
+transmisión se llena y el driver enclava un fallo en milisegundos:
+`write(SocketCAN): TX queue full; no SPARK acknowledges frames ...`. Con un
+corte breve puede ser `STATUS_0/2 watchdog expired` o `the SPARK restarted
+(HAS_RESET)`. Después ya no permite reactivar: `joint_1: the SPARK restarted
+(power cut or emergency stop) and lost its position; power it up with the arm in
+Home and restart the node`. El SPARK cuenta desde que enciende, así que el brazo
+debe estar en Home **al encenderlo**:
 
 1. cierra el nodo (Ctrl+C);
 2. con el paro de emergencia presionado, lleva el brazo a Home;
@@ -1008,6 +1015,10 @@ cuenta desde que enciende, así que el brazo debe estar en Home **al encenderlo*
 Al configurar, el log confirma qué SPARK tomaron su postura de encendido como
 referencia: `joint_1: SPARK powered up; its zero is the pose it powered up in,
 which zero_offset_rad assumes is Home.`
+
+Las tramas que quedaron en la cola salen en cuanto los SPARK encienden. No
+mueven nada: los SPARK arrancan con el PID de fábrica, en 0, porque la flash
+solo guarda el baseline ([2.6](#26-qué-se-guarda-en-cada-spark)).
 
 Deshabilitar sin cerrar el nodo. Cambiar el estado del hardware no desactiva los
 controladores, así que primero se desactiva el JTC y al volver se activa al final:
@@ -1283,6 +1294,7 @@ Ninguno de los dos se modifica.
 | `Parameter ACK mismatch: CAN 1, p` | El SPARK no aceptó o no confirmó el valor de un parámetro. | Revisa el valor en `joints.json` y el firmware. Si el parámetro es `motor_type`, `idle_mode`, `smart_current_*`, `output_min` u `output_max`, anótalo: son IDs que aún no se habían probado con un SPARK real. |
 | `Fresh STATUS_0 and STATUS_2 required for every joint` | Al activar, falta telemetría reciente de algún eje. | Revisa cableado, `status_period_ms` y que todos los ejes respondan en `driver_monitor`. |
 | `STATUS_0/2 watchdog expired` | Se dejó de recibir telemetría con el brazo activo. | Cable o alimentación; luego recupera (paso 9). |
+| `write(SocketCAN): TX queue full; no SPARK acknowledges frames ...` (antes, `write(SocketCAN): No buffer space available`) | Ningún SPARK confirma las tramas: paro de emergencia presionado, SPARK sin alimentación o bus desconectado. | Si fue el paro, recupera como en el [paso 9](#12-paso-9--detener-fallos-y-recuperación). Si no, revisa alimentación y cableado con `candump can0`. |
 | `joint_1: the SPARK restarted (HAS_RESET); its position and RAM configuration are lost` | El SPARK se reinició con el brazo activo: un corte breve o una caída de tensión. | Revisa la alimentación y las conexiones de ese SPARK; después, como la fila siguiente. |
 | `joint_1: the SPARK restarted (power cut or emergency stop) and lost its position; ...` al recuperar | El SPARK se apagó y volvió a encender con el nodo vivo: cuenta desde otra postura. | Cierra el nodo, lleva el brazo a Home con el paro presionado, suéltalo y vuelve a lanzar ([paso 9](#12-paso-9--detener-fallos-y-recuperación)). |
 | `joint_1: SPARK powered up; its zero is the pose it powered up in, ...` (advertencia) | Normal en el primer arranque tras encender los SPARK. | Nada, si se encendieron en Home ([4.4](#44-cuidados)). Si no, la posición en ROS está desplazada: cierra el nodo y enciende los SPARK en Home. |

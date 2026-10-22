@@ -72,7 +72,14 @@ void SocketCAN::send(const CANPacket &packet, double timeout) {
   // Runtime callers pass zero: never wait for a congested bus in read()/write().
   if (!ready(POLLOUT, timeout)) throw TimeoutError("SocketCAN TX timeout");
   const auto n = ::write(fd_, &frame, sizeof(frame));
-  if (n < 0) fail("write(SocketCAN)");
+  if (n < 0) {
+    // The interface queue fills when frames stop leaving the adapter: on this bus, because no
+    // SPARK acknowledges them.
+    if (errno == ENOBUFS)
+      throw std::runtime_error("write(SocketCAN): TX queue full; no SPARK acknowledges frames (powered off, "
+          "e.g. by the emergency stop, or bus disconnected)");
+    fail("write(SocketCAN)");
+  }
   if (n != sizeof(frame)) throw std::runtime_error("Short SocketCAN write");
 }
 std::optional<CANPacket> SocketCAN::recv(double timeout) {

@@ -69,13 +69,38 @@ Contra la documentación de REV: REVLib 2026 (`robotpy-rev` 2026.0.4) dice de
 cleared with SparkBase::clearFaults()"; `hasReset` es uno de esos avisos. Es lo
 que hace el driver con `CLEAR_FAULTS`.
 
+### En el robot
+
+21 de octubre de 2026. Raspberry Pi 5 con Ubuntu 24.04 y ROS 2 Jazzy, cuatro
+SPARK MAX (CAN 1 a 4).
+
+- **Compilación con colcon:** correcta. Solo queda el aviso conocido de
+  `on_init(const HardwareInfo &)`.
+- **`spark_home` sin `--measure`:** recién encendidos, los cuatro SPARK dieron
+  `reiniciado` en 0.000 rad; en la segunda corrida, `sin reinicio`. Confirma que
+  el SPARK enciende con `HAS_RESET`, que `CLEAR_FAULTS` lo borra y que los cuatro
+  envían `STATUS_1` y aceptan el ID 159. Entre las dos corridas se movió el brazo
+  a mano (`joint_2` 6.2°, `joint_3` 2.8°): el encoder sigue contando mientras el
+  SPARK tiene alimentación, también con los motores sin habilitar.
+- **Arranque del nodo:** un aviso `SPARK powered up` por eje.
+- **Paro de emergencia con el nodo activo:** el driver enclavó un fallo en el
+  primer ciclo, con `write(SocketCAN): No buffer space available`. Sin SPARK
+  encendidos nadie confirma las tramas y se llena la cola de transmisión, antes
+  de que venza la telemetría (0.3 s). El hardware y los controladores se
+  desactivaron. Al soltar el paro, la reactivación se negó con `the SPARK
+  restarted (power cut or emergency stop)`. Con el paro presionado se llevó el
+  brazo a Home; al soltarlo y relanzar, el nodo arrancó con los cuatro avisos.
+
+Esta prueba corrigió dos cosas: el manual esperaba que el primer fallo del paro
+fuera el de la telemetría o `HAS_RESET`, y el mensaje del sistema operativo no
+decía la causa. Ahora es `write(SocketCAN): TX queue full; no SPARK
+acknowledges frames (powered off, e.g. by the emergency stop, or bus
+disconnected)`.
+
 **Pendiente en el equipo de destino:**
 
-- Que el SPARK encienda con `HAS_RESET` y que `CLEAR_FAULTS` lo borre. Si no, el
-  driver se detiene al configurar con `CLEAR_FAULTS did not clear HAS_RESET`.
 - Las corrientes reales en movimiento libre y contra cada tope, para ajustar
   `stall_current_a` y `current_limit_a` de cada eje.
-- Compilación con colcon y el aviso de reinicio en el log del plugin.
 
 ## Compilación con ROS 2 Jazzy real
 
