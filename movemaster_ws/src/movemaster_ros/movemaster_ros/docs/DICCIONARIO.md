@@ -288,6 +288,12 @@ reducción del sistema: los factores de conversión del SPARK quedan en 1.0.
 Hardware simulado de `ros2_control`: copia el comando al estado sin física. Se
 activa con `use_mock_hardware:=true` y arranca en Home.
 
+**gripper-frames-1.0.0 (spec)**
+Catálogo de las tramas CAN del gripper (ESP32 con la muñeca y la pinza), en
+`movemaster_hardware/spec/`. Tiene el formato del JSON de REV, así que
+`SparkFrameDatabase` lo lee igual que `spark-frames-2.1.0`. Es propio del
+proyecto y debe coincidir con el firmware de `tools/esp32_tmc2209/`.
+
 ## H
 
 **hardware_interface**
@@ -303,6 +309,8 @@ reiniciado perdió su posición y su configuración en RAM. MANUAL §7.3 y §12.
 Trama global `0x01011840` con 8 bytes `FF` que el driver envía en cada ciclo
 activo después de los setpoints. Mientras llega, los SPARK están habilitados;
 si deja de llegar, su watchdog los deshabilita. Solo debe haber un emisor.
+El gripper no lo escucha: tiene su propio `HEARTBEAT` (`0x0A080C05`, en
+`gripper-frames-1.0.0`), para que probarlo no habilite a los SPARK.
 
 **Home**
 Postura de referencia del brazo, columna `home_deg` de `dh.yaml`:

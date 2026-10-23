@@ -40,6 +40,7 @@ movemaster_ws/                                  workspace de colcon (desde aquí
             │   ├── config/joints.json          calibración de los ejes  ← lo editas tú
             │   ├── config/ros2_control.xacro   bloque <ros2_control> del URDF
             │   ├── spec/spark-frames-2.1.0     descripción de las tramas CAN de REV
+            │   ├── spec/gripper-frames-1.0.0   tramas CAN del gripper (ESP32), en el mismo formato
             │   ├── spec/SparkParameters-v0.1.2.md   tabla de parámetros del SPARK (ID, tipo, fábrica)
             │   ├── docs/                       PARAMETROS, API, diagrama de clases, consola, validación
             │   ├── examples/                   programas sin ROS: demo, monitor, consola, puesta en marcha, homing
@@ -1249,8 +1250,14 @@ argumentos y una `OpaqueFunction` que, ya con los valores resueltos:
   en C++ (`DEFAULT_PARAMETER_LAYOUT` y `spark_setup.hpp`), y `setup_test` los
   compara con esta tabla en cada compilación. Su "Status Period" dice μs, pero
   la unidad real es ms.
+- **`gripper-frames-1.0.0`**: catálogo propio de las tramas del gripper (ESP32,
+  dispositivo 5), escrito con el mismo formato que el JSON de REV para que
+  `SparkFrameDatabase` lo lea igual. Usa el tipo 10 (*Miscellaneous*) y el
+  fabricante 8 (*Team Use*), que FRC reserva para dispositivos propios. Es el
+  contrato con el firmware de `tools/esp32_tmc2209/`: si cambia una trama, se
+  cambian los dos juntos.
 
-Ninguno de los dos se modifica.
+Los dos archivos de REV no se modifican.
 
 ### 13.11 Programas de ejemplo y pruebas
 
