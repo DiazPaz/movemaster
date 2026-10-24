@@ -48,7 +48,7 @@ const int PIN_CAN_RX = 22;
 const int PASOS_MOTOR = 200;  // pasos por vuelta del motor: 200 si es de 1.8°, 400 si es de 0.9°
 // Debe coincidir con MS1/MS2: 8, 16, 32 o 64. Sin UART el TMC2209 no trabaja en paso completo;
 // 1 solo si lo configuras por UART.
-const int MICROPASOS = 8;
+const int MICROPASOS = 64;
 // Vueltas del motor por cada vuelta de la muñeca: 5.0 para una reducción 5:1. Con varias
 // etapas, multiplícalas (por ejemplo 3.0 * 4.0).
 const float REDUCCION = 1.0;
@@ -56,8 +56,8 @@ const bool INVERTIR_MUNECA = false;  // true si la reducción invierte el sentid
 const float PASOS_POR_GRADO = PASOS_MOTOR * MICROPASOS * REDUCCION / 360;
 const float LIMITE_GRADOS = 360;     // recorrido permitido: -360° a 360°
 
-const float VEL_INICIAL = 100;   // pasos/s con que arranca y termina la rampa
-const float VEL_MAXIMA = 20000;  // límite del generador de pasos
+const float VEL_INICIAL = 15000;   // pasos/s con que arranca y termina la rampa
+const float VEL_MAXIMA = 15000;  // límite del generador de pasos
 
 const int SERVO_FRECUENCIA = 50;   // Hz, periodo de 20 ms
 const int SERVO_RESOLUCION = 14;   // bits del PWM
