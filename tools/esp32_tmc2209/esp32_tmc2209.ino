@@ -5,7 +5,8 @@
 //   Tipo 10 (Miscellaneous) | Fabricante 8 (Team Use) | Clase | Índice | Dispositivo 5
 //   ID = 0x0A080000 | clase << 10 | índice << 6 | 5
 //
-// Tramas (bus a 1 Mbit/s, datos little-endian):
+// Tramas (bus a 1 Mbit/s, datos little-endian). La referencia completa, con cada señal, es el
+// catálogo movemaster_hardware/spec/gripper-frames-1.0.0:
 //   clase,índice  ID          dirección    trama                    datos
 //   0,0           0x0A080005  Pi -> ESP32  WRIST_POSITION_SETPOINT  float32 objetivo en grados
 //   0,1           0x0A080045  Pi -> ESP32  SERVO_SETPOINT           uint8 ángulo (0 a 180)
@@ -14,17 +15,19 @@
 //   1,1           0x0A080445  Pi -> ESP32  SET_WRIST_POSITION       float32 grados actuales
 //   2,0           0x0A080805  ESP32 -> Pi  STATUS_0, cada 20 ms     float32 grados, uint8 servo,
 //                                                                   uint8 banderas, 2 reservados
-//   -             0x01011840  Pi -> todos  heartbeat                el que habilita a los SPARK
+//   3,0           0x0A080C05  Pi -> ESP32  HEARTBEAT, cada 10-20 ms sin datos: habilita al gripper
 //
 // Banderas de STATUS_0: bit 0 driver energizado, bit 1 muñeca en movimiento, bit 2 heartbeat
 // presente, bit 3 posición sin referencia (desde el arranque hasta SET_WRIST_POSITION),
 // bit 4 servo con señal.
 //
-// Seguridad: los setpoints (clase 0) solo se aceptan con heartbeat; la configuración (clase 1)
-// siempre. Si pasan 100 ms sin heartbeat, la muñeca se detiene en seco y mantiene su torque, y
-// el servo se queda en su último ángulo. Al volver el heartbeat nada se mueve hasta recibir un
-// setpoint nuevo. Al arrancar, el driver está apagado hasta el primer heartbeat y el servo no
-// recibe señal hasta su primer setpoint, así que nada se mueve solo.
+// Seguridad: el gripper tiene su propio HEARTBEAT y no escucha el global de los SPARK MAX
+// (0x01011840), así que probarlo no habilita al brazo. Los setpoints (clase 0) solo se aceptan
+// con heartbeat; la configuración (clase 1) siempre. Si pasan 100 ms sin heartbeat, la muñeca se
+// detiene en seco y mantiene su torque, y el servo se queda en su último ángulo. Al volver el
+// heartbeat nada se mueve hasta recibir un setpoint nuevo. Al arrancar, el driver está apagado
+// hasta el primer heartbeat y el servo no recibe señal hasta su primer setpoint, así que nada se
+// mueve solo.
 //
 // Conexiones:
 //   GPIO 27 -> STEP del TMC2209   (VIO a 3V3, VM a 12 V, MS1 y MS2 a GND: 1/8 de micropaso)
@@ -68,7 +71,6 @@ const int SERVO_US_MAX = 2500;     // pulso en 180°
 const uint32_t CAN_TIPO = 10;        // Miscellaneous
 const uint32_t CAN_FABRICANTE = 8;   // Team Use: reservado por FRC para dispositivos propios
 const uint32_t CAN_DISPOSITIVO = 5;
-const uint32_t CAN_HEARTBEAT = 0x01011840;
 const unsigned long HEARTBEAT_TIMEOUT_MS = 100;
 const unsigned long PERIODO_STATUS_MS = 20;
 
@@ -79,6 +81,7 @@ const uint32_t API_STOP = (0 << 4) | 2;
 const uint32_t API_SET_MOTION_PROFILE = (1 << 4) | 0;
 const uint32_t API_SET_WRIST_POSITION = (1 << 4) | 1;
 const uint32_t API_STATUS_0 = (2 << 4) | 0;
+const uint32_t API_HEARTBEAT = (3 << 4) | 0;
 
 constexpr uint32_t idCan(uint32_t api) {
   return (CAN_TIPO << 24) | (CAN_FABRICANTE << 16) | (api << 6) | CAN_DISPOSITIVO;
@@ -197,13 +200,13 @@ bool iniciarCan() {
       TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)PIN_CAN_TX, (gpio_num_t)PIN_CAN_RX, TWAI_MODE_NORMAL);
   general.rx_queue_len = 32;
   twai_timing_config_t tiempos = TWAI_TIMING_CONFIG_1MBITS();
-  // Filtro doble: con IDs extendidos cada filtro compara los bits 28-13 del ID. El primero deja
-  // pasar a este tipo y fabricante (clases 0 a 7) y el segundo al heartbeat. El resto del bus,
-  // como los STATUS de los SPARK MAX, se descarta por hardware.
+  // Filtro único: con IDs extendidos compara el ID en los bits 31-3; un 1 en la máscara es "no
+  // importa". Deja pasar cualquier clase e índice de este dispositivo y descarta por hardware el
+  // resto del bus, como los SPARK MAX y su heartbeat.
   twai_filter_config_t filtro = {
-      .acceptance_code = ((idCan(0) >> 13) << 16) | (CAN_HEARTBEAT >> 13),
-      .acceptance_mask = 0,
-      .single_filter = false,
+      .acceptance_code = idCan(0) << 3,
+      .acceptance_mask = (0x3FFUL << 6) << 3 | 0x7,
+      .single_filter = true,
   };
   return twai_driver_install(&general, &tiempos, &filtro) == ESP_OK && twai_start() == ESP_OK;
 }
@@ -238,20 +241,19 @@ void procesar(uint32_t api, const uint8_t *datos, uint8_t n) {
         sinReferencia = false;
       }
       break;
+    case API_HEARTBEAT:
+      ultimoHeartbeat = millis();
+      if (!heartbeat) energizar(true);
+      heartbeat = true;
+      break;
   }
 }
 
 void atenderCan() {
   twai_message_t msg;
   while (twai_receive(&msg, 0) == ESP_OK) {
-    if (!msg.extd || msg.rtr) continue;
-    if (msg.identifier == CAN_HEARTBEAT) {
-      ultimoHeartbeat = millis();
-      if (!heartbeat) energizar(true);
-      heartbeat = true;
-    } else if ((msg.identifier & ~(0x3FFUL << 6)) == idCan(0)) {
-      procesar((msg.identifier >> 6) & 0x3FF, msg.data, msg.data_length_code);
-    }
+    if (!msg.extd || msg.rtr || (msg.identifier & ~(0x3FFUL << 6)) != idCan(0)) continue;
+    procesar((msg.identifier >> 6) & 0x3FF, msg.data, msg.data_length_code);
   }
 }
 

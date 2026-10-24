@@ -61,6 +61,7 @@ uso está en [../docs/MANUAL.md](../docs/MANUAL.md) y los términos en
 | `config/joints.json` | Calibración y control de los ejes del banco. |
 | `config/ros2_control.xacro` | Macro que declara el bloque `<ros2_control>` a partir de `joints.json`; admite hardware simulado. |
 | `spec/spark-frames-2.1.0` | Tu archivo REV JSON, sin cambios de contenido. |
+| `spec/gripper-frames-1.0.0` | Catálogo propio de las tramas CAN del gripper (ESP32, dispositivo 5), con el formato del JSON de REV: lo leen `SparkFrameDatabase` en C++ y la librería Python. Debe coincidir con el firmware de `tools/esp32_tmc2209/`. |
 | `spec/SparkParameters-v0.1.2.md` | Tabla de parámetros del SPARK (ID, tipo, fábrica), sin cambios; las pruebas comparan con ella los IDs del código. |
 | `examples/protocol_demo.cpp` | Construcción de tramas sin abrir CAN. |
 | `examples/driver_monitor.cpp` | Configuración RAM y lectura de telemetría, sin habilitación. |

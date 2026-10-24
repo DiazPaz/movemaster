@@ -1,0 +1,248 @@
+{
+    "frcJsonSpecVersion": "1.0.0",
+    "framesVersion": "1.0.0",
+    "deviceInfo": { "deviceType": "Miscellaneous", "deviceTypeNumber": 10, "manufacturer": "Team Use", "manufacturerNumber": 8 },
+    "periodicFrames": {
+        "STATUS_0": {
+            "name": "Status 0",
+            "description": "Estado del gripper. La ESP32 la envía cada 20 ms, con o sin heartbeat",
+            "apiClass": 2,
+            "apiIndex": 0,
+            "arbId": 168298496,
+            "lengthBytes": 8,
+            "signals": {
+                "WRIST_POSITION": {
+                    "type": "float",
+                    "name": "Wrist Position",
+                    "description": "Posición de la muñeca respecto a la referencia fijada con SET_WRIST_POSITION",
+                    "bitPosition": 0,
+                    "isBigEndian": false,
+                    "lengthBits": 32,
+                    "decodeScaleFactor": 1,
+                    "offset": 0,
+                    "unit": "deg"
+                },
+                "SERVO_ANGLE": {
+                    "type": "uint",
+                    "name": "Servo Angle",
+                    "description": "Último ángulo mandado al servo; 90 al arrancar, aunque todavía no tenga señal",
+                    "bitPosition": 32,
+                    "isBigEndian": false,
+                    "lengthBits": 8,
+                    "decodeScaleFactor": 1,
+                    "offset": 0,
+                    "unit": "deg",
+                    "encodedMin": 0,
+                    "encodedMax": 180
+                },
+                "DRIVER_ENERGIZED": {
+                    "type": "boolean",
+                    "name": "Driver Energized",
+                    "description": "El TMC2209 está habilitado y la muñeca tiene torque. Se activa con el primer HEARTBEAT y ya no se apaga",
+                    "bitPosition": 40,
+                    "isBigEndian": false,
+                    "lengthBits": 1,
+                    "decodeScaleFactor": 1,
+                    "offset": 0,
+                    "encodedMin": 0,
+                    "encodedMax": 1
+                },
+                "WRIST_MOVING": {
+                    "type": "boolean",
+                    "name": "Wrist Moving",
+                    "description": "La muñeca se mueve o todavía no llega a su objetivo",
+                    "bitPosition": 41,
+                    "isBigEndian": false,
+                    "lengthBits": 1,
+                    "decodeScaleFactor": 1,
+                    "offset": 0,
+                    "encodedMin": 0,
+                    "encodedMax": 1
+                },
+                "HEARTBEAT_PRESENT": {
+                    "type": "boolean",
+                    "name": "Heartbeat Present",
+                    "description": "Llega HEARTBEAT. Tras 100 ms sin él, la muñeca se detiene y los setpoints se ignoran",
+                    "bitPosition": 42,
+                    "isBigEndian": false,
+                    "lengthBits": 1,
+                    "decodeScaleFactor": 1,
+                    "offset": 0,
+                    "encodedMin": 0,
+                    "encodedMax": 1
+                },
+                "NOT_REFERENCED": {
+                    "type": "boolean",
+                    "name": "Not Referenced",
+                    "description": "La posición no tiene referencia: se activa al arrancar la ESP32 y se borra con SET_WRIST_POSITION",
+                    "bitPosition": 43,
+                    "isBigEndian": false,
+                    "lengthBits": 1,
+                    "decodeScaleFactor": 1,
+                    "offset": 0,
+                    "encodedMin": 0,
+                    "encodedMax": 1
+                },
+                "SERVO_ACTIVE": {
+                    "type": "boolean",
+                    "name": "Servo Active",
+                    "description": "El servo recibe señal PWM, desde su primer SERVO_SETPOINT",
+                    "bitPosition": 44,
+                    "isBigEndian": false,
+                    "lengthBits": 1,
+                    "decodeScaleFactor": 1,
+                    "offset": 0,
+                    "encodedMin": 0,
+                    "encodedMax": 1
+                },
+                "RESERVED": {
+                    "type": "uint",
+                    "name": "Reserved",
+                    "bitPosition": 45,
+                    "isBigEndian": false,
+                    "lengthBits": 19,
+                    "decodeScaleFactor": 1,
+                    "offset": 0
+                }
+            },
+            "versionImplemented": "1.0.0",
+            "broadcast": false,
+            "defaultPeriodMs": 20,
+            "enabledByDefault": true
+        }
+    },
+    "nonPeriodicFrames": {
+        "WRIST_POSITION_SETPOINT": {
+            "name": "Wrist Position Setpoint",
+            "description": "Mueve la muñeca a una posición absoluta con el perfil de SET_MOTION_PROFILE. Solo se acepta con heartbeat",
+            "apiClass": 0,
+            "apiIndex": 0,
+            "arbId": 168296448,
+            "lengthBytes": 4,
+            "signals": {
+                "SETPOINT": {
+                    "type": "float",
+                    "name": "Setpoint",
+                    "description": "Objetivo de la muñeca; la ESP32 lo recorta a ±360°",
+                    "bitPosition": 0,
+                    "isBigEndian": false,
+                    "lengthBits": 32,
+                    "decodeScaleFactor": 1,
+                    "offset": 0,
+                    "unit": "deg"
+                }
+            },
+            "versionImplemented": "1.0.0",
+            "broadcast": false,
+            "rtr": false
+        },
+        "SERVO_SETPOINT": {
+            "name": "Servo Setpoint",
+            "description": "Lleva el servo del gripper a un ángulo. Solo se acepta con heartbeat",
+            "apiClass": 0,
+            "apiIndex": 1,
+            "arbId": 168296512,
+            "lengthBytes": 1,
+            "signals": {
+                "ANGLE": {
+                    "type": "uint",
+                    "name": "Angle",
+                    "bitPosition": 0,
+                    "isBigEndian": false,
+                    "lengthBits": 8,
+                    "decodeScaleFactor": 1,
+                    "offset": 0,
+                    "unit": "deg",
+                    "encodedMin": 0,
+                    "encodedMax": 180
+                }
+            },
+            "versionImplemented": "1.0.0",
+            "broadcast": false,
+            "rtr": false
+        },
+        "STOP": {
+            "name": "Stop",
+            "description": "Frena la muñeca con la rampa de desaceleración. Se acepta siempre",
+            "apiClass": 0,
+            "apiIndex": 2,
+            "arbId": 168296576,
+            "lengthBytes": 0,
+            "signals": {},
+            "versionImplemented": "1.0.0",
+            "broadcast": false,
+            "rtr": false
+        },
+        "SET_MOTION_PROFILE": {
+            "name": "Set Motion Profile",
+            "description": "Perfil trapezoidal de la muñeca. Se acepta sin heartbeat",
+            "apiClass": 1,
+            "apiIndex": 0,
+            "arbId": 168297472,
+            "lengthBytes": 8,
+            "signals": {
+                "MAX_VELOCITY": {
+                    "type": "float",
+                    "name": "Max Velocity",
+                    "description": "Mayor que 0; la ESP32 la limita a su máximo de pasos por segundo",
+                    "bitPosition": 0,
+                    "isBigEndian": false,
+                    "lengthBits": 32,
+                    "decodeScaleFactor": 1,
+                    "offset": 0,
+                    "unit": "deg/s"
+                },
+                "MAX_ACCELERATION": {
+                    "type": "float",
+                    "name": "Max Acceleration",
+                    "description": "Mayor que 0",
+                    "bitPosition": 32,
+                    "isBigEndian": false,
+                    "lengthBits": 32,
+                    "decodeScaleFactor": 1,
+                    "offset": 0,
+                    "unit": "deg/s^2"
+                }
+            },
+            "versionImplemented": "1.0.0",
+            "broadcast": false,
+            "rtr": false
+        },
+        "SET_WRIST_POSITION": {
+            "name": "Set Wrist Position",
+            "description": "Define la posición actual de la muñeca sin moverla y borra NOT_REFERENCED. Solo con la muñeca detenida; se acepta sin heartbeat",
+            "apiClass": 1,
+            "apiIndex": 1,
+            "arbId": 168297536,
+            "lengthBytes": 4,
+            "signals": {
+                "POSITION": {
+                    "type": "float",
+                    "name": "Position",
+                    "description": "Dentro de ±360°; fuera de ese rango se ignora",
+                    "bitPosition": 0,
+                    "isBigEndian": false,
+                    "lengthBits": 32,
+                    "decodeScaleFactor": 1,
+                    "offset": 0,
+                    "unit": "deg"
+                }
+            },
+            "versionImplemented": "1.0.0",
+            "broadcast": false,
+            "rtr": false
+        },
+        "HEARTBEAT": {
+            "name": "Heartbeat",
+            "description": "Habilita al gripper; enviar cada 10 a 20 ms. Tras 100 ms sin ella, la muñeca se detiene con torque y el servo conserva su ángulo. Es independiente del heartbeat global de los SPARK MAX (0x01011840)",
+            "apiClass": 3,
+            "apiIndex": 0,
+            "arbId": 168299520,
+            "lengthBytes": 0,
+            "signals": {},
+            "versionImplemented": "1.0.0",
+            "broadcast": false,
+            "rtr": false
+        }
+    }
+}
