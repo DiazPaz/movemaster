@@ -13,10 +13,14 @@ JOG = 'jog_controller'
 
 
 class ControllerSelector:
-    """Asks for one switch at a time and waits retry_s after a failed one."""
+    """Asks for one switch at a time and waits retry_s after a failed one.
 
-    def __init__(self, retry_s, active=TRAJECTORY):
-        self.active = active    # controller in command, as last seen; None: neither
+    The active controller starts unknown (None) and comes from the controller_manager's list
+    (seen()): at startup the spawners may not have loaded the controllers yet.
+    """
+
+    def __init__(self, retry_s, active=None):
+        self.active = active    # controller in command, as last seen; None: neither or unknown
         self.pending = None     # controller being switched to
         self.holding = False    # MANUAL waits for a running trajectory to finish
         self.generation = 0     # switches finished, to drop controller lists older than one

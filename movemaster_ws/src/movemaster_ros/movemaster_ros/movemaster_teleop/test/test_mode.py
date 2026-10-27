@@ -7,8 +7,17 @@ MANUAL = PendantFrame(manual=True)
 AUTO = PendantFrame(manual=False)
 
 
-def test_manual_hands_the_joints_to_the_jog_and_auto_gives_them_back():
+def test_nothing_is_switched_before_the_controllers_are_listed():
+    # At startup the switch may already be in MANUAL while the spawners still load the
+    # controllers: asking then would be refused.
     selector = ControllerSelector(retry_s=1.0)
+    assert selector.request(MANUAL, False, DT) is None
+    selector.seen({TRAJECTORY}, selector.generation)
+    assert selector.request(MANUAL, False, DT) == (JOG, TRAJECTORY)
+
+
+def test_manual_hands_the_joints_to_the_jog_and_auto_gives_them_back():
+    selector = ControllerSelector(retry_s=1.0, active=TRAJECTORY)
     assert selector.request(AUTO, False, DT) is None  # already in AUTO
     assert selector.request(MANUAL, False, DT) == (JOG, TRAJECTORY)
     assert selector.request(MANUAL, False, DT) is None  # one switch at a time
@@ -27,14 +36,14 @@ def test_a_silent_pendant_switches_nothing():
 
 
 def test_manual_waits_for_a_running_trajectory():
-    selector = ControllerSelector(retry_s=1.0)
+    selector = ControllerSelector(retry_s=1.0, active=TRAJECTORY)
     assert selector.request(MANUAL, True, DT) is None and selector.holding
     assert selector.request(MANUAL, False, DT) == (JOG, TRAJECTORY)
     assert not selector.holding
 
 
 def test_a_refused_switch_is_retried_after_retry_s():
-    selector = ControllerSelector(retry_s=0.1)
+    selector = ControllerSelector(retry_s=0.1, active=TRAJECTORY)
     assert selector.request(MANUAL, False, DT) == (JOG, TRAJECTORY)
     selector.finished(ok=False)
     assert selector.active == TRAJECTORY
@@ -43,7 +52,7 @@ def test_a_refused_switch_is_retried_after_retry_s():
 
 
 def test_follows_the_controllers_the_manager_lists():
-    selector = ControllerSelector(retry_s=1.0)
+    selector = ControllerSelector(retry_s=1.0, active=TRAJECTORY)
     selector.seen({'joint_state_broadcaster', JOG}, selector.generation)
     assert selector.active == JOG  # switched by hand with ros2 control
     # A fault deactivates both: the pendant does not bring the arm back.
@@ -54,7 +63,7 @@ def test_follows_the_controllers_the_manager_lists():
 
 
 def test_a_list_older_than_the_last_switch_is_ignored():
-    selector = ControllerSelector(retry_s=1.0)
+    selector = ControllerSelector(retry_s=1.0, active=TRAJECTORY)
     asked = selector.generation
     selector.request(MANUAL, False, DT)
     selector.seen({TRAJECTORY}, asked)  # answered while the switch was pending
