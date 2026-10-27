@@ -15,6 +15,7 @@ from action_msgs.msg import GoalStatus, GoalStatusArray
 from ament_index_python.packages import get_package_share_directory
 from controller_manager_msgs.srv import ListControllers, SwitchController
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import qos_profile_action_status_default
 from sensor_msgs.msg import JointState
@@ -187,7 +188,9 @@ def main():
     node = JogNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
+        # Jazzy: Ctrl+C or the launch's SIGINT shuts the context down and spin raises
+        # ExternalShutdownException instead of KeyboardInterrupt.
         pass
     finally:
         node.link.close()

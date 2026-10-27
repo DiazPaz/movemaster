@@ -82,6 +82,8 @@ class MoveMasterDriver {
   const std::vector<JointControl> &controls() const { return controls_; }
   const std::vector<JointState> &states() const { return states_; }
   bool active() const { return active_; }
+  // Setup requests configure() sent again because no reply arrived (see SparkSetup).
+  int setup_retries() const { return setup_retries_; }
   const std::string &fault() const { return fault_; }
   static double radians_to_rotations(double radians, const JointConfig &joint);
   static double rotations_to_radians(double rotations, const JointConfig &joint);
@@ -100,6 +102,7 @@ class MoveMasterDriver {
   std::optional<Clock::time_point> last_tx_;
   bool configured_ = false, active_ = false;
   std::string fault_;
+  int setup_retries_ = 0;
   const CANPacket heartbeat_{kEnableHeartbeatId, Bytes(8, 0xFF), true, false, 8, "REFERENCE_HEARTBEAT"};
   void ensure_healthy() const;
   void trip(const std::string &message) noexcept;

@@ -174,6 +174,7 @@ std::vector<std::string> MoveMasterDriver::configure(SparkResetPolicy policy) {
           (enabled.at("ENABLED_BITFIELD").get<int>() & 7) != 7)
         throw std::runtime_error("Cannot enable STATUS_0/1/2");
       for (const auto &[slot, slot_config] : j.slots) spark.write_slot(slot, slot_config);
+      setup_retries_ += spark.retries();
     }
     std::vector<std::size_t> all(protocols_.size()), restarted;
     std::iota(all.begin(), all.end(), 0);

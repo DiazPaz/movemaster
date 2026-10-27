@@ -206,6 +206,7 @@ classDiagram
     -bool configured_
     -bool active_
     -string fault_
+    -int setup_retries_
     -const CANPacket heartbeat_
     +MoveMasterDriver(DriverConfig config, unique_ptr~CANBus~ bus)
     +configure(SparkResetPolicy policy) vector~string~
@@ -219,6 +220,7 @@ classDiagram
     +states() vector~JointState~
     +active() bool
     +fault() string
+    +setup_retries() int
     +radians_to_rotations(double radians, JointConfig joint) double$
     +rotations_to_radians(double rotations, JointConfig joint) double$
     +rpm_to_rad_s(double rpm, JointConfig joint) double$
@@ -341,6 +343,7 @@ classDiagram
     -SparkMAXMotionProtocol& spark_
     -double timeout_s_
     -double flash_timeout_s_
+    -int retries_
     +SparkSetup(CANBus bus, SparkMAXMotionProtocol spark, double timeout_s, double flash_timeout_s)
     +exchange(string request, string response, Json values) Json
     +write(ParameterDefinition parameter, Json value) void
@@ -349,6 +352,8 @@ classDiagram
     +reset_safe_parameters() void
     +persist_parameters() void
     +commission(SparkBaseline baseline) void
+    +retries() int
+    -retried(Request request) auto
     -flash_command(string request, string response) void
   }
   class SparkBaseline {

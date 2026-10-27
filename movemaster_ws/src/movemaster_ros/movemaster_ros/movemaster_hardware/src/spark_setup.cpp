@@ -46,19 +46,33 @@ constexpr int kFlashPending = 255;
 SparkSetup::SparkSetup(CANBus &bus, const SparkMAXMotionProtocol &spark, double timeout_s, double flash_timeout_s)
     : bus_(bus), spark_(spark), timeout_s_(timeout_s), flash_timeout_s_(flash_timeout_s) {}
 
-Json SparkSetup::exchange(const std::string &request, const std::string &response, const Json &values) const {
-  bus_.send(spark_.frames[request].packet(spark_.device_id, values), timeout_s_);
-  const auto &expected = spark_.frames[response];
-  const auto deadline = after(timeout_s_);
-  while (Clock::now() < deadline) {
-    const auto rx = bus_.recv(std::min(0.01, seconds_left(deadline)));
-    if (rx && rx->is_extended_id && !rx->is_remote_frame && rx->arbitration_id == expected.arbitration_id(spark_.device_id))
-      return expected.decode_payload(rx->data);
+template<class Request> auto SparkSetup::retried(Request request) const {
+  for (int attempt = 1;; ++attempt) {
+    try {
+      return request();
+    } catch (const TimeoutError &e) {
+      if (attempt == kSetupAttempts)
+        throw TimeoutError(std::string(e.what()) + " (" + std::to_string(kSetupAttempts) + " attempts)");
+      ++retries_;
+    }
   }
-  throw TimeoutError("Timeout waiting for " + response + " on CAN " + std::to_string(spark_.device_id));
+}
+Json SparkSetup::exchange(const std::string &request, const std::string &response, const Json &values) const {
+  return retried([&] {
+    bus_.send(spark_.frames[request].packet(spark_.device_id, values), timeout_s_);
+    const auto &expected = spark_.frames[response];
+    const auto deadline = after(timeout_s_);
+    while (Clock::now() < deadline) {
+      const auto rx = bus_.recv(std::min(0.01, seconds_left(deadline)));
+      if (rx && rx->is_extended_id && !rx->is_remote_frame &&
+          rx->arbitration_id == expected.arbitration_id(spark_.device_id))
+        return expected.decode_payload(rx->data);
+    }
+    throw TimeoutError("Timeout waiting for " + response + " on CAN " + std::to_string(spark_.device_id));
+  });
 }
 void SparkSetup::write(const ParameterDefinition &parameter, const Json &value) const {
-  const auto response = spark_.write_parameter(bus_, parameter, value, timeout_s_);
+  const auto response = retried([&] { return spark_.write_parameter(bus_, parameter, value, timeout_s_); });
   if (!response.at("success").get<bool>() ||
       response.at("parameter_type_code").get<int>() != PARAMETER_TYPE_CODE.at(parameter.value_type) ||
       SparkMAXMotionProtocol::pack_parameter_value(response.at("current_value"), parameter.value_type) !=
