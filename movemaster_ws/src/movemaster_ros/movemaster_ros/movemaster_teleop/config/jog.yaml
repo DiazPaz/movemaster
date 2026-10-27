@@ -14,3 +14,7 @@ jog_node:
     link_timeout_s: 0.2         # no frames for this long: stop jogging
     idle_timeout_s: 1.0         # after this long without motion, the next jog restarts
                                 # from the measured positions
+    # The pendant's MANUAL switch activates jog_controller; AUTO gives the joints back to
+    # joint_trajectory_controller. false: switch them by hand with ros2 control.
+    select_controllers: true
+    switch_retry_s: 2.0         # wait after the controller_manager refuses a switch

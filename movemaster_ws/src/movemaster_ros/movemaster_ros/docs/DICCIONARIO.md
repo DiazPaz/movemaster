@@ -62,6 +62,11 @@ idle mode y límite de corriente. Bloque `spark` de `joints.json`. Lo persiste
 `spark_commission` y el driver lo vuelve a escribir en RAM al configurar.
 [PARAMETROS.md](../movemaster_hardware/docs/PARAMETROS.md).
 
+**Bringup (movemaster_bringup)**
+Paquete que arranca todo el sistema con un comando: `bringup.launch.py` incluye
+`movemaster_control`, el jog si se da `pendant:=` y RViz con `rviz:=true`. Trae
+el servicio `movemaster.service` para arrancar al encender. MANUAL §11.4 y §11.5.
+
 **Broadcaster**
 Controlador que solo lee estados y los publica, sin mandar comandos. El
 `JointStateBroadcaster` es uno.
@@ -419,6 +424,11 @@ de la tabla (`waist_link`, `shoulder_link`, `elbow_link`, `wrist_pitch_link`,
 
 ## M
 
+**MANUAL / AUTO**
+Posiciones del switch del teach pendant. En MANUAL, `jog_node` activa el
+`jog_controller` y el joystick mueve el brazo; en AUTO, las articulaciones
+vuelven al `joint_trajectory_controller`. MANUAL §11.3.
+
 **MAXMotion**
 Modo de control de posición del SPARK MAX que genera internamente un perfil de
 movimiento con la velocidad de crucero y la aceleración máximas del slot. Por
@@ -702,6 +712,11 @@ Valor que el hardware publica y los controladores leen. MoveMaster exporta
 **symlink-install**
 Opción de `colcon build` que instala enlaces a los archivos en lugar de copias:
 los cambios en `joints.json`, YAML o launch se ven sin recompilar.
+
+**systemd / servicio**
+Gestor de servicios de Linux. `movemaster.service` levanta `can0` y lanza el
+bringup al encender la Raspberry Pi, sin terminal; se controla con
+`systemctl` y su log se ve con `journalctl -u movemaster`. MANUAL §11.5.
 
 **SystemInterface**
 Clase base de `ros2_control` para hardware con varias articulaciones.

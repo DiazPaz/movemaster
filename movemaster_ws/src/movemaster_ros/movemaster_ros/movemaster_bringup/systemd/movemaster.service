@@ -1,0 +1,33 @@
+# MoveMaster al encender la Raspberry Pi, sin terminal (MANUAL §11.5).
+#
+#   sudo cp movemaster.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now movemaster      # arranca ahora y en cada encendido
+#
+# Ajusta User, las rutas y pendant:= a tu equipo. Para el pendant conviene la ruta fija
+# de /dev/serial/by-id/: /dev/ttyUSB0 puede cambiar al reconectar el cable.
+
+[Unit]
+Description=MoveMaster: ros2_control, controladores y teach pendant
+Requires=sys-subsystem-net-devices-can0.device
+After=sys-subsystem-net-devices-can0.device
+
+[Service]
+User=movemaster
+# can0 a 1 Mbit/s antes de arrancar; "+" los ejecuta como root.
+ExecStartPre=+ip link set can0 down
+ExecStartPre=+ip link set can0 type can bitrate 1000000
+ExecStartPre=+ip link set can0 up
+ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && source /home/movemaster/movemaster/movemaster_ws/install/setup.bash && exec ros2 launch movemaster_bringup bringup.launch.py pendant:=/dev/ttyUSB0'
+# Prioridad de tiempo real del controller_manager: limits.conf no aplica a servicios.
+LimitRTPRIO=99
+LimitMEMLOCK=infinity
+# Como Ctrl+C: el launch cierra todo y el heartbeat se detiene.
+KillSignal=SIGINT
+TimeoutStopSec=20
+# Sin reinicio automático: tras un paro de emergencia, un arranque nuevo tomaría la
+# postura de encendido como referencia aunque el brazo no esté en Home.
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

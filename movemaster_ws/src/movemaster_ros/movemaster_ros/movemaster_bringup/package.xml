@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>movemaster_bringup</name>
+  <version>0.1.0</version>
+  <description>MoveMaster with one command: controller_manager, teach pendant jog and RViz, and a systemd service to start them at boot.</description>
+  <maintainer email="maintainer@example.com">MoveMaster project (replace before publishing)</maintainer>
+  <license>Proprietary</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>movemaster_control</exec_depend>
+  <exec_depend>movemaster_description</exec_depend>
+  <exec_depend>movemaster_hardware</exec_depend>
+  <exec_depend>movemaster_teleop</exec_depend>
+  <exec_depend>ros2launch</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+
+  <test_depend>ament_cmake_pytest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

@@ -58,16 +58,21 @@ movemaster_ws/                                  workspace de colcon (desde aquí
             │   ├── launch/movemaster_control.launch.py
             │   ├── config/movemaster_controllers.yaml
             │   └── test/test_controllers.py
-            └── movemaster_teleop/              JOG desde el teach pendant (Python + firmware ESP32)
-                ├── package.xml, setup.py
-                ├── movemaster_teleop/          jog_node, trama del pendant, enlace serie, simulador
-                ├── config/jog.yaml             velocidades y ejes del joystick  ← lo editas tú
-                ├── launch/jog.launch.py
-                ├── firmware/                   proyecto PlatformIO del ESP32
-                └── test/
+            ├── movemaster_teleop/              JOG desde el teach pendant (Python + firmware ESP32)
+            │   ├── package.xml, setup.py
+            │   ├── movemaster_teleop/          jog_node, selector MANUAL/AUTO, trama del pendant, enlace serie
+            │   ├── config/jog.yaml             velocidades y ejes del joystick  ← lo editas tú
+            │   ├── launch/jog.launch.py
+            │   ├── firmware/                   proyecto PlatformIO del ESP32
+            │   └── test/
+            └── movemaster_bringup/             ARRANQUE con un comando (launch + servicio systemd)
+                ├── CMakeLists.txt, package.xml
+                ├── launch/bringup.launch.py
+                ├── systemd/movemaster.service  arranque al encender la Pi  ← lo ajustas tú
+                └── test/test_bringup.py
 ```
 
-Hay cuatro paquetes de ROS que importan:
+Hay cinco paquetes de ROS que importan:
 
 | Paquete | Qué es | Lenguaje |
 |---|---|---|
@@ -75,6 +80,7 @@ Hay cuatro paquetes de ROS que importan:
 | `movemaster_description` | El modelo del brazo: genera el URDF desde la tabla DH (`dh.yaml`) y los ejes de `joints.json`. Lo usan el `controller_manager` y, después, MoveIt. | XML (xacro), YAML |
 | `movemaster_control` | No tiene código compilado: configura y arranca el nodo `controller_manager` de `ros2_control` con el plugin y sus controladores. | Python (launch), XML, YAML |
 | `movemaster_teleop` | Jog de articulaciones desde el teach pendant (ESP32): `jog_node` y el firmware. | Python, C++ (Arduino) |
+| `movemaster_bringup` | Arranca todo con un comando: `movemaster_control`, el jog si hay pendant y RViz si se pide; trae el servicio de `systemd` para arrancar al encender. | Python (launch), systemd |
 
 ---
 
@@ -662,7 +668,8 @@ alimentación o por el paro de emergencia, pierde la posición; al encender
 cuenta desde la postura en que está y lo avisa con `HAS_RESET`, en su trama
 `STATUS_1`, hasta que se borran sus avisos (`CLEAR_FAULTS`). `spark_home`
 muestra ese aviso y mide los topes mecánicos de un eje. Cierra antes el
-`controller_manager` y cualquier otro programa que use el bus.
+`controller_manager` y cualquier otro programa que use el bus; con el servicio de
+[11.5](#115-arrancar-al-encender-la-raspberry-pi), `sudo systemctl stop movemaster`.
 
 **Estado.** No habilita motores:
 
@@ -764,7 +771,7 @@ cd ~/movemaster/movemaster_ws
 sudo rosdep init        # solo la primera vez en la máquina
 rosdep update
 rosdep install --from-paths src src/movemaster_ros/movemaster_ros --ignore-src -r -y
-colcon build --symlink-install --packages-up-to movemaster_control movemaster_teleop --cmake-args -DCMAKE_BUILD_TYPE=Release
+colcon build --symlink-install --packages-up-to movemaster_bringup --cmake-args -DCMAKE_BUILD_TYPE=Release
 source install/setup.bash
 ```
 
@@ -772,9 +779,8 @@ source install/setup.bash
   (`ros2_control`, `ros2_controllers`, `xacro`, `nlohmann-json`…). Necesita las
   dos rutas porque rosdep, como colcon, no entra en el paquete Python
   `movemaster_ros`.
-- `--packages-up-to movemaster_control movemaster_teleop` compila
-  `movemaster_hardware`, `movemaster_description`, `movemaster_control` y
-  `movemaster_teleop`.
+- `--packages-up-to movemaster_bringup` compila los cinco paquetes:
+  `movemaster_bringup` depende de todos los demás.
 - `--symlink-install` instala enlaces a los archivos de configuración en lugar
   de copias: los cambios en `joints.json`, `dh.yaml`, el YAML o el launch se
   aplican sin recompilar.
@@ -961,14 +967,76 @@ El launch carga también el `jog_controller`, inactivo. Con el pendant conectado
 
 ```bash
 ros2 launch movemaster_teleop jog.launch.py port:=/dev/ttyUSB0
-ros2 control switch_controllers --deactivate joint_trajectory_controller --activate jog_controller
 ```
 
-Con el switch en MANUAL, el botón de cada articulación la selecciona y el
-joystick la mueve; al soltarlo, el eje se sostiene. Para volver al
-`joint_trajectory_controller`, el mismo comando con los controladores al revés.
-Detalle, parámetros y prueba sin ESP32:
+El switch del pendant decide quién manda las articulaciones:
+
+- **MANUAL:** `jog_node` activa el `jog_controller` y desactiva el
+  `joint_trajectory_controller`. El botón de cada articulación la selecciona y
+  el joystick la mueve; al soltarlo, el eje se sostiene. Si hay una trayectoria
+  en curso, el jog espera a que termine.
+- **AUTO:** devuelve las articulaciones al `joint_trajectory_controller`.
+- **Pendant desconectado:** no cambia nada; el jog se detiene y el brazo se
+  sostiene. Perder el pendant nunca pasa el brazo a movimiento automático.
+- **Tras un fallo del hardware** los dos controladores quedan inactivos y el
+  switch no hace nada hasta que recuperes el brazo
+  ([12](#12-paso-9--detener-fallos-y-recuperación)).
+
+`ros2 control list_controllers` muestra cuál manda, y el log de `jog_node` avisa
+cada cambio. Detalle, parámetros y prueba sin ESP32:
 [movemaster_teleop/README.md](../movemaster_teleop/README.md).
+
+### 11.4 Arrancar todo con un comando
+
+`movemaster_bringup` reúne los pasos anteriores en un solo launch:
+
+```bash
+ros2 launch movemaster_bringup bringup.launch.py                                   # brazo y trayectorias
+ros2 launch movemaster_bringup bringup.launch.py pendant:=/dev/ttyUSB0             # además, el jog
+ros2 launch movemaster_bringup bringup.launch.py pendant:=/dev/ttyUSB0 rviz:=true  # además, RViz (banco)
+```
+
+| Argumento | Por defecto | Uso |
+|---|---|---|
+| `pendant` | vacío | Puerto serie del pendant; vacío, sin jog. Conviene la ruta fija de `/dev/serial/by-id/`: `/dev/ttyUSB0` puede cambiar al reconectar el cable. |
+| `rviz` | `false` | `true` abre RViz; necesita pantalla. |
+| `use_mock_hardware`, `joint_config`, `can_interface` | los de [10](#10-paso-7--arrancar-el-nodo-con-los-spark-max) | Pasan a `movemaster_control`; `joint_config` también al jog. |
+
+Ctrl+C cierra todo junto. Si el `controller_manager` termina por su cuenta, el
+launch se cierra completo: nada queda corriendo sin él.
+
+### 11.5 Arrancar al encender la Raspberry Pi
+
+El servicio `movemaster_bringup/systemd/movemaster.service` levanta `can0` a
+1 Mbit/s y lanza `bringup.launch.py` sin terminal. Ajusta en el archivo `User`,
+la ruta del workspace y `pendant:=`, e instálalo una vez:
+
+```bash
+sudo cp ~/movemaster/movemaster_ws/src/movemaster_ros/movemaster_ros/movemaster_bringup/systemd/movemaster.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now movemaster
+```
+
+| Para | Comando |
+|---|---|
+| Ver el log en vivo | `journalctl -u movemaster -f` |
+| Ver el estado | `systemctl status movemaster` |
+| Detener (como Ctrl+C) | `sudo systemctl stop movemaster` |
+| Arrancar de nuevo | `sudo systemctl start movemaster` |
+| Que no arranque al encender | `sudo systemctl disable movemaster` |
+
+- **Un solo dueño del bus.** Detén el servicio antes de usar `spark_home`,
+  `spark_commission`, `driver_monitor`, `spark_console` o un launch a mano.
+- **Sin reinicio automático, a propósito.** Si el nodo termina, el servicio no
+  lo relanza: tras un paro de emergencia, un arranque nuevo tomaría la postura de
+  encendido como referencia aunque el brazo no esté en Home
+  ([12](#12-paso-9--detener-fallos-y-recuperación)).
+- **Tiempo real.** El servicio da la prioridad de tiempo real con `LimitRTPRIO`:
+  el grupo `realtime` de [10.1](#101-permiso-de-tiempo-real-una-sola-vez) solo
+  aplica a las sesiones con terminal.
+- **RViz** no corre en el servicio. Ábrelo desde una laptop con este workspace
+  compilado, en la misma red y con el mismo `ROS_DOMAIN_ID`:
+  `rviz2 -d $(ros2 pkg prefix --share movemaster_description)/rviz/display.rviz`.
 
 ---
 
@@ -1012,6 +1080,9 @@ debe estar en Home **al encenderlo**:
 1. cierra el nodo (Ctrl+C);
 2. con el paro de emergencia presionado, lleva el brazo a Home;
 3. suelta el paro y vuelve a lanzar el nodo.
+
+Con el servicio de [11.5](#115-arrancar-al-encender-la-raspberry-pi), el paso 1
+es `sudo systemctl stop movemaster` y el 3, `sudo systemctl start movemaster`.
 
 Al configurar, el log confirma qué SPARK tomaron su postura de encendido como
 referencia: `joint_1: SPARK powered up; its zero is the pose it powered up in,
@@ -1275,6 +1346,8 @@ Los dos archivos de REV no se modifican.
 | `tests/protocol_oracle.cpp` + `tests/differential_test.py` | prueba | no | Paridad byte a byte con la librería Python. |
 | `movemaster_description/test/test_description.py` | prueba | no | El URDF sigue la tabla DH (cinemática directa contra el producto DH; Home en (0.160, 0, 0.255) m) y cumple lo que exigen el plugin y `ros2_control`. |
 | `movemaster_control/test/test_controllers.py` | prueba | no | Los controladores usan las interfaces que exporta el plugin. |
+| `movemaster_teleop/test/` | prueba | no | Jog, selector MANUAL/AUTO y trama del pendant, sin ROS. |
+| `movemaster_bringup/test/test_bringup.py` | prueba | no | Argumentos del launch de arranque, archivos que incluye y el servicio de `systemd`. |
 
 ---
 
