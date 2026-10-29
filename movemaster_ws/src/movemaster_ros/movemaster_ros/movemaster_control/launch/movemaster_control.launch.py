@@ -19,7 +19,7 @@ from pathlib import Path
 import tempfile
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, LogInfo, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, LogInfo, OpaqueFunction, Shutdown
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
@@ -95,6 +95,8 @@ def _launch_setup(context):
             parameters=[arg('controllers_file'), derived_parameters],
             # Jazzy 4.0 lee ~/robot_description; las versiones recientes, robot_description.
             remappings=[('~/robot_description', '/robot_description')],
+            # Sin controller_manager no queda nada útil: se cierra todo el launch.
+            on_exit=Shutdown(reason='el controller_manager terminó'),
         ),
         Node(
             package='controller_manager', executable='spawner', output='both',

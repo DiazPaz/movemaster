@@ -17,6 +17,7 @@ flowchart LR
     spark[("SPARK MAX")]
 
     esp -- "trama de 8 bytes · 50 Hz · USB" --> jog
+    jog -- "switch MANUAL / AUTO: switch_controller" --> cm
     jog -- "/jog_controller/commands" --> jc
     jc -- "position (rad)" --> hw
     hw -- "/joint_states" --> jog
@@ -55,7 +56,7 @@ Desde `movemaster_ws/`:
 ```bash
 source /opt/ros/jazzy/setup.bash
 rosdep install --from-paths src src/movemaster_ros/movemaster_ros --ignore-src -r -y
-colcon build --symlink-install --packages-up-to movemaster_control movemaster_teleop --cmake-args -DCMAKE_BUILD_TYPE=Release
+colcon build --symlink-install --packages-up-to movemaster_bringup --cmake-args -DCMAKE_BUILD_TYPE=Release
 source install/setup.bash
 ```
 
@@ -65,29 +66,32 @@ El puerto serie requiere el grupo `dialout`, una sola vez:
 
 ## Usar
 
-1. Arranca el nodo como siempre: `ros2 launch movemaster_control movemaster_control.launch.py`.
-   Ahora carga también el `jog_controller`, **inactivo**: nada cambia hasta activarlo.
-2. Arranca el jog, con el puerto del ESP32 (`ls /dev/ttyUSB* /dev/ttyACM*`):
+Todo junto, con el puerto del ESP32 (`ls /dev/ttyUSB* /dev/ttyACM*`):
 
-   ```bash
-   ros2 launch movemaster_teleop jog.launch.py port:=/dev/ttyUSB0
-   ```
+```bash
+ros2 launch movemaster_bringup bringup.launch.py pendant:=/dev/ttyUSB0
+```
 
-3. Pasa el brazo a jog. Solo un controlador puede mandar las articulaciones:
+O por separado: `ros2 launch movemaster_control movemaster_control.launch.py`,
+que carga el `jog_controller` **inactivo**, y en otra terminal
+`ros2 launch movemaster_teleop jog.launch.py port:=/dev/ttyUSB0`.
 
-   ```bash
-   ros2 control switch_controllers --deactivate joint_trajectory_controller --activate jog_controller
-   ```
+El switch del pendant elige el controlador; solo uno puede mandar las
+articulaciones:
 
-4. Con el switch del pendant en MANUAL, pulsa el botón de una articulación y
-   mueve el joystick. Para volver a MoveIt:
+| Switch | Qué hace `jog_node` |
+|---|---|
+| MANUAL | Activa el `jog_controller` y desactiva el `joint_trajectory_controller`. El botón de una articulación la selecciona y el joystick la mueve. Si hay una trayectoria en curso, espera a que termine. |
+| AUTO | Devuelve las articulaciones al `joint_trajectory_controller` (MoveIt). |
+| Sin tramas (pendant desconectado) | No cambia de controlador: el jog se detiene y el brazo se sostiene. |
 
-   ```bash
-   ros2 control switch_controllers --deactivate jog_controller --activate joint_trajectory_controller
-   ```
+Si un fallo del hardware desactiva los dos controladores, el switch no hace nada
+hasta que se recupera el brazo (MANUAL §12). Con `select_controllers: false` los
+controladores se cambian a mano con `ros2 control switch_controllers`.
 
 `ros2 control list_controllers` muestra cuál está activo. El log de `jog_node`
-dice cuándo se conecta el pendant y qué articulaciones están seleccionadas.
+dice cuándo se conecta el pendant, qué articulaciones están seleccionadas y qué
+controlador manda.
 
 ### Probar sin el ESP32
 
@@ -98,7 +102,7 @@ ros2 run movemaster_teleop pendant_sim          # imprime el puerto, por ejemplo
 ros2 launch movemaster_teleop jog.launch.py port:=/dev/pts/3
 ```
 
-Comandos: `sel 1 2` (articulación X, articulación Y), `x 300`, `y -500`
+Comandos: `manual` y `auto` (el switch; arranca en AUTO), `sel 1 2` (articulación X, articulación Y), `x 300`, `y -500`
 (-1000…1000), `0` (soltar), `q`. Con `use_mock_hardware:=true` se prueba toda la
 cadena sin motores.
 
@@ -112,6 +116,8 @@ cadena sin motores.
 | `max_lead_rad` | `0.05` | Cuánto puede adelantarse el objetivo a la articulación |
 | `link_timeout_s` | `0.2` | Sin tramas por este tiempo, se detiene el jog |
 | `idle_timeout_s` | `1.0` | Tras este tiempo sin movimiento, el siguiente jog parte de las posiciones medidas |
+| `select_controllers` | `true` | El switch MANUAL/AUTO cambia de controlador; `false`, se cambian a mano |
+| `switch_retry_s` | `2.0` | Espera antes de reintentar un cambio que el `controller_manager` rechazó |
 
 La curva es cuadrática: a media inclinación, un cuarto de la velocidad, para
 tener precisión cerca del centro.

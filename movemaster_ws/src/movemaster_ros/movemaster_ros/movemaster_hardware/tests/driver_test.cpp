@@ -210,6 +210,27 @@ void spark_restarts(const char *spec) {
   MoveMasterDriver blind(again, std::move(quiet));
   rejects_with([&] { blind.configure(); }, "STATUS_1 required from every SPARK");
 }
+// The adapter can drop a received frame (an MCP2515 keeps only two): a setup request without
+// reply is sent again. A SPARK that never answers still fails, after kSetupAttempts.
+void lost_replies(const char *spec) {
+  const auto config = config_for(spec, 2);
+  auto bus = std::make_unique<SimulatedSparkBus>(config);
+  auto *spy = bus.get();
+  spy->lost_replies = kSetupAttempts - 1;  // STOP_FOLLOWER_MODE of joint_1 and its first retry
+  MoveMasterDriver driver(config, std::move(bus));
+  driver.configure();
+  check(driver.setup_retries() == kSetupAttempts - 1, "Lost replies not retried");
+  const auto names = spy->names_sent_to(1);
+  check(std::count(names.begin(), names.end(), "STOP_FOLLOWER_MODE") == kSetupAttempts, "Retries not sent");
+  driver.activate();
+  check(driver.active(), "Not active after recovered replies");
+
+  auto silent = std::make_unique<SimulatedSparkBus>(config);
+  silent->lost_replies = kSetupAttempts;
+  MoveMasterDriver refused(config, std::move(silent));
+  rejects_with([&] { refused.configure(); },
+      "Timeout waiting for STOP_FOLLOWER_MODE_RESPONSE on CAN 1 (3 attempts)");
+}
 // spark_home lowers the Smart Current Limit in RAM while it measures, never while enabled.
 void current_limit(const char *spec) {
   auto config = config_for(spec, 2);
@@ -236,6 +257,7 @@ int main(int argc, char **argv) {
     position_at_activation(argv[1]);
     spark_restarts(argv[1]);
     current_limit(argv[1]);
+    lost_replies(argv[1]);
     auto duplicate = config_for(argv[1]); duplicate.joints[1].device_id = 1;
     rejects([&] { MoveMasterDriver driver(duplicate); }, "Duplicate CAN IDs accepted");
     auto missing = config_for(argv[1]); missing.joints[0].gear_ratio = 0;
@@ -277,7 +299,7 @@ int main(int argc, char **argv) {
     }
     std::cout << "PASS: 1/3/6 axes, conversions, ACK checks, activation order, limits, paced writes, "
         "baseline and slots in RAM, Position/MAXMotion per joint, following error, "
-        "stale/malformed feedback, TX failure, loop gap, SPARK restarts and current limit.\n";
+        "stale/malformed feedback, TX failure, loop gap, SPARK restarts, current limit and lost replies.\n";
     return 0;
   } catch (const std::exception &e) { std::cerr << "FAIL: " << e.what() << '\n'; return 1; }
 }

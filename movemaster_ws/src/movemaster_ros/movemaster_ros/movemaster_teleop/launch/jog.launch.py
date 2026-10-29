@@ -1,6 +1,6 @@
 """jog_node with config/jog.yaml.
 
-    ros2 launch movemaster_teleop jog.launch.py [port:=/dev/ttyUSB0]
+    ros2 launch movemaster_teleop jog.launch.py [port:=/dev/ttyUSB0] [joint_config:=...]
 """
 
 from launch import LaunchDescription
@@ -14,12 +14,18 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('port', default_value='/dev/ttyUSB0',
                               description='Serial port of the ESP32 pendant.'),
+        DeclareLaunchArgument(
+            'joint_config',
+            default_value=PathJoinSubstitution(
+                [FindPackageShare('movemaster_hardware'), 'config', 'joints.json']),
+            description='joints.json: joint order and limits.'),
         Node(
             package='movemaster_teleop', executable='jog_node', output='both',
             parameters=[
                 PathJoinSubstitution(
                     [FindPackageShare('movemaster_teleop'), 'config', 'jog.yaml']),
-                {'port': LaunchConfiguration('port')},
+                {'port': LaunchConfiguration('port'),
+                 'joint_config': LaunchConfiguration('joint_config')},
             ],
         ),
     ])

@@ -32,6 +32,7 @@ class SimulatedSparkBus : public CANBus {
   bool telemetry = true, bad_ack = false, drop_ack = false, bad_value = false, reject_ack = false;
   bool malformed = false, nonfinite = false, fail_tx = false, foreign_heartbeat = false, silent_flash = false;
   int muted_id = -1;
+  int lost_replies = 0;  // the next requests whose reply is lost on the bus
   bool status1 = true, clear_faults = true;       // STATUS_1 is sent; CLEAR_FAULTS clears HAS_RESET
   std::map<int, bool> has_reset;                  // CAN ID -> HAS_RESET sticky; true at power-up
   std::map<int, int> types;                       // parameter ID -> REV type code
@@ -72,6 +73,10 @@ class SimulatedSparkBus : public CANBus {
     const int id = p.arbitration_id & 63;
     const auto base = p.arbitration_id & ~0x3FU;
     if (drop_ack) return;
+    if (lost_replies > 0) {
+      --lost_replies;
+      return;
+    }
     const auto flash_reply = [&](std::deque<int> &script, const char *response) {
       if (silent_flash) return;
       for (int code = 255; code == 255;) {

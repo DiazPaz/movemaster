@@ -45,6 +45,11 @@ class Jogger:
         self.targets = None
         self._idle = 0.0
 
+    def release(self):
+        """Ends the jog session: the next one starts from the measured positions."""
+        self.targets = None
+        self._idle = 0.0
+
     def speeds(self, frame):
         """Commanded speed (rad/s) of each jogged joint; empty without a frame or motion."""
         if frame is None:

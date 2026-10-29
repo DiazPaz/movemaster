@@ -3,7 +3,8 @@
     ros2 run movemaster_teleop pendant_sim
     ros2 run movemaster_teleop jog_node --ros-args -p port:=<the /dev/pts/N it prints>
 
-Commands: "sel 1 2" (X joint, Y joint), "x 300", "y -500" (-1000..1000), "0" (release), "q".
+Commands: "manual" or "auto" (the switch; starts in AUTO), "sel 1 2" (X joint, Y joint),
+"x 300", "y -500" (-1000..1000), "0" (release), "q".
 """
 
 import os
@@ -18,20 +19,20 @@ from movemaster_teleop.pendant_frame import FULL_SCALE, PendantFrame, SYNC
 def main():
     master, slave = pty.openpty()
     tty.setraw(slave)
-    state = {'x_joint': 1, 'y_joint': 2, 'x': 0, 'y': 0}
+    state = {'manual': False, 'x_joint': 1, 'y_joint': 2, 'x': 0, 'y': 0}
     running = True
 
     def send():
         seq = 0
         while running:
-            frame = PendantFrame(seq=seq, manual=True, **state)
+            frame = PendantFrame(seq=seq, **state)
             os.write(master, bytes([SYNC]) + frame.encode())
             seq = (seq + 1) & 0xFF
             time.sleep(0.02)
 
     threading.Thread(target=send, daemon=True).start()
-    print(f'Pendant on {os.ttyname(slave)}. Selected X joint_1, Y joint_2.')
-    print('Commands: sel X Y | x VALUE | y VALUE | 0 | q')
+    print(f'Pendant on {os.ttyname(slave)}. Switch in AUTO; selected X joint_1, Y joint_2.')
+    print('Commands: manual | auto | sel X Y | x VALUE | y VALUE | 0 | q')
     try:
         while True:
             words = input('> ').split()
@@ -40,7 +41,9 @@ def main():
             if words == ['q']:
                 break
             try:
-                if words == ['0']:
+                if words in (['manual'], ['auto']):
+                    state['manual'] = words == ['manual']
+                elif words == ['0']:
                     state.update(x=0, y=0)
                 elif len(words) == 3 and words[0] == 'sel':
                     state.update(x_joint=int(words[1]), y_joint=int(words[2]))

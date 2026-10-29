@@ -119,7 +119,11 @@ En `spark_setup.hpp`, fuera del protocolo:
   [PARAMETROS.md](PARAMETROS.md).
 - `SparkSetup`: `exchange`, `write` (exige ACK con tipo y valor), `write_baseline`,
   `write_slot`, `reset_safe_parameters`, `persist_parameters` y `commission`.
-  Esperan respuesta: solo para configurar, con el bus en exclusiva.
+  Esperan respuesta: solo para configurar, con el bus en exclusiva. `exchange` y
+  `write` repiten la petición, hasta `kSetupAttempts` (3) en total, si no llega
+  respuesta: el adaptador puede perder una trama recibida y estas peticiones son
+  idempotentes. Una respuesta incorrecta no se reintenta. `retries()` cuenta las
+  repeticiones; el driver las suma en `setup_retries()` y el plugin las avisa.
 - `survey_bus`: escucha sin transmitir qué SPARK responden y si hay heartbeat.
 
 ## Métodos propios del driver

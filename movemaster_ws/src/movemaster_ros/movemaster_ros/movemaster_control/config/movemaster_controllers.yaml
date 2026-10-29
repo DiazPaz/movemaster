@@ -18,7 +18,8 @@ controller_manager:
       type: joint_trajectory_controller/JointTrajectoryController
 
     # Jog desde el teach pendant (movemaster_teleop/jog_node). Arranca inactivo: solo
-    # un controlador puede mandar las articulaciones, y se cambia con
+    # un controlador puede mandar las articulaciones. jog_node lo activa con el switch
+    # MANUAL del pendant; a mano:
     #   ros2 control switch_controllers --deactivate joint_trajectory_controller \
     #     --activate jog_controller
     # Copia a la interfaz position lo último que llega a /jog_controller/commands.

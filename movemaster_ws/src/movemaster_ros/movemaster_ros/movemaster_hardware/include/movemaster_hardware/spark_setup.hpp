@@ -46,6 +46,10 @@ struct SlotConfig {
 
 // Request/response exchanges with one SPARK. Only for setup: they wait for the reply, so the
 // caller must own bus.recv() exclusively, as configure() and spark_commission do.
+// exchange() and write() send a request again, up to kSetupAttempts in all, when no reply
+// arrives: the adapter can drop a received frame (an MCP2515 holds only two), and these
+// requests are idempotent. A wrong reply is never retried.
+inline constexpr int kSetupAttempts = 3;
 class SparkSetup {
  public:
   SparkSetup(CANBus &bus, const SparkMAXMotionProtocol &spark, double timeout_s,
@@ -63,10 +67,13 @@ class SparkSetup {
   void persist_parameters() const;
   // Leaves in flash the REV defaults plus CAN ID and baseline, whatever RAM held before.
   void commission(const SparkBaseline &baseline) const;
+  int retries() const { return retries_; }  // requests sent again so far
  private:
   CANBus &bus_;
   const SparkMAXMotionProtocol &spark_;
   double timeout_s_, flash_timeout_s_;
+  mutable int retries_ = 0;
+  template<class Request> auto retried(Request request) const;
   void flash_command(const std::string &request, const std::string &response) const;
 };
 

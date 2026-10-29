@@ -6,7 +6,9 @@
   <maintainer email="maintainer@example.com">MoveMaster project (replace before publishing)</maintainer>
   <license>Proprietary</license>
 
+  <exec_depend>action_msgs</exec_depend>
   <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>controller_manager_msgs</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>movemaster_hardware</exec_depend>

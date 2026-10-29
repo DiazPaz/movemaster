@@ -69,6 +69,10 @@ CallbackReturn MovemasterHardware::on_configure(const rclcpp_lifecycle::State &)
       RCLCPP_WARN(rclcpp::get_logger("MovemasterHardware"),
           "%s: SPARK powered up; its zero is the pose it powered up in, which zero_offset_rad assumes is Home.",
           name.c_str());
+    if (driver_->setup_retries() > 0)
+      RCLCPP_WARN(rclcpp::get_logger("MovemasterHardware"),
+          "%d setup request(s) got no reply and were sent again: the CAN adapter is dropping received "
+          "frames (see ip -details -statistics link show can0).", driver_->setup_retries());
     reference_taken_ = true;
     return CallbackReturn::SUCCESS;
   } catch (const std::exception &e) { stop(); report(e); return CallbackReturn::ERROR; }
