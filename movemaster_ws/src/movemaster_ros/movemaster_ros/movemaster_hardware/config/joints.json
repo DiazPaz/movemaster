@@ -1,5 +1,5 @@
 {
-  "period_s": 0.01,
+  "period_s": 0.02,
   "status_period_ms": 20,
   "feedback_timeout_s": 0.3,
   "response_timeout_s": 0.5,
