@@ -1,6 +1,6 @@
 {
   "period_s": 0.01,
-  "status_period_ms": 10,
+  "status_period_ms": 20,
   "feedback_timeout_s": 0.3,
   "response_timeout_s": 0.5,
   "disable_settle_s": 0.5,
