@@ -564,6 +564,12 @@ candump can0                      # muestra el tráfico; Ctrl+C para salir
 
 Con los SPARK encendidos, `candump` suele mostrar ya tramas periódicas suyas; si
 no aparece nada, revisa bitrate, cableado y terminación antes de seguir.
+
+**Tierra común:** la Raspberry debe compartir tierra con la fuente de los SPARK.
+Une con un cable un GND de la Raspberry (o la terminal GND del HAT) al negativo
+de esa fuente. Sin él, el bus funciona con el brazo deshabilitado, pero cae en
+`BUS-OFF` segundos después de activar el driver ([14](#14-problemas-frecuentes)).
+
 Durante el uso, para el CAN ID 1 verás:
 
 | ID | Trama | Sentido |
@@ -1391,6 +1397,7 @@ Los dos archivos de REV no se modifican.
 | `spark_home`: `the joint stopped advancing without reaching stall_current_a ...` | El eje se detuvo, en un tope o por la carga, con menos corriente que `stall_current_a`. | Mira la corriente `al final`: si está en el tope, baja `stall_current_a` por debajo de ella y por encima del pico libre. Cerca de 0 A, el motor no empuja: revisa el PIDF del slot. |
 | `spark_home`: `Aviso: el eje casi no se movio` | El tope quedó a menos de `backoff_rad` del inicio: hay un tope ahí o el límite de corriente no alcanza para mover el eje. | Si no hay tope ahí, sube `current_limit_a`. |
 | `CAN error frame received: bus-off ...` o `... tx-timeout ...` | El adaptador dejó de transmitir: errores de bus repetidos (cableado, terminación, bitrate). Son las únicas tramas de error que enclavan un fallo, porque el heartbeat ya no sale. | `ip -details -statistics link show can0` y `candump -e can0,0~0,#FFFFFFFF` mientras se reproduce; revisa resistencias de 120 Ω, cableado y bitrate. Para salir de `BUS-OFF`: `sudo ip link set can0 down` y `sudo ip link set can0 up`. |
+| `CAN error frame received: bus-off ...` unos segundos después de `Successful 'activate'`, cada vez, aunque la terminación mida ~60 Ω | La Raspberry no comparte tierra con la fuente de los SPARK. Al habilitarse, los motores toman corriente y mueven la referencia del bus respecto a la Raspberry, y su transceptor lee mal sus propios bits. Con el brazo deshabilitado no aparece. `candump -td -e can0,0~0,#FFFFFFFF \| grep -E "tx-\|bus-off"` muestra `tx-error-warning` → `tx-error-passive` → `bus-off`. | Une con un cable un GND de la Raspberry (o la terminal GND del HAT) al negativo de la fuente de los SPARK, en un solo punto. Lo mismo para cualquier otro nodo con fuente propia, como el gripper. Comprobado en el banco: con la tierra unida, 15 minutos y más de 200 000 tramas enviadas sin errores. |
 | `STATUS_0/2 watchdog expired` y `ip -details -statistics link show can0` muestra `overrun` creciendo | El adaptador pierde tramas recibidas porque no las lee a tiempo: típico de un HAT con MCP2515 en la Raspberry Pi con la CPU ocupada. Unas pocas no afectan (el driver no las ve); muchas seguidas vencen el watchdog. | Permiso de tiempo real ([10.1](#101-permiso-de-tiempo-real-una-sola-vez)), menos tráfico (`period_s: 0.02` y `status_period_ms: 20`) o un adaptador USB-CAN con más búfer (`gs_usb`). |
 | `No state interfaces found to publish` / `Failed to activate controller : joint_state_broadcaster` | El hardware se desactivó antes (mira la línea `[MovemasterHardware]` anterior) y ya no tiene interfaces que publicar. | Corrige la causa de esa línea; recupera (paso 9) o vuelve a lanzar. |
 | `Could not enable FIFO RT scheduling policy ... Operation not permitted` (advertencia) | El usuario no tiene permiso de prioridad de tiempo real. | [10.1](#101-permiso-de-tiempo-real-una-sola-vez). |
