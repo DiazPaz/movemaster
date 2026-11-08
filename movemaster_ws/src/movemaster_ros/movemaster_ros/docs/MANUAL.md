@@ -427,21 +427,19 @@ del formato anterior están en
   apagarse (corte de alimentación o paro de emergencia), el SPARK pierde la
   posición y, al encender, cuenta desde la postura en que está. El driver
   detecta cada reinicio ([7.3](#73-spark_home-reinicios-y-topes-mecánicos)),
-  pero no recupera la posición; de ahí la convención del punto siguiente.
-- **El cero de cada eje es el de la tabla DH.** θ = 0 en `dh.yaml` es 0 rad en
-  ROS, y el sentido positivo es el giro alrededor del eje z de la tabla; si el
-  motor gira al revés, `direction: -1`. Como el encoder marca 0 al encender, el
-  eje lee `zero_offset_rad` en la postura en que se encendió. La convención es
-  **encender el brazo en Home** y poner en `zero_offset_rad` el ángulo Home de
-  `dh.yaml`:
-
-  | Eje | `joint_1` | `joint_2` | `joint_3` | `joint_4` | `joint_5` |
-  |---|---|---|---|---|---|
-  | Home | 0° | −90° | 90° | 0° | −90° |
-  | `zero_offset_rad` | `0` | `-1.5708` | `1.5708` | `0` | `-1.5708` |
-
-  Con eso, el modelo de RViz y MoveIt coincide con el brazo real desde el
-  arranque. El hardware simulado también arranca en Home.
+  pero no recupera la posición; de ahí la convención de encender en Home.
+- **Home es el cero de todos los ejes.** Home es el brazo vertical: hombro,
+  codo e inclinación de muñeca alineados, y el faceplate hacia arriba con su
+  marca hacia el frente. `dh.yaml` lleva un desfase por eje (θ = q +
+  `theta_offset_deg`) para que en esa postura q = 0 en ROS. Los positivos:
+  cintura y faceplate antihorario vistos desde arriba en Home; hombro, codo e
+  inclinación de muñeca inclinan el brazo hacia adelante. Si un motor gira al
+  revés, `direction: -1`.
+- **Se enciende en Home, con `zero_offset_rad: 0`.** Como el encoder marca 0 al
+  encender, el eje lee `zero_offset_rad` en la postura en que se encendió. Con
+  el brazo encendido en Home y `zero_offset_rad` en 0 en todos los ejes, el
+  modelo de RViz y MoveIt coincide con el brazo real desde el arranque. El
+  hardware simulado también arranca en Home.
 - El launch lee la copia **instalada** de `joints.json`. Si la editas, vuelve a
   compilar (o compila con `--symlink-install`, ver el paso 5) o pásala con
   `joint_config:=/ruta/joints.json`.
@@ -833,8 +831,8 @@ tenga a todos. Arranca en Home.
 ros2 launch movemaster_description display.launch.py
 ```
 
-En Home, `tool0` (la punta de la herramienta) está en (0.160, 0, 0.255) m de
-`base_link`, apuntando hacia abajo:
+En Home, `tool0` (el centro de la cara del faceplate) está en (0, 0, 0.7734) m
+de `base_link`, apuntando hacia arriba:
 
 ```bash
 ros2 run tf2_ros tf2_echo base_link tool0
@@ -1221,19 +1219,22 @@ MoveIt. Junta dos archivos:
 
 | Archivo | Qué aporta |
 |---|---|
-| `movemaster_description/config/dh.yaml` | La tabla Denavit-Hartenberg (a, α, d en mm y grados), la postura Home y los radios de los eslabones. |
+| `movemaster_description/config/dh.yaml` | La tabla Denavit-Hartenberg (a, α, d en mm y grados), el desfase de cada θ, la postura Home y los radios de los eslabones. |
 | `movemaster_hardware/config/joints.json` | Qué ejes tienen SPARK MAX y sus límites. |
 
 Cada fila *i* de la tabla, `T(i-1 → i) = Rz(θi) · Tz(di) · Tx(ai) · Rx(αi)`,
 se convierte en (`urdf/movemaster_arm.xacro`):
 
-1. `joint_i`: el giro θi alrededor de z. Si el eje está en `joints.json` es
-   `revolute`, con `lower`/`upper` = límites de `joints.json` y `velocity` =
-   `max_velocity_rad_s`; si no, es `fixed` en su ángulo Home.
+1. `joint_i`: el giro θi = qi + `theta_offset_deg` alrededor de z, donde qi es
+   la posición de la articulación en ROS; el desfase va en el origen del joint.
+   Si el eje está en `joints.json` es `revolute`, con `lower`/`upper` = límites
+   de `joints.json` y `velocity` = `max_velocity_rad_s`; si no, es `fixed` en
+   su ángulo Home.
 2. `<label>_link` (`waist_link`, `shoulder_link`, …): el eslabón que mueve, con
    cilindros a lo largo de di y ai para verlo y para las colisiones.
 3. `joint_i_dh`: la parte fija `Tz(di) · Tx(ai) · Rx(αi)`, hasta el marco DH
-   `dh_frame_i`. El último marco se llama `tool0`: la punta de la herramienta.
+   `dh_frame_i`. El último marco se llama `tool0`: el centro de la cara del
+   faceplate, donde se montan las herramientas.
 
 Así cada marco DH es exacto aunque el eje esté fijo. Después incluye el macro
 del plugin para el bloque `<ros2_control>`, con los mismos ejes de
@@ -1350,7 +1351,7 @@ Los dos archivos de REV no se modifican.
 | `tests/console_test.cpp` | prueba | no | Bucle de la consola con driver falso. |
 | `tests/homing_test.cpp` | prueba | no | Búsqueda de topes contra un eje simulado y `spark_home`. |
 | `tests/protocol_oracle.cpp` + `tests/differential_test.py` | prueba | no | Paridad byte a byte con la librería Python. |
-| `movemaster_description/test/test_description.py` | prueba | no | El URDF sigue la tabla DH (cinemática directa contra el producto DH; Home en (0.160, 0, 0.255) m) y cumple lo que exigen el plugin y `ros2_control`. |
+| `movemaster_description/test/test_description.py` | prueba | no | El URDF sigue la tabla DH (cinemática directa contra el producto DH; Home = 0 con el brazo vertical, `tool0` en (0, 0, 0.7734) m; sentidos positivos) y cumple lo que exigen el plugin y `ros2_control`. |
 | `movemaster_control/test/test_controllers.py` | prueba | no | Los controladores usan las interfaces que exporta el plugin. |
 | `movemaster_teleop/test/` | prueba | no | Jog, selector MANUAL/AUTO y trama del pendant, sin ROS. |
 | `movemaster_bringup/test/test_bringup.py` | prueba | no | Argumentos del launch de arranque, archivos que incluye y el servicio de `systemd`. |

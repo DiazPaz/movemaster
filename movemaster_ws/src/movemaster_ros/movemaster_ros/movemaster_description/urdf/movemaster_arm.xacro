@@ -1,8 +1,9 @@
 <?xml version="1.0"?>
 <!-- The arm from config/dh.yaml (standard Denavit-Hartenberg). Row i of the table becomes:
 
-       joint_i        rotation θi about z of DH frame i-1. Revolute if the axis is in
-                      joints.json (or preview is true); otherwise fixed at home_deg.
+       joint_i        rotation θi = qi + theta_offset_deg about z of DH frame i-1, where qi is
+                      the joint position in ROS: the offset is the joint origin. Revolute if the
+                      axis is in joints.json (or preview is true); otherwise fixed at home_deg.
        <label>_link   the link that joint moves. Its geometry runs from the joint to DH frame i.
        joint_i_dh     fixed Tz(di) · Tx(ai) · Rx(αi), from that link to DH frame i.
 
@@ -42,6 +43,7 @@
         <joint name="${name}" type="revolute">
           <parent link="${parent}"/>
           <child link="${link}"/>
+          <origin xyz="0 0 0" rpy="0 0 ${radians(row['theta_offset_deg'])}"/>
           <axis xyz="0 0 1"/>
           <limit lower="${float(joints[name]['min_position_rad']) if configured else radians(preview_limits[0])}"
                  upper="${float(joints[name]['max_position_rad']) if configured else radians(preview_limits[1])}"
@@ -53,7 +55,7 @@
         <joint name="${name}" type="fixed">
           <parent link="${parent}"/>
           <child link="${link}"/>
-          <origin xyz="0 0 0" rpy="0 0 ${radians(row['home_deg'])}"/>
+          <origin xyz="0 0 0" rpy="0 0 ${radians(row['theta_offset_deg'] + row['home_deg'])}"/>
         </joint>
       </xacro:unless>
 

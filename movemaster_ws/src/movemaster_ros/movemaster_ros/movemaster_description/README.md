@@ -6,7 +6,7 @@ dos archivos, sin listas que mantener a mano:
 
 | Archivo | Qué aporta |
 |---|---|
-| `config/dh.yaml` | La tabla Denavit-Hartenberg del brazo, la postura Home y los radios de los eslabones. |
+| `config/dh.yaml` | La tabla Denavit-Hartenberg del brazo, el desfase de cada θ, la postura Home y los radios de los eslabones. |
 | `movemaster_hardware/config/joints.json` | Qué ejes tienen SPARK MAX, con sus límites y su velocidad máxima. |
 
 Guía completa: [docs/MANUAL.md](../docs/MANUAL.md) (§4.4 calibración del cero,
@@ -15,18 +15,22 @@ Guía completa: [docs/MANUAL.md](../docs/MANUAL.md) (§4.4 calibración del cero
 
 ## La tabla DH
 
-DH estándar, `T(i-1 → i) = Rz(θi) · Tz(di) · Tx(ai) · Rx(αi)`:
+DH estándar, `T(i-1 → i) = Rz(θi) · Tz(di) · Tx(ai) · Rx(αi)`, con
+θi = qi + desfase, donde qi es la posición del eje en ROS:
 
-| Eje | `label` | a (mm) | α | d (mm) | Home |
+| Eje | `label` | a (mm) | α | d (mm) | Desfase de θ |
 |---|---|---|---|---|---|
 | `joint_1` | cintura (`waist`) | 0 | −90° | 250 | 0° |
 | `joint_2` | hombro (`shoulder`) | 220 | 0° | 0 | −90° |
-| `joint_3` | codo (`elbow`) | 160 | 0° | 0 | 90° |
-| `joint_4` | cabeceo de muñeca (`wrist_pitch`) | 0 | −90° | 0 | 0° |
-| `joint_5` | giro de muñeca (`wrist_roll`) | 0 | 0° | 215 | −90° |
+| `joint_3` | codo (`elbow`) | 157.4 | 0° | 0 | 0° |
+| `joint_4` | inclinación de muñeca (`wrist_pitch`) | 0 | −90° | 0 | −90° |
+| `joint_5` | giro del faceplate (`wrist_roll`) | 0 | 0° | 146 | 180° |
 
-En Home, `tool0` (la punta de la herramienta) está en (0.160, 0, 0.255) m de
-`base_link`, con su eje z hacia abajo.
+Los desfases hacen que Home sea q = 0 en todos los ejes: el brazo vertical, con
+el faceplate hacia arriba y su marca hacia el frente. Ahí `tool0` (el centro de
+la cara del faceplate) está en (0, 0, 0.7734) m de `base_link`, con su eje z
+hacia arriba. Positivos: cintura y faceplate antihorario vistos desde arriba en
+Home; hombro, codo e inclinación de muñeca inclinan el brazo hacia adelante.
 
 ## Cómo se arma el URDF
 
@@ -35,7 +39,8 @@ base_link ─ joint_1 ─ waist_link ─ joint_1_dh ─ dh_frame_1 ─ joint_2 �
            (θ1, z)               (Tz(d1)·Tx(a1)·Rx(α1))
 ```
 
-- `joint_i` es el giro θi. Si el eje está en `joints.json`, es `revolute` con
+- `joint_i` es el giro θi = qi + desfase; el desfase va en el origen del joint.
+  Si el eje está en `joints.json`, es `revolute` con
   sus límites; si no, es `fixed` en su ángulo Home. Con un solo SPARK conectado
   el modelo ya está completo.
 - `joint_i_dh` es la parte fija de la fila, hasta el marco DH `dh_frame_i`; el
@@ -72,10 +77,9 @@ rviz2 -d $(ros2 pkg prefix --share movemaster_description)/rviz/display.rviz
 
 ## Calibración del cero
 
-θ = 0 en la tabla es 0 rad en ROS. El encoder del NEO marca 0 al encender el
+Home es q = 0 en todos los ejes. El encoder del NEO marca 0 al encender el
 SPARK, y el eje lee entonces `zero_offset_rad`. Por eso el brazo se enciende en
-Home, con `zero_offset_rad` = ángulo Home de la tabla (`joint_2`: `-1.5708`,
-`joint_3`: `1.5708`, `joint_5`: `-1.5708`; los demás `0`). Detalle en MANUAL §4.4.
+Home, con `zero_offset_rad: 0` en todos los ejes. Detalle en MANUAL §4.4.
 
 ## Archivos
 

@@ -188,7 +188,8 @@ Se publica en `/dynamic_joint_states`. No es par (`effort`).
 Convención que describe un brazo serial con cuatro números por articulación.
 En la forma estándar, la fila *i* lleva del marco *i-1* al *i* con
 `Rz(θi) · Tz(di) · Tx(ai) · Rx(αi)`: θ es la variable del eje; d, a y α son
-fijos. La tabla del MoveMaster está en `dh.yaml`; el URDF crea un marco
+fijos. En el MoveMaster θi = qi + desfase, donde qi es la posición del eje en
+ROS, para que Home sea q = 0. La tabla está en `dh.yaml`; el URDF crea un marco
 `dh_frame_i` por fila, y el último es `tool0`. MANUAL §13.6.
 
 **depend / exec_depend / test_depend / buildtool_depend**
@@ -198,13 +199,16 @@ solo pruebas; herramienta de compilación. MANUAL §13.2.
 **dh.yaml**
 Tabla DH del brazo, en `movemaster_description/config/`: por eje, su nombre en
 ROS (`joint`), su nombre en el brazo (`label`), `a_mm`, `alpha_deg`, `d_mm`, el
-ángulo Home (`home_deg`) y un radio para dibujarlo. También el tamaño de la
-base. De ella sale la geometría del URDF.
+desfase de θ (`theta_offset_deg`), la postura Home (`home_deg`, en q) y un radio
+para dibujarlo. También el tamaño de la base. De ella sale la geometría del
+URDF.
 
 **direction**
 Campo de `joints.json`: entero `1` o `-1`. Invierte el sentido del motor
 respecto a la articulación. Debe ser entero (`1`, no `1.0`). El sentido
-positivo de la articulación es el giro alrededor del eje z de la tabla DH.
+positivo de la articulación es el giro alrededor del eje z de la tabla DH:
+cintura y faceplate antihorario vistos desde arriba en Home; hombro, codo e
+inclinación de muñeca hacia adelante.
 
 **disable_settle_s**
 Campo global de `joints.json` (0.5 s): pausa sin transmitir antes de configurar
@@ -318,11 +322,12 @@ El gripper no lo escucha: tiene su propio `HEARTBEAT` (`0x0A080C05`, en
 `gripper-frames-1.0.0`), para que probarlo no habilite a los SPARK.
 
 **Home**
-Postura de referencia del brazo, columna `home_deg` de `dh.yaml`:
-(0°, −90°, 90°, 0°, −90°). Brazo vertical, antebrazo horizontal y herramienta
-hacia abajo; `tool0` queda en (0.160, 0, 0.255) m de `base_link`. El brazo se
-enciende en Home (MANUAL §4.4); el hardware simulado y la vista previa arrancan
-ahí, y los ejes sin SPARK quedan fijos en ella.
+Postura de referencia del brazo y cero de todos los ejes (q = 0): el brazo
+vertical, con el faceplate hacia arriba y su marca hacia el frente; `tool0`
+queda en (0, 0, 0.7734) m de `base_link`. El brazo se enciende en Home
+(MANUAL §4.4); el hardware simulado y la vista previa arrancan ahí, y los ejes
+sin SPARK quedan fijos en ella. Es una postura singular: la cintura y el
+faceplate giran sobre la misma línea.
 
 **Homing**
 Rutina que encuentra la posición absoluta de un eje con encoder relativo. En
@@ -757,9 +762,10 @@ Canal con nombre por el que un nodo publica mensajes y otros los reciben
 (`/joint_states`).
 
 **tool0**
-Marco de la punta de la herramienta (TCP): el último marco de la tabla DH. Su
-eje z apunta hacia fuera de la herramienta. MoveIt planea la posición de este
-marco.
+El centro de la cara del faceplate (la brida), último marco de la tabla DH: el
+TCP mientras no haya herramienta. Su eje z sale del faceplate y su eje x apunta
+a la marca. Una herramienta (el gripper) se agrega como un marco hijo de
+`tool0`. MoveIt planea la posición de este marco.
 
 ## U
 
@@ -806,6 +812,6 @@ eso xacro puede leer `joints.json`.
 **zero_offset_rad**
 Campo de `joints.json`: ángulo de la articulación cuando el encoder del motor
 marca cero, es decir, en la postura en que se encendió el SPARK. Si el brazo se
-enciende en Home, es el ángulo Home de `dh.yaml` (MANUAL §4.4). Como el encoder
+enciende en Home, es 0, porque Home es q = 0 (MANUAL §4.4). Como el encoder
 es relativo y aún no hay homing automático, los SPARK deben encenderse con el
 brazo en Home; el driver detecta cada reinicio (`HAS_RESET`).
