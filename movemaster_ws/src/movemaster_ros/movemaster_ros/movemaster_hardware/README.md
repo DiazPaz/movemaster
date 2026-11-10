@@ -154,7 +154,7 @@ físicamente. La referencia completa de `joints.json` v2 está en
 | `zero_offset_rad` | Posición articular cuando el encoder del motor indica cero. |
 | `min_position_rad`, `max_position_rad` | Límites calibrados de la articulación, en radianes. |
 | `max_velocity_rad_s` | Velocidad máxima de la articulación; límite del URDF y tope de toda cruise velocity. |
-| `spark` | `motor_type` (`"brushless"`), `idle_mode` y `current_limit_a`: lo que la puesta en marcha guarda en flash. |
+| `spark` | `motor_type` (`"brushless"`), `idle_mode`, `current_limit_a` y, opcional, `voltage_compensation_v`: lo que la puesta en marcha guarda en flash. |
 | `control` | `mode` y `slot` de arranque, y `max_following_error_rad` para el modo Position. |
 | `slots."0"` a `slots."3"` | `pidf`, `output_range` opcional y `maxmotion` opcional (RPM, RPM/s, rotaciones del **motor**). |
 

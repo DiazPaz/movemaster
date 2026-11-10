@@ -53,6 +53,10 @@ void validate_driver_config(const DriverConfig &config) {
         j.name + ": invalid idle mode");
     require(j.spark.current_limit_a >= 1 && j.spark.current_limit_a <= 80,
         j.name + ": current_limit_a must be in 1..80 A");
+    // The SPARK MAX runs from 5.5 to 24 V; a nominal voltage outside that range cannot be met.
+    require(!j.spark.voltage_compensation_v || (std::isfinite(*j.spark.voltage_compensation_v) &&
+        *j.spark.voltage_compensation_v >= 5.5 && *j.spark.voltage_compensation_v <= 24),
+        j.name + ": voltage_compensation_v must be in 5.5..24 V");
     require(std::isfinite(j.max_following_error_rad) && j.max_following_error_rad > 0,
         j.name + ": max_following_error_rad must be positive");
     require(!j.slots.empty(), j.name + ": configure at least one slot");

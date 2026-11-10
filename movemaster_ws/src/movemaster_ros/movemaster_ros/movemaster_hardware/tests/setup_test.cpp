@@ -12,7 +12,7 @@ using namespace movemaster::testing;
 namespace {
 std::filesystem::path spec, config_dir, scratch;
 const std::vector<std::string> kCommissionOrder{"RESET_SAFE_PARAMETERS", "PARAMETER_WRITE", "PARAMETER_WRITE",
-    "PARAMETER_WRITE", "PARAMETER_WRITE", "PERSIST_PARAMETERS"};
+    "PARAMETER_WRITE", "PARAMETER_WRITE", "PARAMETER_WRITE", "PARAMETER_WRITE", "PERSIST_PARAMETERS"};
 
 // The tests' own joints.json, so they never depend on how the bench file is calibrated.
 const char *const kFixture = R"json({
@@ -48,7 +48,11 @@ void fixture_loads() {
   check(j.name == "joint_1" && j.device_id == 1 && j.gear_ratio == 10 && j.direction == -1 &&
       j.zero_offset_rad == 0.1 && j.min_position_rad == -2 && j.max_position_rad == 2 && j.max_velocity_rad_s == 3,
       "Joint fields not loaded");
-  check(j.spark.idle_mode == IdleMode::kBrake && j.spark.current_limit_a == 40, "spark block not loaded");
+  check(j.spark.idle_mode == IdleMode::kBrake && j.spark.current_limit_a == 40 && !j.spark.voltage_compensation_v,
+      "spark block not loaded");
+  auto data = Json::parse(kFixture);
+  data["joints"]["joint_1"]["spark"]["voltage_compensation_v"] = 11.5;
+  check(load(data).joints.at(0).spark.voltage_compensation_v == 11.5, "voltage_compensation_v not loaded");
   check(j.mode == ControlMode::kMAXMotionPosition && j.slot == 0 && j.max_following_error_rad == 0.2,
       "control block not loaded");
   check(j.slots.size() == 1 && j.slots.at(0).pidf.at("p") == 0.5 &&
@@ -70,6 +74,9 @@ void loader_errors() {
   broken([](Json &j) { j["spark"]["idle_mode"] = "hold"; }, "spark.idle_mode must be one of: coast, brake");
   broken([](Json &j) { j["spark"]["current_limit_a"] = 40.5; }, "spark.current_limit_a must be an integer");
   broken([](Json &j) { j["spark"]["current_limit_a"] = 0; }, "current_limit_a must be in 1..80 A");
+  broken([](Json &j) { j["spark"]["voltage_compensation_v"] = "12"; }, "spark.voltage_compensation_v must be a number");
+  broken([](Json &j) { j["spark"]["voltage_compensation_v"] = 5; }, "voltage_compensation_v must be in 5.5..24 V");
+  broken([](Json &j) { j["spark"]["voltage_compensation_v"] = 25; }, "voltage_compensation_v must be in 5.5..24 V");
   broken([](Json &j) { j.erase("spark"); }, "spark is missing");
   broken([](Json &j) { j["control"].erase("max_following_error_rad"); }, "control.max_following_error_rad is missing");
   broken([](Json &j) { j["control"]["max_following_error_rad"] = 0; }, "max_following_error_rad must be positive");
@@ -132,6 +139,15 @@ bool sent_frame(const SimulatedSparkBus &bus, const char *name) {
     if ((p.arbitration_id & ~0x3FU) == (bus.frames[name].base_arb_id() & ~0x3FU)) return true;
   return false;
 }
+// Parameter IDs of the PARAMETER_WRITE frames sent to one SPARK, in order.
+std::vector<int> parameters_written(const SimulatedSparkBus &bus, int id) {
+  std::vector<int> result;
+  const auto &write = bus.frames["PARAMETER_WRITE"];
+  for (const auto &p : bus.sent)
+    if ((p.arbitration_id & ~0x3FU) == write.base_arb_id() && static_cast<int>(p.arbitration_id & 63) == id)
+      result.push_back(write.decode_payload(p.data).at("PARAMETER_ID").get<int>());
+  return result;
+}
 // Reset to REV defaults, write the baseline, persist; nothing reaches flash after a failure.
 void commissioning() {
   const SparkMAXMotionProtocol spark(spec, 3);
@@ -144,6 +160,17 @@ void commissioning() {
   check(bus.names_sent_to(3) == kCommissionOrder, "Commissioning must reset, write the baseline, then persist");
   check(bus.value(3, 2) == 1 && bus.value(3, 6) == 0 && bus.value(3, 59) == 30 && bus.value(3, 60) == 30,
       "Baseline values");
+  // Without voltage_compensation_v, compensation is written off: mode first, then a nominal of 0.
+  check(bus.value(3, 74) == 0 && bus.value(3, 75) == 0, "Voltage compensation must be written off");
+  check(parameters_written(bus, 3) == std::vector<int>{2, 6, 59, 60, 74, 75}, "Baseline write order (off)");
+
+  // With it, the nominal voltage goes before the mode, so the mode is never on with 0 V.
+  SimulatedSparkBus compensated(spec, {3});
+  commission(compensated, {IdleMode::kBrake, 40, 12.0});
+  check(compensated.names_sent_to(3) == kCommissionOrder, "Commissioning order with voltage compensation");
+  check(compensated.value(3, 74) == 2 && SignalCodec::_u32_to_float(compensated.value(3, 75)) == 12.0,
+      "Voltage compensation values");
+  check(parameters_written(compensated, 3) == std::vector<int>{2, 6, 59, 60, 75, 74}, "Baseline write order (on)");
   check(bus.frames["RESET_SAFE_PARAMETERS"].decode_payload(bus.sent.front().data).at("MAGIC_NUMBER") == 36292 &&
       bus.frames["PERSIST_PARAMETERS"].decode_payload(bus.sent.back().data).at("MAGIC_NUMBER") == 15011,
       "Flash commands must carry the magic numbers of the spec");
@@ -244,7 +271,8 @@ void parameter_table() {
         "ID " + std::to_string(p.parameter_id) + " (" + p.key + ") is not " + name + " in the parameter table");
   };
   for (const auto *p : {&rev::kMotorType, &rev::kIdleMode, &rev::kFeedbackSensor, &rev::kSmartCurrentStallLimit,
-           &rev::kSmartCurrentFreeLimit, &rev::kPositionConversionFactor, &rev::kVelocityConversionFactor,
+           &rev::kSmartCurrentFreeLimit, &rev::kVoltageCompMode, &rev::kCompensatedNominalVoltage,
+           &rev::kPositionConversionFactor, &rev::kVelocityConversionFactor,
            &rev::kPositionWrapping, &rev::kStatus0Period, &rev::kStatus1Period, &rev::kStatus2Period})
     agrees(*p, p->description);
   // DEFAULT_PARAMETER_LAYOUT keeps the Python descriptions; these are its names in the table.
@@ -260,7 +288,10 @@ void parameter_table() {
   check(rev::kBrushless == table.value("MotorType", "BRUSHLESS") &&
       rev::kMainEncoder == table.value("Sensor", "MAIN_ENCODER") &&
       static_cast<int>(IdleMode::kCoast) == table.value("IdleMode", "COAST") &&
-      static_cast<int>(IdleMode::kBrake) == table.value("IdleMode", "BRAKE"), "Enum values differ from the parameter table");
+      static_cast<int>(IdleMode::kBrake) == table.value("IdleMode", "BRAKE") &&
+      rev::kNoVoltageComp == table.value("VoltageCompMode", "NO_VOLTAGE_COMP") &&
+      rev::kNominalVoltageComp == table.value("VoltageCompMode", "NOMINAL_VOLTAGE_COMP"),
+      "Enum values differ from the parameter table");
 }
 // The survey only listens: which SPARKs answer, and whether something enables motors.
 void survey() {

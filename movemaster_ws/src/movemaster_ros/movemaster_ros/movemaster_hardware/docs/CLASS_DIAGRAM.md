@@ -360,6 +360,7 @@ classDiagram
     <<struct>>
     +IdleMode idle_mode
     +int current_limit_a
+    +optional~double~ voltage_compensation_v
   }
   class SlotConfig {
     <<struct>>

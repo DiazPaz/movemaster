@@ -58,7 +58,7 @@ Opción de colcon con las carpetas donde buscar paquetes. En
 
 **Baseline**
 Lo que se guarda en la flash de cada SPARK además del CAN ID: tipo de motor,
-idle mode y límite de corriente. Bloque `spark` de `joints.json`. Lo persiste
+idle mode, límite de corriente y compensación de voltaje. Bloque `spark` de `joints.json`. Lo persiste
 `spark_commission` y el driver lo vuelve a escribir en RAM al configurar.
 [PARAMETROS.md](../movemaster_hardware/docs/PARAMETROS.md).
 
@@ -135,6 +135,12 @@ entra en el paquete Python `movemaster_ros`. MANUAL §13.1.
 **Command interface (interfaz de comando)**
 Valor que un controlador escribe y el hardware ejecuta. MoveMaster exporta una
 por eje: `joint_N/position`, en radianes.
+
+**Compensación de voltaje (voltage_compensation_v)**
+El SPARK escala su salida para que un ciclo de trabajo de 1 signifique un
+voltaje nominal fijo, aunque la fuente marque otro (IDs 74 y 75). Así P y F no
+cambian si cambia la fuente o cae bajo carga. Campo opcional
+`spark.voltage_compensation_v`; parte del baseline. Sin el campo, apagada.
 
 **Componente de hardware**
 Lo que `ros2_control` carga desde el bloque `<ros2_control>` del URDF. El de

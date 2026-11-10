@@ -86,7 +86,7 @@ Sent setpoint_sent(const SimulatedSparkBus &bus, const CANPacket &packet) {
 void configures_baseline_and_slots(const char *spec) {
   auto config = config_for(spec, 2);
   config.joints[0].slots[1] = precise_slot();
-  config.joints[1].spark = {IdleMode::kCoast, 20};
+  config.joints[1].spark = {IdleMode::kCoast, 20, 11.0};
   auto bus = std::make_unique<SimulatedSparkBus>(config);
   auto *spy = bus.get();
   MoveMasterDriver driver(config, std::move(bus));
@@ -95,6 +95,8 @@ void configures_baseline_and_slots(const char *spec) {
   check(spy->value(1, 6) == 1 && spy->value(2, 6) == 0, "Idle mode not written");
   check(spy->value(1, 59) == 40 && spy->value(1, 60) == 40 && spy->value(2, 59) == 20 && spy->value(2, 60) == 20,
       "Current limit not written at stall and free speed");
+  check(spy->value(1, 74) == 0 && spy->value(1, 75) == 0, "Voltage compensation not written off");
+  check(spy->value(2, 74) == 2 && as_float(spy->value(2, 75)) == 11.0f, "Voltage compensation not written");
   check(as_float(spy->value(1, 112)) == 1.0f && as_float(spy->value(1, 113)) == 1.0f,
       "Conversion factors are not 1: the SPARK must stay in motor units");
   check(as_float(spy->value(1, 13)) == 0.05f && as_float(spy->value(1, 13 + 8)) == 0.2f, "Slot gains not written");

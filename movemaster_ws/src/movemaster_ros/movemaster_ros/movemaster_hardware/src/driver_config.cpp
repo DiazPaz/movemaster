@@ -96,13 +96,15 @@ JointConfig load_joint(const std::string &name, const Json &j) {
   joint.max_velocity_rad_s = number(j, "max_velocity_rad_s");
   const auto &spark = object_field(j, "spark");
   in("spark", [&] {
-    only_keys(spark, {"motor_type", "idle_mode", "current_limit_a"});
+    only_keys(spark, {"motor_type", "idle_mode", "current_limit_a", "voltage_compensation_v"});
     if (field(spark, "motor_type") != "brushless")
       throw std::invalid_argument("motor_type must be \"brushless\": MoveMaster drives NEO motors, "
           "which brushed mode can damage");
     joint.spark.idle_mode = choice<IdleMode>(spark, "idle_mode",
         {{"coast", IdleMode::kCoast}, {"brake", IdleMode::kBrake}});
     joint.spark.current_limit_a = integer(spark, "current_limit_a");
+    if (spark.contains("voltage_compensation_v"))
+      joint.spark.voltage_compensation_v = number(spark, "voltage_compensation_v");
   });
   const auto &control = object_field(j, "control");
   in("control", [&] {

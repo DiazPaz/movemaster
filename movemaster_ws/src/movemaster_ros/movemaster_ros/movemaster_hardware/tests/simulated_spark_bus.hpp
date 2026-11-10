@@ -44,7 +44,8 @@ class SimulatedSparkBus : public CANBus {
   SimulatedSparkBus(const std::filesystem::path &spec, std::vector<int> device_ids)
       : frames(spec), ids(std::move(device_ids)) {
     for (int id : ids) has_reset[id] = true;
-    types = {{2, 2}, {6, 2}, {9, 2}, {59, 2}, {60, 2}, {112, 3}, {113, 3}, {149, 4}, {158, 2}, {159, 2}, {160, 2}};
+    types = {{2, 2}, {6, 2}, {9, 2}, {59, 2}, {60, 2}, {74, 2}, {75, 3}, {112, 3}, {113, 3}, {149, 4}, {158, 2},
+        {159, 2}, {160, 2}};
     for (int slot = 0; slot < 4; ++slot) {
       for (int i = 13; i <= 20; ++i) types[i + 8 * slot] = 3;
       for (int i : {166, 167, 169}) types[i + 5 * slot] = 3;

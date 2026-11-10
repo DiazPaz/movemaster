@@ -259,6 +259,7 @@ Cada dato vive en un solo lugar, según lo seguido que cambia:
 | 2 | Motor Type | BRUSHLESS (1) |
 | 6 | Idle Mode | `spark.idle_mode`: COAST (0) o BRAKE (1); de fábrica, COAST |
 | 59, 60 | Smart Current Stall Limit, Smart Current Free Limit | `spark.current_limit_a` en los dos; de fábrica, 80 A y 20 A. `spark_home` los baja en RAM mientras mide topes. |
+| 74, 75 | Voltage Compensation Mode, Compensated Nominal Voltage | Con `spark.voltage_compensation_v`: NOMINAL_VOLTAGE_COMP (2) y ese voltaje; sin el campo, NO_VOLTAGE_COMP (0) y 0. De fábrica, sin compensación. |
 | 9 | Closed Loop Control Sensor | MAIN_ENCODER (1) |
 | 112, 113 | Position / Velocity Conversion Factor | 1.0 |
 | 149 | Position PID Wrap Enable | false |
@@ -360,6 +361,7 @@ es un error.
 | `motor_type` | solo `"brushless"` | Los NEO son brushless; el modo brushed puede dañarlos. |
 | `idle_mode` | `"coast"` o `"brake"` | Con el eje deshabilitado, `brake` cortocircuita el motor y frena el brazo (no lo sostiene). |
 | `current_limit_a` | entero 1–80 | Límite de corriente del motor, en A. 40 es un valor habitual para NEO. |
+| `voltage_compensation_v` | opcional, 5.5–24 V | Voltaje nominal de la compensación de voltaje: un ciclo de trabajo de 1 significa ese voltaje aunque la fuente marque otro, y P y F no cambian con la fuente. Uno o dos volts debajo de lo que marca la fuente bajo carga (11 V con una de 12 V). Sin el campo, apagada. Ver [PARAMETROS.md](../movemaster_hardware/docs/PARAMETROS.md#compensación-de-voltaje). |
 
 | Campo de `control` | Regla | Significado |
 |---|---|---|
@@ -1379,7 +1381,7 @@ Los dos archivos de REV no se modifican.
 | `write(SocketCAN): Network is down` | `can0` existe pero está abajo. | Paso 3. |
 | `Timeout waiting for STOP_FOLLOWER_MODE_RESPONSE on CAN 1 (3 attempts)` | El SPARK con ese CAN ID no respondió a ninguno de los 3 intentos: ID equivocado, sin alimentación, cableado, bitrate distinto o firmware antiguo. Una respuesta suelta perdida ya no llega aquí: se reintenta. | Revisa con `spark_commission` (sin `--apply`) que responda y con `candump` que aparezcan sus `STATUS`; confirma ID y firmware. |
 | `N setup request(s) got no reply and were sent again: the CAN adapter is dropping received frames` (advertencia) | El adaptador perdió respuestas al configurar y el driver repitió las peticiones; el arranque siguió normal. Con el MCP2515 pasa sobre todo cuando la Pi está ocupada al arrancar (por ejemplo, abriendo RViz). | Nada, si es ocasional. Si aparece en cada arranque, mira la columna `errors` de RX en `ip -details -statistics link show can0`; la solución de fondo es un adaptador con más búfer (MCP2518FD o USB-CAN `gs_usb`). |
-| `Parameter ACK mismatch: CAN 1, p` | El SPARK no aceptó o no confirmó el valor de un parámetro. | Revisa el valor en `joints.json` y el firmware. Si el parámetro es `motor_type`, `idle_mode`, `smart_current_*`, `output_min` u `output_max`, anótalo: son IDs que aún no se habían probado con un SPARK real. |
+| `Parameter ACK mismatch: CAN 1, p` | El SPARK no aceptó o no confirmó el valor de un parámetro. | Revisa el valor en `joints.json` y el firmware. Si el parámetro es `motor_type`, `idle_mode`, `smart_current_*`, `voltage_comp_mode`, `compensated_nominal_voltage`, `output_min` u `output_max`, anótalo: son IDs que aún no se habían probado con un SPARK real. |
 | `Fresh STATUS_0 and STATUS_2 required for every joint` | Al activar, falta telemetría reciente de algún eje. | Revisa cableado, `status_period_ms` y que todos los ejes respondan en `driver_monitor`. |
 | `STATUS_0/2 watchdog expired` | Se dejó de recibir telemetría con el brazo activo. | Cable o alimentación; luego recupera (paso 9). |
 | `write(SocketCAN): TX queue full; no SPARK acknowledges frames ...` (antes, `write(SocketCAN): No buffer space available`) | Ningún SPARK confirma las tramas: paro de emergencia presionado, SPARK sin alimentación o bus desconectado. | Si fue el paro, recupera como en el [paso 9](#12-paso-9--detener-fallos-y-recuperación). Si no, revisa alimentación y cableado con `candump can0`. |

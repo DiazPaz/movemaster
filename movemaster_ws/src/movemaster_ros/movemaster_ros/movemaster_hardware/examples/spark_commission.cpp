@@ -1,5 +1,6 @@
-// Puesta en marcha de los SPARK MAX: deja en su flash solo CAN ID, tipo de motor, idle mode y
-// limite de corriente; todo lo demas vuelve al valor de fabrica. Sin --apply no transmite nada.
+// Puesta en marcha de los SPARK MAX: deja en su flash solo CAN ID, tipo de motor, idle mode,
+// limite de corriente y compensacion de voltaje; todo lo demas vuelve al valor de fabrica.
+// Sin --apply no transmite nada.
 #include "movemaster_hardware/movemaster_driver.hpp"
 #include "movemaster_hardware/socketcan.hpp"
 #include <algorithm>
@@ -52,7 +53,9 @@ inline int run(const DriverConfig &config, const Request &request, CANBus &bus, 
     ready = ready && present;
     out << "  " << joint->name << "  CAN " << joint->device_id << (present ? "  presente" : "  NO RESPONDE")
         << "  | brushless, idle " << (joint->spark.idle_mode == IdleMode::kBrake ? "brake" : "coast")
-        << ", limite " << joint->spark.current_limit_a << " A\n";
+        << ", limite " << joint->spark.current_limit_a << " A, compensacion de voltaje ";
+    if (joint->spark.voltage_compensation_v) out << *joint->spark.voltage_compensation_v << " V\n";
+    else out << "apagada\n";
   }
   if (survey.enable_heartbeat)
     out << "Hay un heartbeat de habilitacion en el bus: cierra el controller_manager, "

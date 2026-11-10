@@ -12,8 +12,12 @@ inline constexpr std::uint32_t kEnableHeartbeatId = 0x01011840U;
 namespace rev {
 inline constexpr int kBrushless = 1;    // MotorType.BRUSHLESS
 inline constexpr int kMainEncoder = 1;  // Sensor.MAIN_ENCODER
+inline constexpr int kNoVoltageComp = 0;       // VoltageCompMode.NO_VOLTAGE_COMP
+inline constexpr int kNominalVoltageComp = 2;  // VoltageCompMode.NOMINAL_VOLTAGE_COMP
 extern const ParameterDefinition kMotorType;                 // MotorType
 extern const ParameterDefinition kIdleMode;                  // IdleMode
+extern const ParameterDefinition kVoltageCompMode;           // VoltageCompMode
+extern const ParameterDefinition kCompensatedNominalVoltage; // V
 extern const ParameterDefinition kFeedbackSensor;            // Sensor
 extern const ParameterDefinition kSmartCurrentStallLimit;    // A
 extern const ParameterDefinition kSmartCurrentFreeLimit;     // A
@@ -30,10 +34,15 @@ ParameterDefinition output_max(int slot);                    // duty cycle, 0..1
 enum class IdleMode { kCoast = 0, kBrake = 1 };  // IdleMode.COAST, IdleMode.BRAKE
 
 // What stays in the SPARK's flash, besides its CAN ID. spark_commission persists it and every
-// configure() writes it again to RAM. The motor type is always brushless: MoveMaster uses NEOs.
+// configure() writes it again to RAM, so joints.json decides it even over a value saved with
+// REV Hardware Client. The motor type is always brushless: MoveMaster uses NEOs.
 struct SparkBaseline {
   IdleMode idle_mode = IdleMode::kBrake;
   int current_limit_a = 0;  // smart current limit, same at stall and at free speed
+  // Nominal voltage compensation: the SPARK scales its output so that a duty cycle of 1 means
+  // this many volts whatever the supply measures, which keeps P and F independent of it.
+  // Without a value, compensation is written off.
+  std::optional<double> voltage_compensation_v;
 };
 
 // One closed-loop slot. Position and MAXMotion Position use its PIDF and output range;

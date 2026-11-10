@@ -4,7 +4,7 @@ Cada dato vive en un solo lugar, según lo seguido que cambia.
 
 | Nivel | Datos | Dónde vive | Quién lo escribe | Cuándo cambia |
 |---|---|---|---|---|
-| Puesta en marcha | CAN ID, tipo de motor, idle mode, límite de corriente | Flash del SPARK | REV Hardware Client (CAN ID) y `spark_commission --apply` (el resto) | Una vez por SPARK, o al reemplazarlo |
+| Puesta en marcha | CAN ID, tipo de motor, idle mode, límite de corriente, compensación de voltaje | Flash del SPARK | REV Hardware Client (CAN ID) y `spark_commission --apply` (el resto) | Una vez por SPARK, o al reemplazarlo |
 | Eje | Conversión, límites, slots (PIDF, rango de salida, MAXMotion), control por defecto | `joints.json` | El driver, en RAM, cada vez que configura | Al calibrar |
 | Operación | Modo y slot de cada eje | Memoria del driver | `set_control()`; en la consola, `mode` y `slot` | En tiempo real |
 | Programas (pendiente) | Waypoints y preset de cada movimiento | Archivos en la Pi | Teach pendant | Al guardar un programa |
@@ -12,19 +12,20 @@ Cada dato vive en un solo lugar, según lo seguido que cambia.
 Solo el primer nivel se persiste. Los otros se escriben en RAM o no llegan al
 SPARK, así que cambiarlos no desgasta la flash ni tarda lo que tarda guardar.
 
-## Por qué solo esos cuatro datos van a flash
+## Por qué solo esos datos van a flash
 
 - **REV los separa igual.** Según `spark-frames-2.1.0`, `RESET_SAFE_PARAMETERS`
   devuelve a fábrica casi todos los parámetros, "excepto CAN ID, Motor Type,
   Idle Mode, PWM Input Deadband y Duty Cycle Offset". Son los datos que
   identifican al SPARK y lo protegen; el límite de corriente se suma por la
-  misma razón.
+  misma razón, y la compensación de voltaje porque cambia lo que significa
+  cualquier ciclo de trabajo, también el de REV Hardware Client.
 - **Protegen antes de que la Pi configure.** Entre que el SPARK enciende y el
   driver lo configura, y con cualquier programa que no los escriba (el backend
   Python, por ejemplo), solo cuenta lo que hay en flash.
 - **Persistir guarda todo.** `PERSIST_PARAMETERS` copia a flash todos los
   parámetros de la RAM. Por eso la puesta en marcha restablece primero a
-  fábrica: así la flash queda con los valores de fábrica más estos cuatro,
+  fábrica: así la flash queda con los valores de fábrica más estos,
   sin importar lo que hubiera en RAM.
 - **El resto se reescribe en cada arranque.** Lo que el driver controla,
   incluido el baseline, lo escribe en RAM cada vez que configura. Eso no
@@ -33,6 +34,32 @@ SPARK, así que cambiarlos no desgasta la flash ni tarda lo que tarda guardar.
 REVLib 2025 hace algo parecido con `ResetMode.kResetSafeParameters` y
 `PersistMode.kPersistParameters`, pero persiste toda la configuración. Aquí
 solo se persiste el baseline.
+
+## Compensación de voltaje
+
+Sin compensación, P, F y cualquier ciclo de trabajo son una fracción del
+voltaje que mide el SPARK en su entrada: con P = 1, una rotación de error
+aplica 12 V con una fuente de 12 V y 24 V con una de 24 V. Si la fuente cambia
+o cae bajo carga, el lazo de posición se vuelve más o menos agresivo con las
+mismas ganancias.
+
+Con `spark.voltage_compensation_v`, el SPARK escala su salida para que un ciclo
+de trabajo de 1 signifique ese voltaje, mida lo que mida en la entrada. P y F
+quedan en "fracción del voltaje nominal" y no dependen de la fuente.
+
+- **Qué valor poner.** Uno o dos volts por debajo de lo que marca la fuente con
+  el brazo moviéndose (Bus Voltage en REV Hardware Client, o `VOLTAGE` de
+  STATUS_0). Con una fuente de 12 V, 11 V es un valor razonable. Si la entrada
+  cae por debajo del nominal, el SPARK ya no puede compensar y el eje pierde
+  fuerza arriba.
+- **El mismo valor en todos los ejes** de una misma fuente, para que las
+  ganancias se lean igual.
+- **Reajustar las ganancias al activarla.** P y F pasan a referirse al voltaje
+  nominal: si el nominal es menor que la fuente, la misma P aplica menos volts.
+- **Dónde se escribe.** Es parte del baseline: `spark_commission --apply` la
+  guarda en flash y el driver la escribe en RAM al configurar. Lo que se cambie
+  con REV Hardware Client lo reemplaza el valor de `joints.json` en el siguiente
+  arranque.
 
 ## Los parámetros de REV que usa MoveMaster
 
@@ -49,6 +76,8 @@ confirme el tipo y el valor exacto.
 | 6 | Idle Mode | UINT32 | COAST (0) | `spark.idle_mode` | Puesta en marcha | `spark_commission` y el driver |
 | 59 | Smart Current Stall Limit | UINT32 | 80 A | `spark.current_limit_a` | Puesta en marcha | `spark_commission` y el driver; `spark_home` lo baja en RAM mientras mide |
 | 60 | Smart Current Free Limit | UINT32 | 20 A | `spark.current_limit_a` | Puesta en marcha | `spark_commission` y el driver; `spark_home` lo baja en RAM mientras mide |
+| 74 | Voltage Compensation Mode | UINT32 | NO_VOLTAGE_COMP (0) | NOMINAL_VOLTAGE_COMP (2) con `spark.voltage_compensation_v`; si no, NO_VOLTAGE_COMP (0) | Puesta en marcha | `spark_commission` y el driver |
+| 75 | Compensated Nominal Voltage | FLOAT | 0 | `spark.voltage_compensation_v`, o 0 sin compensación | Puesta en marcha | `spark_commission` y el driver |
 | 9 | Closed Loop Control Sensor | UINT32 | NONE (0) | MAIN_ENCODER (1) | Eje (fijo) | El driver |
 | 112 | Position Conversion Factor | FLOAT | 1.0 | 1.0 | Eje (fijo) | El driver |
 | 113 | Velocity Conversion Factor | FLOAT | 1.0 | 1.0 | Eje (fijo) | El driver |
@@ -215,6 +244,7 @@ ajuste que se queda en su valor por defecto.
 | `spark.motor_type` | Solo `"brushless"` | Los NEO son brushless; el modo brushed puede dañarlos. |
 | `spark.idle_mode` | `"coast"` o `"brake"` | Qué hace el SPARK cuando su salida es neutra, como al deshabilitarse. `brake` cortocircuita el motor y frena el brazo, pero no lo sostiene. De fábrica: `coast`. |
 | `spark.current_limit_a` | Entero 1–80 | Límite de corriente del motor, igual en parada y a velocidad libre. De fábrica son 80 A en parada y 20 A libre; 40 A es un valor habitual para NEO. |
+| `spark.voltage_compensation_v` | Opcional: 5.5–24 V | Voltaje nominal de la compensación de voltaje; sin el campo, la compensación queda apagada. Ver [Compensación de voltaje](#compensación-de-voltaje). |
 | `control.mode` | `"position"` o `"maxmotion"` | Modo con el que el eje se activa. |
 | `control.slot` | Uno de `slots` | Slot con el que el eje se activa. Con `maxmotion`, debe tener perfil. |
 | `control.max_following_error_rad` | > 0 | Distancia máxima entre un objetivo en modo `position` y la posición medida. |
