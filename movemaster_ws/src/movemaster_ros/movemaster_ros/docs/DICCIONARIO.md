@@ -695,8 +695,9 @@ Ejemplo interactivo para mover un eje sin ROS (`on`, `sp`, `mode`, `slot`,
 
 **spark_home**
 Herramienta para el homing. Sin `--measure` muestra qué SPARK se reiniciaron,
-sin habilitar motores; con `--measure joint_N [+|-]` mide los topes mecánicos
-de ese eje y sugiere sus límites. MANUAL §7.3.
+sin habilitar motores ni borrar su aviso `HAS_RESET`; con `--measure joint_N
+[+|-]` toma la postura de encendido como referencia, mide los topes mecánicos de
+ese eje y sugiere sus límites. MANUAL §7.3.
 
 **SparkParameters-v0.1.2.md**
 Tabla en `movemaster_hardware/spec/` con todos los parámetros del SPARK: ID,

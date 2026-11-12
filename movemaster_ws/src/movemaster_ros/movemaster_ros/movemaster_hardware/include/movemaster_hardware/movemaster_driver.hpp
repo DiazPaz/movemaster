@@ -60,6 +60,9 @@ void validate_driver_config(const DriverConfig &config);
 enum class SparkResetPolicy {
   kAcceptPowerOnPose,  // the pose at power-up is the reference, as when starting in Home
   kFault,              // a restart is a fault: the position was lost mid-session
+  // Only report restarts (spark_home's status): HAS_RESET stays set for whoever configures next,
+  // read() leaves it in the states instead of failing, and activate() is refused.
+  kReport,
 };
 
 // No background thread: ros2_control is the only sender/receiver and heartbeat owner.
@@ -69,7 +72,7 @@ class MoveMasterDriver {
   explicit MoveMasterDriver(DriverConfig config, std::unique_ptr<CANBus> bus = nullptr);
   ~MoveMasterDriver() = default;
   // Returns the joints whose SPARK restarted; with kAcceptPowerOnPose their restart is cleared,
-  // so a later one shows up in read() as a fault.
+  // so a later one shows up in read() as a fault. kFault throws instead; kReport keeps it.
   std::vector<std::string> configure(SparkResetPolicy policy = SparkResetPolicy::kAcceptPowerOnPose);
   void activate();
   void deactivate() noexcept;
@@ -100,7 +103,7 @@ class MoveMasterDriver {
   struct StatusIds { std::uint32_t status0, status1, status2; };
   std::vector<StatusIds> status_ids_;
   std::optional<Clock::time_point> last_tx_;
-  bool configured_ = false, active_ = false;
+  bool configured_ = false, active_ = false, report_only_ = false;
   std::string fault_;
   int setup_retries_ = 0;
   const CANPacket heartbeat_{kEnableHeartbeatId, Bytes(8, 0xFF), true, false, 8, "REFERENCE_HEARTBEAT"};

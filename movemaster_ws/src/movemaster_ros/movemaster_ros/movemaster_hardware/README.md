@@ -67,7 +67,7 @@ uso está en [../docs/MANUAL.md](../docs/MANUAL.md) y los términos en
 | `examples/driver_monitor.cpp` | Configuración RAM y lectura de telemetría, sin habilitación. |
 | `examples/spark_console.cpp` | Habilitación y envío interactivo de SP para un eje, en Position o MAXMotion. |
 | `examples/spark_commission.cpp` | Puesta en marcha: restablece, escribe el baseline y lo persiste. |
-| `examples/spark_home.cpp` | Muestra qué SPARK se reiniciaron y mide los topes mecánicos de un eje. |
+| `examples/spark_home.cpp` | Muestra qué SPARK se reiniciaron (sin borrar el aviso) y mide los topes mecánicos de un eje. |
 | `tests/` | Comparación contra Python, y pruebas del driver, la configuración, la puesta en marcha y la búsqueda de topes con transporte simulado. |
 
 La dependencia es:

@@ -29,7 +29,7 @@ double StopSearch::update(double position, double current, double dt) {
   } else if (phase_ == Phase::kBackoff) {
     const double goal = contact_ - direction_ * config_.backoff_rad;
     target_ = ramp_target(target_, goal, config_.fast_speed_rad_s, dt, position, lead_);
-    if (target_ == goal && std::abs(position - goal) <= 0.25 * lead_) enter(Phase::kSlowApproach, position);
+    if (target_ == goal && std::abs(position - goal) <= kArrivalFraction * lead_) enter(Phase::kSlowApproach, position);
     else if (phase_time_ > time_limit(config_.backoff_rad, config_.fast_speed_rad_s))
       fail("could not back off from the stop", position);
   }
@@ -42,9 +42,10 @@ void StopSearch::approach(double position, double current, double dt) {
   // The slow approach must meet the stop the fast one found, just past the backoff.
   const double travel_limit = fast ? config_.max_travel_rad : 3 * config_.backoff_rad;
   target_ = std::clamp(target_ + direction_ * speed * dt, position - lead_, position + lead_);
-  // Stalled: the joint no longer keeps up with its target while the motor pushes.
-  const bool stalled = direction_ * (target_ - position) >= 0.8 * lead_ && current >= config_.stall_current_a;
-  stalled_ = stalled ? stalled_ + dt : 0;
+  // Held back: the joint no longer keeps up with its target. Stalled: also while the motor pushes.
+  const bool held = direction_ * (target_ - position) >= 0.8 * lead_;
+  held_ = held ? held_ + dt : 0;
+  stalled_ = held && current >= config_.stall_current_a ? stalled_ + dt : 0;
   if (stalled_ >= config_.stall_time_s) {
     if (fast) {
       contact_ = position;
@@ -63,9 +64,12 @@ void StopSearch::approach(double position, double current, double dt) {
     fail(fast ? "no stop within max_travel_rad"
               : "the slow approach went past the stop the fast one found: it was a false stop "
                 "(raise stall_current_a or current_limit_a, or lower fast_speed_rad_s)", position);
-  else if (phase_time_ > time_limit(travel_limit, speed))
+  // held_ >= stalled_, so a stall that holds is confirmed above before this.
+  else if (held_ >= config_.stall_time_s + kHeldMarginS)
     fail("the joint stopped advancing without reaching stall_current_a: if it is against a stop, lower "
-         "stall_current_a", position);
+         "stall_current_a; near 0 A the motor does not push (SPARK not enabled, or the slot's PIDF)", position);
+  else if (phase_time_ > time_limit(travel_limit, speed))
+    fail("the joint advanced too slowly: the search exceeded its time limit", position);
 }
 void StopSearch::enter(Phase phase, double position) {
   phase_ = phase;
@@ -73,6 +77,7 @@ void StopSearch::enter(Phase phase, double position) {
   phase_start_ = position;
   phase_time_ = 0;
   stalled_ = 0;
+  held_ = 0;
   target_ = position;
 }
 void StopSearch::fail(const std::string &message, double position) {

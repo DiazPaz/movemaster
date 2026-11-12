@@ -6,7 +6,7 @@ Se organizan en cinco capas, de ROS hacia el hardware:
 | Capa | Clases | Archivos |
 |---|---|---|
 | 1. Adaptador ros2_control | `MovemasterHardware` | `movemaster_hardware.hpp`, `movemaster_hardware.cpp` |
-| 2. Driver | `MoveMasterDriver`, `SparkResetPolicy`, `DriverConfig`, `JointConfig`, `JointControl`, `JointState`, `load_driver_config()`, `validate_driver_config()`; para la búsqueda de topes, `HomingConfig`, `StopSearch` y `ramp_target()` | `movemaster_driver.hpp`, `movemaster_driver.cpp`, `driver_config.cpp`, `homing.hpp`, `homing.cpp` |
+| 2. Driver | `MoveMasterDriver`, `SparkResetPolicy`, `DriverConfig`, `JointConfig`, `JointControl`, `JointState`, `load_driver_config()`, `validate_driver_config()`; para la búsqueda de topes, `HomingConfig`, `StopSearch`, `ramp_target()`, `search_lead()` y `min_backoff_rad()` | `movemaster_driver.hpp`, `movemaster_driver.cpp`, `driver_config.cpp`, `homing.hpp`, `homing.cpp` |
 | 3. Configuración de los SPARK | `SparkSetup`, `SparkBaseline`, `SlotConfig`, `IdleMode`, `BusSurvey`, `survey_bus()` y los parámetros `rev::` | `spark_setup.hpp`, `spark_setup.cpp` |
 | 4. Protocolo SPARK | `SparkMAXMotionProtocol` (con la clase anidada `Access`), `ControlMode`, `SparkFrameDatabase`, `FrameSpec`, `ParameterGroup`, `ParameterDefinition`, `SignalCodec`, `CANPacket`, `CANBus`, `SpecError`, `TimeoutError` | `sparkmax_json_protocol.hpp`, `sparkmax_json_protocol.cpp` |
 | 5. Transporte CAN | `SocketCAN` | `socketcan.hpp`, `socketcan.cpp` |
@@ -205,6 +205,7 @@ classDiagram
     -optional~time_point~ last_tx_
     -bool configured_
     -bool active_
+    -bool report_only_
     -string fault_
     -int setup_retries_
     -const CANPacket heartbeat_
@@ -286,6 +287,7 @@ classDiagram
     <<enumeration>>
     kAcceptPowerOnPose
     kFault
+    kReport
   }
   class HomingConfig {
     <<struct>>
@@ -308,6 +310,7 @@ classDiagram
     -double phase_start_
     -double phase_time_
     -double stalled_
+    -double held_
     -double contact_
     -double stop_
     -double free_peak_
@@ -335,6 +338,11 @@ classDiagram
   class ramp_target["ramp_target()"] {
     <<función libre>>
     +ramp_target(double target, double goal, double speed, double dt, double position, double lead) double$
+  }
+  class search_lead["search_lead() / min_backoff_rad()"] {
+    <<funciones libres>>
+    +search_lead(double max_following_error_rad) double$
+    +min_backoff_rad(double max_following_error_rad) double$
   }
 
   %% Capa 3 · spark_setup.hpp / .cpp
@@ -536,6 +544,7 @@ classDiagram
   StopSearch *-- HomingConfig : config_
   StopSearch ..> Phase : phase_
   StopSearch ..> ramp_target : retroceso
+  load_driver_config ..> search_lead : valida backoff_rad
   SparkBaseline ..> IdleMode : idle_mode
   MoveMasterDriver *-- "1..6" JointControl : controls_
   JointControl ..> ControlMode : mode

@@ -129,6 +129,8 @@ void homing_block() {
   broken([](Json &h) { h["slow_speed_rad_s"] = 0.2; }, "speeds must satisfy");
   broken([](Json &h) { h["fast_speed_rad_s"] = 4.0; }, "speeds must satisfy");
   broken([](Json &h) { h["backoff_rad"] = 0; }, "backoff_rad must be positive");
+  // max_following_error_rad is 0.2 in the fixture.
+  broken([](Json &h) { h["backoff_rad"] = 0.049; }, "backoff_rad must be at least max_following_error_rad / 4");
   broken([](Json &h) { h["max_travel_rad"] = 0.1; }, "max_travel_rad must exceed twice backoff_rad");
   auto wrong = data;
   wrong["joints"]["joint_1"]["homing"] = 3;

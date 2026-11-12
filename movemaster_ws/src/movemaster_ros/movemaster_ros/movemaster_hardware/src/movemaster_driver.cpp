@@ -104,6 +104,9 @@ void validate_driver_config(const DriverConfig &config) {
           h.slow_speed_rad_s <= h.fast_speed_rad_s && h.fast_speed_rad_s <= j.max_velocity_rad_s,
           where + ": speeds must satisfy 0 < slow_speed_rad_s <= fast_speed_rad_s <= max_velocity_rad_s");
       require(std::isfinite(h.backoff_rad) && h.backoff_rad > 0, where + ": backoff_rad must be positive");
+      // Shorter, the backoff could end with the joint still on the stop.
+      require(h.backoff_rad >= min_backoff_rad(j.max_following_error_rad) * (1 - 1e-9),
+          where + ": backoff_rad must be at least max_following_error_rad / 4");
       require(std::isfinite(h.max_travel_rad) && h.max_travel_rad > 2 * h.backoff_rad,
           where + ": max_travel_rad must exceed twice backoff_rad");
     }
@@ -192,10 +195,13 @@ std::vector<std::string> MoveMasterDriver::configure(SparkResetPolicy policy) {
     if (!names.empty() && policy == SparkResetPolicy::kFault)
       throw std::runtime_error(join(names) + ": the SPARK restarted (power cut or emergency stop) and lost its "
           "position; power it up with the arm in Home and restart the node");
-    // Cleared now, HAS_RESET flags the next restart.
-    for (const auto i : restarted)
-      bus_->send(protocols_[i]->frames["CLEAR_FAULTS"].packet(protocols_[i]->device_id), config_.response_timeout_s);
-    wait_status1(restarted, true);
+    report_only_ = policy == SparkResetPolicy::kReport;
+    if (!report_only_) {
+      // Cleared now, HAS_RESET flags the next restart.
+      for (const auto i : restarted)
+        bus_->send(protocols_[i]->frames["CLEAR_FAULTS"].packet(protocols_[i]->device_id), config_.response_timeout_s);
+      wait_status1(restarted, true);
+    }
     configured_ = true;  // RAM only; no PERSIST_PARAMETERS.
     return names;
   } catch (const std::exception &e) { trip(e.what()); throw; }
@@ -290,6 +296,7 @@ double MoveMasterDriver::checked_target(double radians, const JointConfig &j) co
 void MoveMasterDriver::activate() {
   ensure_healthy();
   if (!configured_ || active_) throw std::logic_error("Configure once before activation");
+  if (report_only_) throw std::logic_error("Configured with SparkResetPolicy::kReport: it never enables the motors");
   try {
     // Allow the prior heartbeat to expire before loading hold positions on reactivation.
     if (last_tx_) {
@@ -340,7 +347,8 @@ void MoveMasterDriver::read() {
       ++count;
     }
     if (count == rx_budget) throw std::runtime_error("RX budget exceeded; feedback could be queued/stale");
-    for (std::size_t i = 0; i < states_.size(); ++i)
+    // kReport only reports restarts: spark_reset stays in the states.
+    for (std::size_t i = 0; i < states_.size() && !report_only_; ++i)
       if (states_[i].spark_reset)
         throw std::runtime_error(config_.joints[i].name + ": the SPARK restarted (HAS_RESET); its position "
             "and RAM configuration are lost");

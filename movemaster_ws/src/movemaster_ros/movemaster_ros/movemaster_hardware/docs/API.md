@@ -144,9 +144,13 @@ del controlador; el sentido lo da `direction`.
 `configure(policy)` devuelve los ejes cuyo SPARK se reinició (aviso `HAS_RESET`
 de `STATUS_1`). Con `SparkResetPolicy::kAcceptPowerOnPose`, el valor por
 defecto, toma su postura de encendido como referencia y borra el aviso con
-`CLEAR_FAULTS`; con `kFault`, un reinicio es un error. El plugin usa la primera
-en su primer `on_configure` y la segunda en los siguientes. Después, `read()`
-enclava un fallo si el aviso reaparece.
+`CLEAR_FAULTS`; con `kFault`, un reinicio es un error; con `kReport`, solo lo
+informa: el aviso queda puesto para quien configure después, `read()` lo deja en
+`JointState::spark_reset` en lugar de fallar y `activate()` se niega. El plugin
+usa `kAcceptPowerOnPose` en su primer `on_configure` y `kFault` en los
+siguientes; `spark_home` usa `kReport` para el estado y `kAcceptPowerOnPose`
+para medir. Después de `kAcceptPowerOnPose` o `kFault`, `read()` enclava un
+fallo si el aviso reaparece.
 
 `set_current_limit(eje, amperes)` escribe el Smart Current Limit (IDs 59 y 60)
 en RAM, con ACK, solo con el driver configurado y sin activar. Lo usa
@@ -165,6 +169,16 @@ Sin E/S, para probarla sin CAN:
   `free_current_peak()` y `stop_current()` dan el resultado. `direction` es +1
   (antihorario) o −1; `lead`, cuánto puede adelantarse el objetivo a la
   posición medida, debe quedar por debajo de `max_following_error_rad`.
+  Falla si no hay tope dentro de `max_travel_rad`, si el acercamiento lento pasa
+  el tope del rápido (tope falso), si no logra retroceder o si el eje se queda
+  atrás de su objetivo más de `stall_time_s + kHeldMarginS` (2 s) sin llegar a
+  `stall_current_a`.
+- `search_lead(max_following_error_rad)`: el `lead` que usa `spark_home`, la
+  mitad de `max_following_error_rad`. Un movimiento (el retroceso, el regreso al
+  inicio) llega cuando queda a `kArrivalFraction` (¼) del `lead` de su meta.
+- `min_backoff_rad(max_following_error_rad)`: el `backoff_rad` mínimo que acepta
+  `validate_driver_config()`, `max_following_error_rad / 4`; con él, el eje se
+  separa del tope al menos la mitad de `backoff_rad`.
 - `ramp_target(objetivo, meta, velocidad, dt, posición, lead)`: el siguiente
   objetivo de una rampa hacia la meta, nunca a más de `lead` de la posición
   medida.

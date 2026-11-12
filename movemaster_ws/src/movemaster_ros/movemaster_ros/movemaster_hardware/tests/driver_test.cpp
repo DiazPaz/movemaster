@@ -202,6 +202,21 @@ void spark_restarts(const char *spec) {
   MoveMasterDriver kept(again, std::move(clean));
   check(kept.configure(SparkResetPolicy::kFault).empty(), "A SPARK that kept its reference was refused");
 
+  // kReport (spark_home's status) names the restarts and leaves them for the next configure.
+  auto report = std::make_unique<SimulatedSparkBus>(again);
+  auto *spy3 = report.get();
+  MoveMasterDriver reporter(again, std::move(report));
+  check(reporter.configure(SparkResetPolicy::kReport) == std::vector<std::string>{"joint_1", "joint_2"},
+      "kReport did not name the restarts");
+  const auto names = spy3->names_sent_to(1);
+  check(spy3->has_reset[1] && spy3->has_reset[2] && std::count(names.begin(), names.end(), "CLEAR_FAULTS") == 0,
+      "kReport cleared HAS_RESET");
+  reporter.read();
+  check(reporter.states()[0].spark_reset && reporter.states()[1].spark_reset, "kReport lost the restart in read()");
+  rejects_with([&] { reporter.activate(); }, "kReport");
+  check(!reporter.active() && std::none_of(spy3->sent.begin(), spy3->sent.end(),
+      [](const CANPacket &p) { return p.arbitration_id == kEnableHeartbeatId; }), "kReport enabled the motors");
+
   // Firmware that does not clear HAS_RESET, or that sends no STATUS_1, must not pass unnoticed.
   auto stuck = std::make_unique<SimulatedSparkBus>(again);
   stuck->clear_faults = false;

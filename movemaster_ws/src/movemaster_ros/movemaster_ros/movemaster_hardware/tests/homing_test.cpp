@@ -83,12 +83,48 @@ void no_stop_within_travel_fails() {
   check(search.phase() == Phase::kFailed && contains(search.error(), "max_travel_rad"), "Unbounded search");
   check(joint.position < 2.0 + 0.1, "Searched past max_travel_rad");
 }
+// A joint held back without a stall fails stall_time_s + kHeldMarginS after it stops following,
+// not after the whole max_travel_rad at speed.
+StopSearch timed_search(Joint &joint, int direction, double &seconds) {
+  int steps = 0;
+  const auto search = run_search(joint, direction, [&](const StopSearch &) { ++steps; });
+  seconds = steps * kDt;
+  return search;
+}
 void joint_that_does_not_move_fails() {
   Joint joint;
   joint.frozen = true;
   joint.current = 0;
-  const auto search = run_search(joint, -1);
+  double seconds = 0;
+  const auto search = timed_search(joint, -1, seconds);
   check(search.phase() == Phase::kFailed && contains(search.error(), "stopped advancing"), "Frozen joint not reported");
+  // 0.8 * lead at fast speed (0.02 s), then stall_time_s + kHeldMarginS (2.02 s).
+  const double expected = 0.8 * 0.05 / homing().fast_speed_rad_s + homing().stall_time_s + kHeldMarginS;
+  check(std::abs(seconds - expected) < 0.01, "Frozen joint failed after " + std::to_string(seconds) + " s");
+}
+// Two holds of 1.1 s each (stiff stretches) add up to more than stall_time_s + kHeldMarginS,
+// but each one is shorter: the search goes on to the stop.
+void brief_holds_are_not_a_failure() {
+  Joint joint;
+  int step = 0;
+  const auto search = run_search(joint, 1, [&](const StopSearch &) {
+    ++step;
+    joint.frozen = (step >= 20 && step < 570) || (step >= 600 && step < 1150);
+  });
+  check(step > 1150 && search.phase() == Phase::kFound && std::abs(search.stop() - 0.6) < 1e-9,
+      "Brief holds failed the search: " + search.error());
+}
+// A stop the motor pushes with less than stall_current_a: reported soon, not as a stop.
+void stop_below_stall_current_fails() {
+  Joint joint;
+  joint.limit = 3;
+  double seconds = 0;
+  const auto search = timed_search(joint, 1, seconds);
+  check(search.phase() == Phase::kFailed && contains(search.error(), "lower stall_current_a"),
+      "Weak push on a stop not reported");
+  // 0.3 s to reach the stop at 0.6 rad, then the same as a frozen joint.
+  check(seconds < 0.3 + 0.02 + homing().stall_time_s + kHeldMarginS + 0.01 && joint.position == 0.6,
+      "Weak push on a stop failed after " + std::to_string(seconds) + " s");
 }
 void ramp() {
   check(ramp_target(0, 1, 2, 0.1, 0, 1) == 0.2, "Ramp step");
@@ -183,18 +219,34 @@ void arguments(const char *spec) {
   rejects_with([&] { spark_home::parse(config, Args{"--measure", "joint_1", "x"}); }, "El sentido es");
   rejects_with([&] { spark_home::parse(config, Args{"--home"}); }, "Se espera --measure");
 }
-// The status names the SPARKs that restarted, against the same driver the node uses.
+// The status names the SPARKs that restarted, against the same driver the node uses, and leaves
+// their HAS_RESET set: the controller_manager still takes (and logs) the power-up pose.
 void status(const char *spec) {
   const auto config = config_for(spec, 2);
   auto bus = std::make_unique<SimulatedSparkBus>(config);
-  bus->has_reset[2] = false;  // only joint_1's SPARK powered up since its last reference
+  auto *spy = bus.get();
+  spy->has_reset[2] = false;  // only joint_1's SPARK powered up since its last reference
   MoveMasterDriver driver(config, std::move(bus));
-  const auto restarted = driver.configure();
+  const auto restarted = driver.configure(SparkResetPolicy::kReport);
   check(restarted == std::vector<std::string>{"joint_1"}, "Restarted SPARKs not reported");
+  for (int run = 0; run < 2; ++run) {  // the same answer every time
+    std::ostringstream out;
+    check(spark_home::status(driver, config, out) == 0, "Status failed");
+    check(contains(out.str(), "joint_1  CAN 1  reiniciado") && contains(out.str(), "joint_2  CAN 2  sin reinicio") &&
+        contains(out.str(), "sigue puesto"), "Status: " + out.str());
+  }
+  const auto names = spy->names_sent_to(1);
+  check(spy->has_reset[1] && std::count(names.begin(), names.end(), "CLEAR_FAULTS") == 0,
+      "The status cleared HAS_RESET");
+  rejects_with([&] { driver.activate(); }, "kReport");
+
+  auto quiet = std::make_unique<SimulatedSparkBus>(config);
+  quiet->has_reset = {{1, false}, {2, false}};
+  MoveMasterDriver kept(config, std::move(quiet));
+  check(kept.configure(SparkResetPolicy::kReport).empty(), "A SPARK that kept its reference was reported");
   std::ostringstream out;
-  check(spark_home::status(driver, config, restarted, out) == 0, "Status failed");
-  check(contains(out.str(), "joint_1  CAN 1  reiniciado") && contains(out.str(), "joint_2  CAN 2  sin reinicio"),
-      "Status: " + out.str());
+  spark_home::status(kept, config, out);
+  check(contains(out.str(), "Ningun SPARK se reinicio"), "Status: " + out.str());
 }
 }  // namespace
 int main(int argc, char **argv) {
@@ -205,12 +257,15 @@ int main(int argc, char **argv) {
     false_stop_fails();
     no_stop_within_travel_fails();
     joint_that_does_not_move_fails();
+    stop_below_stall_current_fails();
+    brief_holds_are_not_a_failure();
     ramp();
     measures_an_arm(argv[1]);
     measurement_failures(argv[1]);
     arguments(argv[1]);
     status(argv[1]);
-    std::cout << "PASS: stop search (both stops, moving current, false stop, travel and time limits), "
+    std::cout << "PASS: stop search (both stops, moving current, false stop, travel limit, held back without "
+        "stall), "
         "spark_home measurement and restore, arguments, status.\n";
     return 0;
   } catch (const std::exception &e) { std::cerr << "FAIL: " << e.what() << '\n'; return 1; }

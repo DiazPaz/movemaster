@@ -1,5 +1,5 @@
 // Homing de MoveMaster, fase 1: estado de la referencia de cada SPARK y medicion de topes.
-//   spark_home SPEC.json JOINTS.json can0                           estado; no mueve nada
+//   spark_home SPEC.json JOINTS.json can0                           estado; no mueve ni borra nada
 //   spark_home SPEC.json JOINTS.json can0 --measure joint_2 [+|-]   mide los topes de un eje
 // Angulos en la convencion DH: + es antihorario alrededor del eje z de la articulacion.
 #include "movemaster_hardware/movemaster_driver.hpp"
@@ -54,26 +54,27 @@ inline std::string angle(double radians) {
   return out.str();
 }
 
-// Que SPARK se reiniciaron. configure() ya tomo su postura de encendido como referencia y borro
-// el aviso, asi que el controller_manager detecta un reinicio posterior. No habilita motores.
+// Que SPARK se reiniciaron, con el driver configurado con SparkResetPolicy::kReport: el aviso
+// HAS_RESET queda puesto para quien configure despues. No habilita motores.
 template<class Driver>
-int status(Driver &driver, const DriverConfig &config, const std::vector<std::string> &restarted,
-    std::ostream &out) {
+int status(Driver &driver, const DriverConfig &config, std::ostream &out) {
   std::this_thread::sleep_for(std::chrono::milliseconds(3 * config.status_period_ms));
   driver.read();
   out << "Estado de los SPARK en " << config.channel << ":\n";
+  bool any = false;
   for (std::size_t i = 0; i < config.joints.size(); ++i) {
     const auto &joint = config.joints[i];
-    const bool reset = std::count(restarted.begin(), restarted.end(), joint.name) != 0;
-    out << "  " << joint.name << "  CAN " << joint.device_id << (reset ? "  reiniciado  " : "  sin reinicio")
-        << "  posicion " << angle(driver.states()[i].position) << '\n';
+    const auto &state = driver.states()[i];
+    any = any || state.spark_reset;
+    out << "  " << joint.name << "  CAN " << joint.device_id << (state.spark_reset ? "  reiniciado  " : "  sin reinicio")
+        << "  posicion " << angle(state.position) << '\n';
   }
-  if (restarted.empty())
-    out << "Ningun SPARK se reinicio desde la ultima referencia: la conservan.\n";
+  if (!any)
+    out << "Ningun SPARK se reinicio desde que se tomo su referencia: la conservan.\n";
   else
     out << "Los SPARK reiniciados cuentan desde la postura en que se encendieron, que zero_offset_rad\n"
-        "supone Home. Su aviso de reinicio quedo borrado: si vuelven a reiniciarse, el\n"
-        "controller_manager lo detecta como fallo.\n";
+        "supone Home. Su aviso de reinicio sigue puesto: el controller_manager (o --measure) toma\n"
+        "esa postura como referencia al configurar, lo avisa en su log y lo borra.\n";
   return 0;
 }
 
@@ -84,7 +85,7 @@ int measure(Driver &driver, const DriverConfig &config, std::size_t index, const
     std::ostream &out) {
   const auto &joint = config.joints.at(index);
   const auto &homing = joint.homing.value();
-  const double lead = 0.5 * joint.max_following_error_rad;
+  const double lead = search_lead(joint.max_following_error_rad);
   const auto tick = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
       std::chrono::duration<double>(config.period_s));
   out << joint.name << ": angulos respecto a la referencia actual (la postura de encendido del SPARK,\n"
@@ -131,7 +132,7 @@ int measure(Driver &driver, const DriverConfig &config, std::size_t index, const
       cycle([&](const JointState &state, double dt) {
         elapsed += dt;
         const double target = ramp_target(targets[index], goal, homing.fast_speed_rad_s, dt, state.position, lead);
-        arrived = target == goal && std::abs(state.position - goal) <= 0.25 * lead;
+        arrived = target == goal && std::abs(state.position - goal) <= kArrivalFraction * lead;
         return target;
       });
       if (!arrived && elapsed > limit) throw std::runtime_error("el eje no regreso a la posicion inicial");
@@ -201,8 +202,14 @@ int main(int argc, char **argv) {
     std::signal(SIGINT, spark_home::request_stop);
     std::signal(SIGTERM, spark_home::request_stop);
     movemaster::MoveMasterDriver driver(config);
-    const auto restarted = driver.configure();
-    if (!request.joint) return spark_home::status(driver, config, restarted, std::cout);
+    if (!request.joint) {
+      driver.configure(movemaster::SparkResetPolicy::kReport);
+      return spark_home::status(driver, config, std::cout);
+    }
+    // Medir toma la postura de encendido como referencia, como el controller_manager.
+    const auto restarted = driver.configure(movemaster::SparkResetPolicy::kAcceptPowerOnPose);
+    for (const auto &name : restarted)
+      std::cout << name << ": SPARK reiniciado; su referencia es la postura en que se encendio (Home).\n";
     return spark_home::measure(driver, config, *request.joint, request.directions, std::cout);
   } catch (const std::exception &e) {
     std::cerr << "Error: " << e.what() << "\nSe detuvieron los envios CAN.\n";

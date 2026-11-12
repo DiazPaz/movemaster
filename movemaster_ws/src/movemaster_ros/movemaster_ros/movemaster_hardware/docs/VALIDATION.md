@@ -1,5 +1,66 @@
 # Validación realizada — 26 de septiembre de 2026
 
+## Homing, fase 1: correcciones de la revisión
+
+12 de noviembre de 2026. Linux x86_64, CMake 3.28, sin ROS ni CAN.
+
+| Compilación | Resultado |
+|---|---|
+| g++ 13.3, Debug, con AddressSanitizer y UBSan | CTest **6/6**, sin errores de memoria ni comportamiento indefinido. |
+| clang 18.1, Release, `-Wall -Wextra -Wpedantic` | CTest **6/6**. Sin avisos en lo que cambió; los únicos son `-Wmissing-field-initializers` en `tests/simulated_spark_bus.hpp` y `tests/setup_test.cpp`, previos (campo `voltage_compensation_v`). |
+
+El plugin de ROS no cambió: sigue llamando a `configure()` con
+`kAcceptPowerOnPose` y `kFault`.
+
+Tres correcciones:
+
+- **Eje retenido sin tope.** Si el eje se quedaba atrás de su objetivo sin
+  llegar a `stall_current_a` (SPARK sin habilitar, PIDF sin fuerza o un tope que
+  el motor empuja con menos corriente), la búsqueda esperaba el tiempo de todo
+  `max_travel_rad`: 127 s con los valores de `joints.json`. Ahora aborta cuando
+  lleva `stall_time_s + 2 s` retenido: 2.6 s con esos valores, en simulación.
+- **El estado de `spark_home` ya no borra `HAS_RESET`.** Usa la política nueva
+  `SparkResetPolicy::kReport`: informa los reinicios, deja el aviso puesto para
+  el `controller_manager` y no permite habilitar. Antes, consultar el estado
+  después de un paro de emergencia borraba el aviso y el nodo ya no lo
+  reportaba al arrancar. En el robot, la segunda corrida ahora también dice
+  `reiniciado`, hasta que el nodo o `--measure` toman la referencia.
+- **`backoff_rad` mínimo.** El retroceso termina cuando el eje queda a ¼ del
+  adelanto (`max_following_error_rad / 8`) de su meta. Con un `backoff_rad` menor
+  que eso, el eje podía seguir en el tope al empezar el acercamiento lento.
+  `validate_driver_config()` exige ahora `backoff_rad ≥ max_following_error_rad
+  / 4`: el eje se separa al menos la mitad de `backoff_rad`. `joints.json` (0.05
+  con 0.1) cumple.
+
+Pruebas nuevas:
+
+- **`homing_stop_search`.** Un eje inmóvil falla en `0.8·lead / velocidad +
+  stall_time_s + 2 s`, no antes ni mucho después; un tope empujado con menos de
+  `stall_current_a` se reporta pronto y no como tope; dos retenciones de 1.1 s,
+  que juntas pasan del límite, no abortan la búsqueda. El estado nombra los
+  SPARK reiniciados dos veces seguidas, sin enviar `CLEAR_FAULTS`, y el driver
+  no se deja activar.
+- **`driver_fake_bus`.** `kReport` devuelve los reinicios, deja `HAS_RESET`
+  puesto, `read()` lo reporta en `spark_reset` sin fallar y `activate()` se
+  niega sin enviar heartbeat.
+- **`config_and_commissioning`.** `backoff_rad` menor que
+  `max_following_error_rad / 4` se rechaza con su mensaje.
+
+Mutaciones: cada uno de estos seis errores hizo fallar al menos una prueba:
+
+1. Sin límite de tiempo para el eje retenido.
+2. Tiempo retenido que no vuelve a 0 cuando el eje alcanza su objetivo (la
+   primera versión de las pruebas no lo detectaba; por eso se agregó la de las
+   dos retenciones).
+3. `kReport` envía `CLEAR_FAULTS`.
+4. `read()` falla con `HAS_RESET` también con `kReport`.
+5. `activate()` permitido con `kReport`.
+6. `backoff_rad` sin validar contra `max_following_error_rad`.
+
+Por probar en el robot: `spark_home` sin `--measure` dos veces seguidas tras
+encender (debe decir `reiniciado` las dos) y después el nodo, que debe mostrar
+un aviso `SPARK powered up` por eje.
+
 ## Homing, fase 1: reinicios de los SPARK y medición de topes
 
 21 de octubre de 2026. Linux x86_64, CMake 3.28, sin ROS ni CAN.
