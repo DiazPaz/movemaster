@@ -8,6 +8,7 @@ Arranca:
   controller_manager     ros2_control_node con MovemasterHardware o hardware simulado.
   spawner                carga y activa joint_state_broadcaster y joint_trajectory_controller.
   spawner                carga jog_controller inactivo (jog desde el teach pendant).
+  spawner                carga y activa gripper_controller, si joints.json tiene el bloque gripper.
 
 joints.json es la única fuente de las articulaciones: de él salen los ejes móviles del
 URDF y su bloque ros2_control, los joints del JointTrajectoryController y la frecuencia
@@ -83,8 +84,10 @@ def _launch_setup(context):
 
     hardware = ('hardware simulado' if use_mock_hardware
                 else f'MovemasterHardware en {arg("can_interface")}')
+    gripper = 'gripper' in config
     return [
-        LogInfo(msg=f'MoveMaster: {", ".join(joints)} a {update_rate} Hz con {hardware}.'),
+        LogInfo(msg=f'MoveMaster: {", ".join(joints)}{" y gripper" if gripper else ""} a '
+                    f'{update_rate} Hz con {hardware}.'),
         Node(
             package='robot_state_publisher', executable='robot_state_publisher',
             output='both', parameters=[{'robot_description': robot_description}],
@@ -116,7 +119,17 @@ def _launch_setup(context):
                 '--controller-manager-timeout', '60',
             ],
         ),
-    ]
+    ] + ([
+        # Activo desde el arranque: no manda nada hasta el primer mensaje en su tópico.
+        Node(
+            package='controller_manager', executable='spawner', output='both',
+            arguments=[
+                'gripper_controller',
+                '--controller-manager', '/controller_manager',
+                '--controller-manager-timeout', '60',
+            ],
+        ),
+    ] if gripper else [])
 
 
 def _read_joint_config(path):

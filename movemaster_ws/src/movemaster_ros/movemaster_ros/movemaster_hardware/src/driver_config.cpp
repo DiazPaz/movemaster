@@ -162,9 +162,21 @@ DriverConfig load_driver_config(const std::filesystem::path &config_path,
   try {
     if (!data.is_object()) throw std::invalid_argument("the file must hold a JSON object");
     only_keys(data, {"period_s", "status_period_ms", "feedback_timeout_s", "response_timeout_s",
-        "disable_settle_s", "max_cycle_gap_s", "parameter_layout", "joints"});
+        "disable_settle_s", "max_cycle_gap_s", "parameter_layout", "joints", "gripper"});
   } catch (const std::exception &e) {
     throw std::invalid_argument("joints.json: " + std::string(e.what()));
+  }
+  std::optional<GripperConfig> gripper;
+  if (data.contains("gripper")) {
+    try {
+      const auto &g = object_field(data, "gripper");
+      in("gripper", [&] {
+        only_keys(g, {"can_id", "closed_deg", "open_deg"});
+        gripper = GripperConfig{integer(g, "can_id"), number(g, "closed_deg"), number(g, "open_deg")};
+      });
+    } catch (const std::exception &e) {
+      throw std::invalid_argument("joints.json: " + std::string(e.what()));
+    }
   }
   const auto &joints = field(data, "joints");
   if (!joints.is_object()) throw std::invalid_argument("joints must be an object indexed by joint name");
@@ -178,6 +190,7 @@ DriverConfig load_driver_config(const std::filesystem::path &config_path,
   config.max_cycle_gap_s = data.value("max_cycle_gap_s", config.max_cycle_gap_s);
   config.status_period_ms = data.value("status_period_ms", config.status_period_ms);
   config.parameter_layout = data.value("parameter_layout", Json(nullptr));
+  config.gripper = gripper;
   std::vector<std::string> order = joint_order;
   if (order.empty()) for (const auto &entry : joints.items()) order.push_back(entry.key());
   if (order.size() != joints.size() || std::set<std::string>(order.begin(), order.end()).size() != order.size())

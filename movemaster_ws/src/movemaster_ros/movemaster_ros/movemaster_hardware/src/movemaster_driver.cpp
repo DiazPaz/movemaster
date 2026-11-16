@@ -122,6 +122,15 @@ void validate_driver_config(const DriverConfig &config) {
           where + ": max_travel_rad must exceed twice backoff_rad");
     }
   }
+  if (config.gripper) {
+    const auto &g = *config.gripper;
+    require(std::any_of(config.joints.begin(), config.joints.end(), [&](const JointConfig &j) {
+          return j.device == JointDevice::kGripper && j.device_id == g.device_id; }),
+        "gripper.can_id must be the can_id of the joint with \"device\": \"gripper\": the servo is on that ESP32");
+    for (const double angle : {g.closed_deg, g.open_deg})
+      require(std::isfinite(angle) && angle >= 0 && angle <= 180, "gripper: closed_deg and open_deg must be in 0..180");
+    require(g.closed_deg != g.open_deg, "gripper: closed_deg and open_deg must differ");
+  }
 }
 MoveMasterDriver::MoveMasterDriver(DriverConfig config, std::unique_ptr<CANBus> bus)
     : config_(std::move(config)), bus_(std::move(bus)) {
@@ -296,6 +305,12 @@ void MoveMasterDriver::receive_gripper(std::size_t i, const CANPacket &packet) {
   s.spark_reset = d.at("NOT_REFERENCED").get<bool>();
   s.heartbeat_present = d.at("HEARTBEAT_PRESENT").get<bool>();
   status0_at_[i] = now;
+  if (config_.gripper && config_.gripper->device_id == j.device_id) {
+    const auto &g = *config_.gripper;
+    gripper_opening_ = d.at("SERVO_ACTIVE").get<bool>()
+        ? (d.at("SERVO_ANGLE").get<double>() - g.closed_deg) / (g.open_deg - g.closed_deg)
+        : std::numeric_limits<double>::quiet_NaN();
+  }
 }
 void MoveMasterDriver::receive(const CANPacket &packet) {
   if (!packet.is_extended_id || packet.is_remote_frame) return;
@@ -469,7 +484,7 @@ void MoveMasterDriver::read() {
     if (active_ && !feedback_fresh()) throw std::runtime_error("STATUS_0/2 watchdog expired");
   } catch (const std::exception &e) { trip(e.what()); throw; }
 }
-void MoveMasterDriver::write(const std::vector<double> &positions) {
+void MoveMasterDriver::write(const std::vector<double> &positions, double gripper_opening) {
   ensure_healthy();
   if (!active_) return;
   try {
@@ -494,6 +509,15 @@ void MoveMasterDriver::write(const std::vector<double> &positions) {
           !(std::abs(positions[i] - states_[i].position) <= j.max_following_error_rad))
         throw std::out_of_range(j.name + ": Position target exceeds max_following_error_rad from the measured position");
       packets.push_back(protocols_[i]->setpoint_packet(control.mode, rotations, control.slot));
+    }
+    if (!std::isnan(gripper_opening)) {
+      require(config_.gripper.has_value(), "No gripper configured in joints.json");
+      if (!(gripper_opening >= 0 && gripper_opening <= 1))
+        throw std::out_of_range("gripper: opening command must be in 0 (closed) .. 1 (open)");
+      // Like the wrist setpoint, the ESP32 ignores it until its heartbeat arrives.
+      const auto &g = *config_.gripper;
+      packets.push_back((*gripper_frames_)["SERVO_SETPOINT"].packet(g.device_id,
+          {{"ANGLE", std::lround(g.closed_deg + gripper_opening * (g.open_deg - g.closed_deg))}}));
     }
     // A caller paced at period_s (the controller_manager loop) wakes up a little early or late
     // every cycle; requiring a full period would drop about a third of the cycles.

@@ -129,6 +129,21 @@ void gripper_joint() {
   broken([](Json &j) { j.erase("max_acceleration_rad_s2"); }, "max_acceleration_rad_s2 is missing");
   broken([](Json &j) { j["device"] = "esp32"; }, "device must be one of: spark, gripper");
   broken([](Json &j) { j["max_position_rad"] = 7.0; }, "within 360 degrees of its zero");
+
+  // The servo: a top-level block, next to joints.
+  data["gripper"] = {{"can_id", 5}, {"closed_deg", 80}, {"open_deg", 120}};
+  const auto servo = load(data).gripper;
+  check(servo && servo->device_id == 5 && servo->closed_deg == 80 && servo->open_deg == 120,
+      "gripper block not loaded");
+  check(!load(Json::parse(kFixture)).gripper, "A gripper appeared without its block");
+  const auto broken_servo = [&](auto mutate, const std::string &expected) {
+    auto copy = data;
+    mutate(copy["gripper"]);
+    rejects_with([&] { load(copy); }, expected);
+  };
+  broken_servo([](Json &g) { g["closing"] = 80; }, "joints.json: gripper.closing is not a known key");
+  broken_servo([](Json &g) { g.erase("open_deg"); }, "joints.json: gripper.open_deg is missing");
+  broken_servo([](Json &g) { g["can_id"] = 1; }, "gripper.can_id must be the can_id of the joint");
 }
 // The optional homing block: loaded as written, and every rule names its field.
 void homing_block() {

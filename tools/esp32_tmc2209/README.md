@@ -174,6 +174,8 @@ cansend can0 0A080045#50    # 80°
 ```
 
 Busca de a poco los ángulos de abierto y cerrado del gripper, sin forzar el servo contra un tope.
+Esos dos ángulos van en el bloque `gripper` de `joints.json` (`closed_deg` y `open_deg`): desde
+ROS 2 el gripper se manda con una apertura de 0 a 1 (MANUAL §4.7 y §11.6).
 
 **4. Muñeca** (VM a 12 V con la corriente ya ajustada en Vref):
 

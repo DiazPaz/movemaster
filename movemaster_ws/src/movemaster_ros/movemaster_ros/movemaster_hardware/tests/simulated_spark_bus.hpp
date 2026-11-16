@@ -35,6 +35,8 @@ struct SimulatedGripper {
   bool muted = false;            // sends no STATUS_0
   double profile_velocity = 0, profile_acceleration = 0;  // last SET_MOTION_PROFILE, deg/s and deg/s^2
   int setpoints = 0;             // accepted WRIST_POSITION_SETPOINTs
+  int servo_angle = 90;          // SERVO_ANGLE: last commanded angle (90 at power-up)
+  bool servo_active = false;     // the servo has a signal: since its first accepted command
   std::optional<std::chrono::steady_clock::time_point> last_heartbeat;
   bool heartbeat(std::chrono::steady_clock::time_point now) const {
     return foreign_heartbeat || (last_heartbeat && now - *last_heartbeat < std::chrono::milliseconds(100));
@@ -107,6 +109,9 @@ class SimulatedSparkBus : public CANBus {
     } else if (name == "WRIST_POSITION_SETPOINT" && gripper.heartbeat(now)) {
       gripper.degrees = gripper_frames[name].decode_payload(p.data).at("SETPOINT").get<double>();
       ++gripper.setpoints;
+    } else if (name == "SERVO_SETPOINT" && gripper.heartbeat(now)) {
+      gripper.servo_angle = gripper_frames[name].decode_payload(p.data).at("ANGLE").get<int>();
+      gripper.servo_active = true;
     }
   }
   std::uint32_t value(int id, int parameter) const { return ram.at({id, parameter}); }
@@ -177,7 +182,8 @@ class SimulatedSparkBus : public CANBus {
     if (gripper.id >= 0 && !gripper.muted) {
       const bool heartbeat = gripper.heartbeat(std::chrono::steady_clock::now());
       pending.push_back(gripper_frames["STATUS_0"].packet(gripper.id, {{"WRIST_POSITION", gripper.degrees},
-          {"SERVO_ANGLE", 90}, {"DRIVER_ENERGIZED", gripper.last_heartbeat.has_value()},
+          {"SERVO_ANGLE", gripper.servo_angle}, {"SERVO_ACTIVE", gripper.servo_active},
+          {"DRIVER_ENERGIZED", gripper.last_heartbeat.has_value()},
           {"WRIST_MOVING", gripper.moving}, {"HEARTBEAT_PRESENT", heartbeat}, {"NOT_REFERENCED", !gripper.referenced}}));
     }
   }

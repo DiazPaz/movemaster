@@ -189,6 +189,18 @@ def test_ros2_control_declares_the_joints_of_joints_json(use_mock_hardware):
             'position', 'velocity'] + (['current'] if spark else [])
 
 
+def test_ros2_control_declares_the_gripper_of_joints_json(three_axes):
+    # The gripper block of joints.json becomes a GPIO; MovemasterHardware::on_init accepts
+    # only this one, with an opening command and state.
+    gpios = robot().findall('ros2_control/gpio')
+    assert [gpio.get('name') for gpio in gpios] == (['gripper'] if 'gripper' in CONFIG else [])
+    for gpio in gpios:
+        assert [i.get('name') for i in gpio.findall('command_interface')] == ['opening']
+        assert [i.get('name') for i in gpio.findall('state_interface')] == ['opening']
+    path, _ = three_axes
+    assert not robot(joint_config=path).findall('ros2_control/gpio')
+
+
 def test_real_hardware_receives_the_plugin_parameters():
     hardware = robot().find('ros2_control/hardware')
     assert hardware.findtext('plugin') == 'movemaster_hardware/MovemasterHardware'

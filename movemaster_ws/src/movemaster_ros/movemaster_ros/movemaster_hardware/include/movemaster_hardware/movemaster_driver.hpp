@@ -40,6 +40,13 @@ struct JointConfig {
   std::map<int, SlotConfig> slots;
   std::optional<HomingConfig> homing;  // only for spark_home
 };
+// The gripper servo, on the ESP32 that moves the wrist. ROS commands an opening from 0 (closed)
+// to 1 (open), which maps linearly onto the servo angles where the gripper closes and opens.
+struct GripperConfig {
+  int device_id = -1;  // the can_id of the gripper joint: the servo shares its ESP32
+  double closed_deg = std::numeric_limits<double>::quiet_NaN();  // servo angle, 0..180
+  double open_deg = std::numeric_limits<double>::quiet_NaN();
+};
 struct DriverConfig {
   std::filesystem::path spec_path;
   std::string channel = "can0";
@@ -51,6 +58,7 @@ struct DriverConfig {
   int status_period_ms = 20;
   Json parameter_layout = nullptr;
   std::vector<JointConfig> joints;
+  std::optional<GripperConfig> gripper;
 };
 struct JointState {
   double position = std::numeric_limits<double>::quiet_NaN();  // rad
@@ -95,13 +103,19 @@ class MoveMasterDriver {
   void activate();
   void deactivate() noexcept;
   void read();
-  void write(const std::vector<double> &positions_rad);
+  // gripper_opening: 0 (closed) to 1 (open), only with a gripper configured. NaN sends no
+  // command: the servo keeps its angle, or stays without signal until its first command.
+  void write(const std::vector<double> &positions_rad,
+      double gripper_opening = std::numeric_limits<double>::quiet_NaN());
   // Applies from the next write(), also while active, and is kept across activations.
   void set_control(std::size_t joint, ControlMode mode, int slot);
   // Smart Current Limit (stall and free) in RAM, with ACK; only while not active.
   void set_current_limit(std::size_t joint, int amps);
   const std::vector<JointControl> &controls() const { return controls_; }
   const std::vector<JointState> &states() const { return states_; }
+  // The gripper's last commanded opening, as its STATUS_0 reports it: the servo has no sensor.
+  // NaN while the servo has no signal (since the ESP32 powered up) or without a gripper.
+  double gripper_opening() const { return gripper_opening_; }
   bool active() const { return active_; }
   // Setup requests configure() sent again because no reply arrived (see SparkSetup).
   int setup_retries() const { return setup_retries_; }
@@ -121,6 +135,7 @@ class MoveMasterDriver {
   std::unique_ptr<SparkFrameDatabase> gripper_frames_;  // only with a gripper joint
   double gripper_status_period_s_ = 0;                   // its STATUS_0 period
   std::vector<CANPacket> gripper_heartbeats_;            // one per gripper joint
+  double gripper_opening_ = std::numeric_limits<double>::quiet_NaN();
   bool has_spark_ = false;
   std::vector<JointState> states_;
   std::vector<JointControl> controls_;
