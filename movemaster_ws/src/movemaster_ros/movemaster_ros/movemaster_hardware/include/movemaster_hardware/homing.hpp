@@ -17,6 +17,22 @@ struct HomingConfig {
   double max_travel_rad = std::numeric_limits<double>::quiet_NaN();  // no stop within it: abort
 };
 
+// How far spark_home lets the target run ahead of the joint, as a fraction of the joint's
+// max_following_error_rad, so that the driver never refuses a Position target.
+constexpr double kSearchLeadFraction = 0.5;
+inline double search_lead(double max_following_error_rad) { return kSearchLeadFraction * max_following_error_rad; }
+// A move (the backoff, the return to the start) has arrived within this fraction of the lead
+// from its goal.
+constexpr double kArrivalFraction = 0.25;
+// The shortest backoff_rad: with it, the backoff takes the joint away from the stop by at least
+// half of backoff_rad before the slow approach.
+inline double min_backoff_rad(double max_following_error_rad) {
+  return 2 * kArrivalFraction * search_lead(max_following_error_rad);
+}
+// A joint held back from its target this much longer than stall_time_s without a confirmed
+// stall is not pushing (SPARK not enabled, PIDF) or pushes on a stop below stall_current_a.
+constexpr double kHeldMarginS = 2.0;
+
 // Next target toward goal at speed, never farther than lead from the measured position.
 double ramp_target(double target, double goal, double speed, double dt, double position, double lead);
 
@@ -40,7 +56,8 @@ class StopSearch {
   double lead_;
   Phase phase_ = Phase::kFastApproach;
   bool started_ = false;
-  double target_ = 0, last_position_ = 0, phase_start_ = 0, phase_time_ = 0, stalled_ = 0, contact_ = 0;
+  double target_ = 0, last_position_ = 0, phase_start_ = 0, phase_time_ = 0, stalled_ = 0, held_ = 0,
+      contact_ = 0;
   double stop_ = std::numeric_limits<double>::quiet_NaN(), free_peak_ = 0, stop_current_ = 0;
   std::string error_;
   void approach(double position, double current, double dt);

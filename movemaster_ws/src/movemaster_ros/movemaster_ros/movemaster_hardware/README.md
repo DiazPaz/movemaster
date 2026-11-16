@@ -67,7 +67,7 @@ uso está en [../docs/MANUAL.md](../docs/MANUAL.md) y los términos en
 | `examples/driver_monitor.cpp` | Configuración RAM y lectura de telemetría, sin habilitación. |
 | `examples/spark_console.cpp` | Habilitación y envío interactivo de SP para un eje, en Position o MAXMotion. |
 | `examples/spark_commission.cpp` | Puesta en marcha: restablece, escribe el baseline y lo persiste. |
-| `examples/spark_home.cpp` | Muestra qué SPARK se reiniciaron y mide los topes mecánicos de un eje. |
+| `examples/spark_home.cpp` | Muestra qué SPARK se reiniciaron (sin borrar el aviso) y mide los topes mecánicos de un eje. |
 | `tests/` | Comparación contra Python, y pruebas del driver, la configuración, la puesta en marcha y la búsqueda de topes con transporte simulado. |
 
 La dependencia es:
@@ -154,9 +154,13 @@ físicamente. La referencia completa de `joints.json` v2 está en
 | `zero_offset_rad` | Posición articular cuando el encoder del motor indica cero. |
 | `min_position_rad`, `max_position_rad` | Límites calibrados de la articulación, en radianes. |
 | `max_velocity_rad_s` | Velocidad máxima de la articulación; límite del URDF y tope de toda cruise velocity. |
-| `spark` | `motor_type` (`"brushless"`), `idle_mode` y `current_limit_a`: lo que la puesta en marcha guarda en flash. |
+| `spark` | `motor_type` (`"brushless"`), `idle_mode`, `current_limit_a` y, opcional, `voltage_compensation_v`: lo que la puesta en marcha guarda en flash. |
 | `control` | `mode` y `slot` de arranque, y `max_following_error_rad` para el modo Position. |
 | `slots."0"` a `slots."3"` | `pidf`, `output_range` opcional y `maxmotion` opcional (RPM, RPM/s, rotaciones del **motor**). |
+
+La muñeca (`joint_5`) no tiene SPARK: la mueve la ESP32 del gripper, con
+`"device": "gripper"` y sus propios campos (sin `gear_ratio` ni bloques del
+SPARK). Ver [MANUAL §4.6](../docs/MANUAL.md#46-la-muñeca-en-la-esp32-del-gripper-joint_5).
 
 Se usa una articulación independiente por SPARK. Para seis ejes, agregar
 `joint_4`, `joint_5` y `joint_6` tanto al JSON como al bloque `ros2_control`;

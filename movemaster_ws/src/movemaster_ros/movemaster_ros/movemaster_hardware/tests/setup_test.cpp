@@ -12,7 +12,7 @@ using namespace movemaster::testing;
 namespace {
 std::filesystem::path spec, config_dir, scratch;
 const std::vector<std::string> kCommissionOrder{"RESET_SAFE_PARAMETERS", "PARAMETER_WRITE", "PARAMETER_WRITE",
-    "PARAMETER_WRITE", "PARAMETER_WRITE", "PERSIST_PARAMETERS"};
+    "PARAMETER_WRITE", "PARAMETER_WRITE", "PARAMETER_WRITE", "PARAMETER_WRITE", "PERSIST_PARAMETERS"};
 
 // The tests' own joints.json, so they never depend on how the bench file is calibrated.
 const char *const kFixture = R"json({
@@ -48,7 +48,11 @@ void fixture_loads() {
   check(j.name == "joint_1" && j.device_id == 1 && j.gear_ratio == 10 && j.direction == -1 &&
       j.zero_offset_rad == 0.1 && j.min_position_rad == -2 && j.max_position_rad == 2 && j.max_velocity_rad_s == 3,
       "Joint fields not loaded");
-  check(j.spark.idle_mode == IdleMode::kBrake && j.spark.current_limit_a == 40, "spark block not loaded");
+  check(j.spark.idle_mode == IdleMode::kBrake && j.spark.current_limit_a == 40 && !j.spark.voltage_compensation_v,
+      "spark block not loaded");
+  auto data = Json::parse(kFixture);
+  data["joints"]["joint_1"]["spark"]["voltage_compensation_v"] = 11.5;
+  check(load(data).joints.at(0).spark.voltage_compensation_v == 11.5, "voltage_compensation_v not loaded");
   check(j.mode == ControlMode::kMAXMotionPosition && j.slot == 0 && j.max_following_error_rad == 0.2,
       "control block not loaded");
   check(j.slots.size() == 1 && j.slots.at(0).pidf.at("p") == 0.5 &&
@@ -70,6 +74,9 @@ void loader_errors() {
   broken([](Json &j) { j["spark"]["idle_mode"] = "hold"; }, "spark.idle_mode must be one of: coast, brake");
   broken([](Json &j) { j["spark"]["current_limit_a"] = 40.5; }, "spark.current_limit_a must be an integer");
   broken([](Json &j) { j["spark"]["current_limit_a"] = 0; }, "current_limit_a must be in 1..80 A");
+  broken([](Json &j) { j["spark"]["voltage_compensation_v"] = "12"; }, "spark.voltage_compensation_v must be a number");
+  broken([](Json &j) { j["spark"]["voltage_compensation_v"] = 5; }, "voltage_compensation_v must be in 5.5..24 V");
+  broken([](Json &j) { j["spark"]["voltage_compensation_v"] = 25; }, "voltage_compensation_v must be in 5.5..24 V");
   broken([](Json &j) { j.erase("spark"); }, "spark is missing");
   broken([](Json &j) { j["control"].erase("max_following_error_rad"); }, "control.max_following_error_rad is missing");
   broken([](Json &j) { j["control"]["max_following_error_rad"] = 0; }, "max_following_error_rad must be positive");
@@ -98,6 +105,31 @@ void loader_errors() {
       position.slots.at(1).maxmotion.is_null(), "Position-only slot not loaded");
   check(position.slots.at(0).output_min == -1 && position.slots.at(0).output_max == 1, "Default output range");
 }
+// The gripper wrist ("device": "gripper"): its own fields, and the SPARK ones refused by name.
+void gripper_joint() {
+  auto data = Json::parse(kFixture);
+  data["joints"]["joint_5"] = {{"device", "gripper"}, {"can_id", 5}, {"direction", -1}, {"zero_offset_rad", 0.1},
+      {"min_position_rad", -3.0}, {"max_position_rad", 3.0}, {"max_velocity_rad_s", 1.5},
+      {"max_acceleration_rad_s2", 3.0}};
+  const auto config = load(data);
+  const auto &w = config.joints.at(1);
+  check(config.joints.at(0).device == JointDevice::kSpark && w.device == JointDevice::kGripper &&
+      w.name == "joint_5" && w.device_id == 5 && w.direction == -1 && w.zero_offset_rad == 0.1 &&
+      w.min_position_rad == -3 && w.max_position_rad == 3 && w.max_velocity_rad_s == 1.5 &&
+      w.max_acceleration_rad_s2 == 3, "Gripper joint fields not loaded");
+  data["joints"]["joint_1"]["device"] = "spark";
+  check(load(data).joints.at(0).device == JointDevice::kSpark, "\"device\": \"spark\" not accepted");
+  const auto broken = [&](auto mutate, const std::string &expected) {
+    auto copy = data;
+    mutate(copy["joints"]["joint_5"]);
+    rejects_with([&] { load(copy); }, expected);
+  };
+  broken([](Json &j) { j["gear_ratio"] = 5; }, "gear_ratio does not apply to a gripper joint");
+  broken([](Json &j) { j["spark"] = Json::object(); }, "spark is not a known key");
+  broken([](Json &j) { j.erase("max_acceleration_rad_s2"); }, "max_acceleration_rad_s2 is missing");
+  broken([](Json &j) { j["device"] = "esp32"; }, "device must be one of: spark, gripper");
+  broken([](Json &j) { j["max_position_rad"] = 7.0; }, "within 360 degrees of its zero");
+}
 // The optional homing block: loaded as written, and every rule names its field.
 void homing_block() {
   auto data = Json::parse(kFixture);
@@ -122,6 +154,8 @@ void homing_block() {
   broken([](Json &h) { h["slow_speed_rad_s"] = 0.2; }, "speeds must satisfy");
   broken([](Json &h) { h["fast_speed_rad_s"] = 4.0; }, "speeds must satisfy");
   broken([](Json &h) { h["backoff_rad"] = 0; }, "backoff_rad must be positive");
+  // max_following_error_rad is 0.2 in the fixture.
+  broken([](Json &h) { h["backoff_rad"] = 0.049; }, "backoff_rad must be at least max_following_error_rad / 4");
   broken([](Json &h) { h["max_travel_rad"] = 0.1; }, "max_travel_rad must exceed twice backoff_rad");
   auto wrong = data;
   wrong["joints"]["joint_1"]["homing"] = 3;
@@ -131,6 +165,15 @@ bool sent_frame(const SimulatedSparkBus &bus, const char *name) {
   for (const auto &p : bus.sent)
     if ((p.arbitration_id & ~0x3FU) == (bus.frames[name].base_arb_id() & ~0x3FU)) return true;
   return false;
+}
+// Parameter IDs of the PARAMETER_WRITE frames sent to one SPARK, in order.
+std::vector<int> parameters_written(const SimulatedSparkBus &bus, int id) {
+  std::vector<int> result;
+  const auto &write = bus.frames["PARAMETER_WRITE"];
+  for (const auto &p : bus.sent)
+    if ((p.arbitration_id & ~0x3FU) == write.base_arb_id() && static_cast<int>(p.arbitration_id & 63) == id)
+      result.push_back(write.decode_payload(p.data).at("PARAMETER_ID").get<int>());
+  return result;
 }
 // Reset to REV defaults, write the baseline, persist; nothing reaches flash after a failure.
 void commissioning() {
@@ -144,6 +187,17 @@ void commissioning() {
   check(bus.names_sent_to(3) == kCommissionOrder, "Commissioning must reset, write the baseline, then persist");
   check(bus.value(3, 2) == 1 && bus.value(3, 6) == 0 && bus.value(3, 59) == 30 && bus.value(3, 60) == 30,
       "Baseline values");
+  // Without voltage_compensation_v, compensation is written off: mode first, then a nominal of 0.
+  check(bus.value(3, 74) == 0 && bus.value(3, 75) == 0, "Voltage compensation must be written off");
+  check(parameters_written(bus, 3) == std::vector<int>{2, 6, 59, 60, 74, 75}, "Baseline write order (off)");
+
+  // With it, the nominal voltage goes before the mode, so the mode is never on with 0 V.
+  SimulatedSparkBus compensated(spec, {3});
+  commission(compensated, {IdleMode::kBrake, 40, 12.0});
+  check(compensated.names_sent_to(3) == kCommissionOrder, "Commissioning order with voltage compensation");
+  check(compensated.value(3, 74) == 2 && SignalCodec::_u32_to_float(compensated.value(3, 75)) == 12.0,
+      "Voltage compensation values");
+  check(parameters_written(compensated, 3) == std::vector<int>{2, 6, 59, 60, 75, 74}, "Baseline write order (on)");
   check(bus.frames["RESET_SAFE_PARAMETERS"].decode_payload(bus.sent.front().data).at("MAGIC_NUMBER") == 36292 &&
       bus.frames["PERSIST_PARAMETERS"].decode_payload(bus.sent.back().data).at("MAGIC_NUMBER") == 15011,
       "Flash commands must carry the magic numbers of the spec");
@@ -173,6 +227,10 @@ void commission_tool() {
   check(!review.apply && review.joints.size() == 3 && every.apply && every.joints.size() == 3, "Joint selection");
   check(second.apply && second.joints.size() == 1 && second.joints[0]->name == "joint_2",
       "Naming one joint must select only that joint");
+  // The gripper wrist has no flash to commission.
+  const auto with_wrist = config_with_gripper(spec, 2);
+  check(spark_commission::parse(with_wrist, {"--apply"}).joints.size() == 2, "The gripper wrist was not left out");
+  rejects_with([&] { spark_commission::parse(with_wrist, {"joint_3"}); }, "joint_3 es la muneca del gripper");
   std::string output;
   const auto run = [&](SimulatedSparkBus &bus, const spark_commission::Request &request) {
     std::ostringstream out;
@@ -244,7 +302,8 @@ void parameter_table() {
         "ID " + std::to_string(p.parameter_id) + " (" + p.key + ") is not " + name + " in the parameter table");
   };
   for (const auto *p : {&rev::kMotorType, &rev::kIdleMode, &rev::kFeedbackSensor, &rev::kSmartCurrentStallLimit,
-           &rev::kSmartCurrentFreeLimit, &rev::kPositionConversionFactor, &rev::kVelocityConversionFactor,
+           &rev::kSmartCurrentFreeLimit, &rev::kVoltageCompMode, &rev::kCompensatedNominalVoltage,
+           &rev::kPositionConversionFactor, &rev::kVelocityConversionFactor,
            &rev::kPositionWrapping, &rev::kStatus0Period, &rev::kStatus1Period, &rev::kStatus2Period})
     agrees(*p, p->description);
   // DEFAULT_PARAMETER_LAYOUT keeps the Python descriptions; these are its names in the table.
@@ -260,7 +319,10 @@ void parameter_table() {
   check(rev::kBrushless == table.value("MotorType", "BRUSHLESS") &&
       rev::kMainEncoder == table.value("Sensor", "MAIN_ENCODER") &&
       static_cast<int>(IdleMode::kCoast) == table.value("IdleMode", "COAST") &&
-      static_cast<int>(IdleMode::kBrake) == table.value("IdleMode", "BRAKE"), "Enum values differ from the parameter table");
+      static_cast<int>(IdleMode::kBrake) == table.value("IdleMode", "BRAKE") &&
+      rev::kNoVoltageComp == table.value("VoltageCompMode", "NO_VOLTAGE_COMP") &&
+      rev::kNominalVoltageComp == table.value("VoltageCompMode", "NOMINAL_VOLTAGE_COMP"),
+      "Enum values differ from the parameter table");
 }
 // The survey only listens: which SPARKs answer, and whether something enables motors.
 void survey() {
@@ -284,12 +346,13 @@ int main(int argc, char **argv) {
     fixture_loads();
     parameter_table();
     loader_errors();
+    gripper_joint();
     homing_block();
     commissioning();
     commission_tool();
     survey();
     std::cout << "PASS: bench joints.json valid, loader fields, parameter IDs against SparkParameters-v0.1.2.md, "
-        "v2 loader errors, Position-only slots, homing block, commissioning order, "
+        "v2 loader errors, Position-only slots, gripper joint, homing block, commissioning order, "
         "magic numbers and failures, spark_commission selection and refusals, bus survey.\n";
   } catch (const std::exception &e) {
     std::cerr << "FAIL: " << e.what() << '\n';

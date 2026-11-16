@@ -6,6 +6,10 @@ namespace movemaster {
 namespace rev {
 const ParameterDefinition kMotorType{"baseline", "motor_type", 0, 2, "uint", "Motor Type", std::nullopt};
 const ParameterDefinition kIdleMode{"baseline", "idle_mode", 0, 6, "uint", "Idle Mode", std::nullopt};
+const ParameterDefinition kVoltageCompMode{"baseline", "voltage_comp_mode", 0, 74, "uint", "Voltage Compensation Mode",
+    std::nullopt};
+const ParameterDefinition kCompensatedNominalVoltage{"baseline", "compensated_nominal_voltage", 0, 75, "float",
+    "Compensated Nominal Voltage", "V"};
 const ParameterDefinition kFeedbackSensor{"setup", "feedback_sensor", 0, 9, "uint", "Closed Loop Control Sensor",
     std::nullopt};
 const ParameterDefinition kSmartCurrentStallLimit{"baseline", "smart_current_stall_limit", 0, 59, "uint",
@@ -84,6 +88,14 @@ void SparkSetup::write_baseline(const SparkBaseline &baseline) const {
   write(rev::kIdleMode, static_cast<int>(baseline.idle_mode));
   write(rev::kSmartCurrentStallLimit, baseline.current_limit_a);
   write(rev::kSmartCurrentFreeLimit, baseline.current_limit_a);
+  // The mode is never on with a nominal voltage of 0: on, the voltage goes first; off, the mode.
+  if (baseline.voltage_compensation_v) {
+    write(rev::kCompensatedNominalVoltage, *baseline.voltage_compensation_v);
+    write(rev::kVoltageCompMode, rev::kNominalVoltageComp);
+  } else {
+    write(rev::kVoltageCompMode, rev::kNoVoltageComp);
+    write(rev::kCompensatedNominalVoltage, 0.0);
+  }
 }
 void SparkSetup::write_slot(int slot, const SlotConfig &config) const {
   for (const auto &item : config.pidf.items()) write(spark_["pidf"][slot][item.key()], item.value());

@@ -67,7 +67,8 @@ CallbackReturn MovemasterHardware::on_configure(const rclcpp_lifecycle::State &)
         reference_taken_ ? SparkResetPolicy::kFault : SparkResetPolicy::kAcceptPowerOnPose);
     for (const auto &name : restarted)
       RCLCPP_WARN(rclcpp::get_logger("MovemasterHardware"),
-          "%s: SPARK powered up; its zero is the pose it powered up in, which zero_offset_rad assumes is Home.",
+          "%s: powered up (SPARK or gripper ESP32); its zero is the pose it powered up in, which "
+          "zero_offset_rad assumes is Home.",
           name.c_str());
     if (driver_->setup_retries() > 0)
       RCLCPP_WARN(rclcpp::get_logger("MovemasterHardware"),

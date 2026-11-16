@@ -226,5 +226,7 @@ heartbeat.stop()
 
 `send_periodic` deja al kernel enviando el heartbeat cada 20 ms.
 
-Cuando el driver de ROS controle el gripper, no mandes el heartbeat de prueba al mismo tiempo: el
-paro del driver consiste en dejar de mandarlo, y un segundo emisor lo anularía.
+El driver de ROS 2 ya mueve la muñeca como `joint_5` (MANUAL §4.6) y manda él mismo este
+heartbeat. No mandes el heartbeat de prueba al mismo tiempo: el paro del driver consiste en dejar
+de mandarlo, y un segundo emisor lo anularía. Por eso el driver se niega a arrancar si lo detecta.
+Estas pruebas se hacen con el driver apagado.
