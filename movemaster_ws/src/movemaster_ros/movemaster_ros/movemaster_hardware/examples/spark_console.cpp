@@ -164,6 +164,9 @@ int main(int argc, char **argv) {
   try {
     auto config = movemaster::load_driver_config(argv[2], argv[1], argv[3]);
     if (config.joints.size() != 1) throw std::invalid_argument("Deja un solo joint en JOINTS.json");
+    if (config.joints.front().device != movemaster::JointDevice::kSpark)
+      throw std::invalid_argument(config.joints.front().name + " es la muneca del gripper (ESP32): esta consola "
+          "maneja un SPARK. Pruebala con cansend (tools/esp32_tmc2209/README.md)");
     std::signal(SIGINT, spark_console::request_stop);
     std::signal(SIGTERM, spark_console::request_stop);
     movemaster::MoveMasterDriver driver(config);

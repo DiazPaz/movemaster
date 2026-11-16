@@ -183,8 +183,10 @@ def test_ros2_control_declares_the_joints_of_joints_json(use_mock_hardware):
         # ros2_control's component parser rejects joints missing from the URDF.
         assert urdf_joints[joint.get('name')] == 'revolute'
         assert [i.get('name') for i in joint.findall('command_interface')] == ['position']
+        # Only a SPARK measures current; the gripper ESP32 does not.
+        spark = CONFIG['joints'][joint.get('name')].get('device', 'spark') == 'spark'
         assert [i.get('name') for i in joint.findall('state_interface')] == [
-            'position', 'velocity', 'current']
+            'position', 'velocity'] + (['current'] if spark else [])
 
 
 def test_real_hardware_receives_the_plugin_parameters():

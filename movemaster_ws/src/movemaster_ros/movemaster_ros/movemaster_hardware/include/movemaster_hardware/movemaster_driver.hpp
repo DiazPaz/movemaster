@@ -7,15 +7,29 @@
 #include <memory>
 
 namespace movemaster {
+// What moves a joint: a SPARK MAX with its NEO, or the gripper's ESP32, which drives the wrist
+// stepper (spec/gripper-frames-1.0.0). The ESP32 works in wrist degrees and applies the
+// reduction itself (REDUCCION in its firmware), so a gripper joint has no gear_ratio and none
+// of the SPARK blocks.
+enum class JointDevice { kSpark, kGripper };
+// The gripper catalog is read from the same folder as the SPARK one (DriverConfig::spec_path).
+inline constexpr const char *kGripperFramesFile = "gripper-frames-1.0.0";
+// The gripper firmware takes positions within this many degrees of its zero (LIMITE_GRADOS).
+inline constexpr double kGripperMaxDegrees = 360;
+
 struct JointConfig {
   std::string name;
-  int device_id = -1;
+  JointDevice device = JointDevice::kSpark;
+  int device_id = -1;  // SPARK CAN ID, or the gripper's device number (CAN_DISPOSITIVO)
   double gear_ratio = std::numeric_limits<double>::quiet_NaN();  // motor turns / joint turn
   int direction = 1;                                        // +1 or -1
   double zero_offset_rad = std::numeric_limits<double>::quiet_NaN();
   double min_position_rad = std::numeric_limits<double>::quiet_NaN();
   double max_position_rad = std::numeric_limits<double>::quiet_NaN();
   double max_velocity_rad_s = std::numeric_limits<double>::quiet_NaN();  // bounds every cruise velocity
+  // Gripper only: with max_velocity_rad_s, the wrist's motion profile (SET_MOTION_PROFILE).
+  double max_acceleration_rad_s2 = std::numeric_limits<double>::quiet_NaN();
+  // The rest is for SPARK joints only.
   SparkBaseline spark;
   // Control at activation; set_control() changes it at runtime.
   ControlMode mode = ControlMode::kMAXMotionPosition;
@@ -41,9 +55,12 @@ struct DriverConfig {
 struct JointState {
   double position = std::numeric_limits<double>::quiet_NaN();  // rad
   double velocity = std::numeric_limits<double>::quiet_NaN();  // rad/s
-  double current = std::numeric_limits<double>::quiet_NaN();   // A, never torque
+  double current = std::numeric_limits<double>::quiet_NaN();   // A, never torque; none for the gripper
   bool primary_heartbeat_lock = false;
-  bool spark_reset = false;  // STATUS_1: the SPARK restarted since its faults were last cleared
+  // The device restarted since the driver last took its reference: HAS_RESET in a SPARK's
+  // STATUS_1, NOT_REFERENCED in the gripper's STATUS_0.
+  bool spark_reset = false;
+  bool heartbeat_present = false;  // gripper STATUS_0: its HEARTBEAT arrives
 };
 struct JointControl {
   ControlMode mode;
@@ -57,6 +74,7 @@ void validate_driver_config(const DriverConfig &config);
 
 // A SPARK keeps its encoder count while powered. After a restart (power-up, emergency stop) it
 // counts from where it powered up, and the joint is at zero_offset_rad only if that was Home.
+// The gripper's ESP32 does the same with its step count. The policies apply to both.
 enum class SparkResetPolicy {
   kAcceptPowerOnPose,  // the pose at power-up is the reference, as when starting in Home
   kFault,              // a restart is a fault: the position was lost mid-session
@@ -91,13 +109,22 @@ class MoveMasterDriver {
   static double radians_to_rotations(double radians, const JointConfig &joint);
   static double rotations_to_radians(double rotations, const JointConfig &joint);
   static double rpm_to_rad_s(double rpm, const JointConfig &joint);
+  // Gripper joints: joint radians <-> wrist degrees of the ESP32 (direction and zero_offset_rad).
+  static double radians_to_wrist_degrees(double radians, const JointConfig &joint);
+  static double wrist_degrees_to_radians(double degrees, const JointConfig &joint);
  private:
   using Clock = std::chrono::steady_clock;
   DriverConfig config_;
   std::unique_ptr<CANBus> bus_;
+  // One per joint; null for a gripper joint, which uses gripper_frames_.
   std::vector<std::unique_ptr<SparkMAXMotionProtocol>> protocols_;
+  std::unique_ptr<SparkFrameDatabase> gripper_frames_;  // only with a gripper joint
+  double gripper_status_period_s_ = 0;                   // its STATUS_0 period
+  std::vector<CANPacket> gripper_heartbeats_;            // one per gripper joint
+  bool has_spark_ = false;
   std::vector<JointState> states_;
   std::vector<JointControl> controls_;
+  // A gripper joint has only STATUS_0: position, restart and heartbeat in one frame.
   std::vector<std::optional<Clock::time_point>> status0_at_, status1_at_, status2_at_;
   // Each joint's STATUS_0/1/2 arbitration IDs, resolved once: receive() checks every frame.
   struct StatusIds { std::uint32_t status0, status1, status2; };
@@ -110,10 +137,15 @@ class MoveMasterDriver {
   void ensure_healthy() const;
   void trip(const std::string &message) noexcept;
   void receive(const CANPacket &packet);
+  void receive_gripper(std::size_t joint, const CANPacket &packet);
   bool feedback_fresh() const;
   void wait_feedback();
+  // Waits for the frame with each joint's restart flag (a SPARK's STATUS_1, the gripper's
+  // STATUS_0) received after the call; with cleared, also for the flag to be off.
   void wait_status1(const std::vector<std::size_t> &joints, bool cleared);
   void check_cycle_gap() const;
   double checked_target(double radians, const JointConfig &joint) const;
+  double checked_wrist_target(double radians, const JointConfig &joint) const;
+  void require_spark(std::size_t joint) const;
 };
 }  // namespace movemaster

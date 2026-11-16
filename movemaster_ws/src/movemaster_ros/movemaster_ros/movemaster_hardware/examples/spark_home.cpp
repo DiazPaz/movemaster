@@ -66,7 +66,8 @@ int status(Driver &driver, const DriverConfig &config, std::ostream &out) {
     const auto &joint = config.joints[i];
     const auto &state = driver.states()[i];
     any = any || state.spark_reset;
-    out << "  " << joint.name << "  CAN " << joint.device_id << (state.spark_reset ? "  reiniciado  " : "  sin reinicio")
+    out << "  " << joint.name << (joint.device == JointDevice::kGripper ? "  ESP32 " : "  CAN ") << joint.device_id
+        << (state.spark_reset ? "  reiniciado  " : "  sin reinicio")
         << "  posicion " << angle(state.position) << '\n';
   }
   if (!any)

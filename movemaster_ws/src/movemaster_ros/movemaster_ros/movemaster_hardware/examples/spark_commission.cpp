@@ -23,11 +23,17 @@ inline Request parse(const DriverConfig &config, const std::vector<std::string> 
     if (arg == "--apply") request.apply = true;
     else names.insert(arg);
   }
-  for (const auto &name : names)
-    if (std::none_of(config.joints.begin(), config.joints.end(), [&](const JointConfig &j) { return j.name == name; }))
-      throw std::invalid_argument("Joint desconocido en JOINTS.json: " + name);
+  for (const auto &name : names) {
+    const auto joint = std::find_if(config.joints.begin(), config.joints.end(),
+        [&](const JointConfig &j) { return j.name == name; });
+    if (joint == config.joints.end()) throw std::invalid_argument("Joint desconocido en JOINTS.json: " + name);
+    if (joint->device != JointDevice::kSpark)
+      throw std::invalid_argument(name + " es la muneca del gripper (ESP32), no un SPARK: no tiene flash que poner en marcha");
+  }
+  // La muneca del gripper no tiene flash que poner en marcha: se omite.
   for (const auto &joint : config.joints)
-    if (names.empty() || names.count(joint.name)) request.joints.push_back(&joint);
+    if (joint.device == JointDevice::kSpark && (names.empty() || names.count(joint.name)))
+      request.joints.push_back(&joint);
   return request;
 }
 

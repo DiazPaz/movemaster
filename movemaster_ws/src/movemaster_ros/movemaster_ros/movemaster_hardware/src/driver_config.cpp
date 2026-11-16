@@ -77,13 +77,36 @@ HomingConfig load_homing(const Json &h) {
   homing.max_travel_rad = number(h, "max_travel_rad");
   return homing;
 }
+// The wrist of the gripper's ESP32: positions in degrees, with the reduction in its firmware.
+JointConfig load_gripper_joint(const std::string &name, const Json &j) {
+  if (j.contains("gear_ratio"))
+    throw std::invalid_argument("gear_ratio does not apply to a gripper joint: the reduction is REDUCCION "
+        "in the ESP32 firmware");
+  only_keys(j, {"device", "can_id", "direction", "zero_offset_rad", "min_position_rad", "max_position_rad",
+      "max_velocity_rad_s", "max_acceleration_rad_s2"});
+  JointConfig joint;
+  joint.name = name;
+  joint.device = JointDevice::kGripper;
+  joint.device_id = integer(j, "can_id");
+  joint.direction = integer(j, "direction");
+  joint.zero_offset_rad = number(j, "zero_offset_rad");
+  joint.min_position_rad = number(j, "min_position_rad");
+  joint.max_position_rad = number(j, "max_position_rad");
+  joint.max_velocity_rad_s = number(j, "max_velocity_rad_s");
+  joint.max_acceleration_rad_s2 = number(j, "max_acceleration_rad_s2");
+  return joint;
+}
 JointConfig load_joint(const std::string &name, const Json &j) {
   if (!j.is_object()) throw std::invalid_argument("the joint entry must be an object");
+  if (j.contains("device") &&
+      choice<JointDevice>(j, "device", {{"spark", JointDevice::kSpark}, {"gripper", JointDevice::kGripper}}) ==
+          JointDevice::kGripper)
+    return load_gripper_joint(name, j);
   for (const auto *moved : {"slot", "pidf", "maxmotion"})
     if (j.contains(moved))
       throw std::invalid_argument(std::string(moved) + " moved in joints.json v2: PIDF and MAXMotion go in "
           "slots.<n>, the slot in control.slot (docs/PARAMETROS.md)");
-  only_keys(j, {"can_id", "gear_ratio", "direction", "zero_offset_rad", "min_position_rad",
+  only_keys(j, {"device", "can_id", "gear_ratio", "direction", "zero_offset_rad", "min_position_rad",
       "max_position_rad", "max_velocity_rad_s", "spark", "control", "slots", "homing"});
   JointConfig joint;
   joint.name = name;
