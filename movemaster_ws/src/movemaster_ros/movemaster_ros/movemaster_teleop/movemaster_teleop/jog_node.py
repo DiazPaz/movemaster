@@ -5,6 +5,8 @@ and publishes them to the jog_controller, a JointGroupPositionController. The pe
 switch picks the controller in command (movemaster_teleop.mode): MANUAL activates
 jog_controller, AUTO gives the joints back to joint_trajectory_controller. With
 select_controllers false, the controllers are switched by hand with ros2 control.
+The joystick button opens and closes the gripper (movemaster_teleop.gripper), in MANUAL and
+in AUTO.
 """
 
 import json
@@ -21,6 +23,7 @@ from rclpy.qos import qos_profile_action_status_default
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray
 
+from movemaster_teleop.gripper import CLOSED, GripperButton
 from movemaster_teleop.jog import Jogger, JointLimits
 from movemaster_teleop.mode import ControllerSelector, JOG
 from movemaster_teleop.pendant_link import SerialLink
@@ -81,6 +84,9 @@ class JogNode(Node):
         self.selection = None
         self.last_tick = time.monotonic()
         self.publisher = self.create_publisher(Float64MultiArray, '/jog_controller/commands', 10)
+        self.gripper = GripperButton()
+        self.gripper_publisher = self.create_publisher(
+            Float64MultiArray, '/gripper_controller/commands', 10)
         self.create_subscription(JointState, '/joint_states', self.on_joint_states, 10)
         self.selector = None
         if p['select_controllers']:
@@ -114,6 +120,10 @@ class JogNode(Node):
         fresh = self.frame_at is not None and now - self.frame_at <= self.link_timeout
         frame = self.frame if fresh else None
         self.report_selection(frame)
+        opening = self.gripper.update(frame)
+        if opening is not None:
+            self.gripper_publisher.publish(Float64MultiArray(data=[opening]))
+            self.get_logger().info('Gripper: ' + ('closing.' if opening == CLOSED else 'opening.'))
         if self.selector is not None:
             self.select_controller(frame, dt)
             if self.selector.active != JOG or self.selector.pending:

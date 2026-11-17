@@ -23,6 +23,10 @@ class MovemasterHardware final : public hardware_interface::SystemInterface {
   DriverConfig config_;
   std::unique_ptr<MoveMasterDriver> driver_;
   std::vector<double> positions_, velocities_, currents_, commands_;
+  // The gripper GPIO, gripper/opening: 0 closed to 1 open; NaN while there is no command.
+  bool has_gripper_ = false;
+  double gripper_opening_ = std::numeric_limits<double>::quiet_NaN();
+  double gripper_command_ = std::numeric_limits<double>::quiet_NaN();
   // The first configure takes each SPARK's power-up pose as its reference (Home, by convention);
   // a SPARK restart found by a later one means the position was lost.
   bool reference_taken_ = false;

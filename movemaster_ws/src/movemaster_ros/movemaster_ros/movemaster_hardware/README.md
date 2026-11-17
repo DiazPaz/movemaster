@@ -158,6 +158,10 @@ físicamente. La referencia completa de `joints.json` v2 está en
 | `control` | `mode` y `slot` de arranque, y `max_following_error_rad` para el modo Position. |
 | `slots."0"` a `slots."3"` | `pidf`, `output_range` opcional y `maxmotion` opcional (RPM, RPM/s, rotaciones del **motor**). |
 
+La muñeca (`joint_5`) no tiene SPARK: la mueve la ESP32 del gripper, con
+`"device": "gripper"` y sus propios campos (sin `gear_ratio` ni bloques del
+SPARK). Ver [MANUAL §4.6](../docs/MANUAL.md#46-la-muñeca-en-la-esp32-del-gripper-joint_5).
+
 Se usa una articulación independiente por SPARK. Para seis ejes, agregar
 `joint_4`, `joint_5` y `joint_6` tanto al JSON como al bloque `ros2_control`;
 el código no cambia. El orden del plugin sigue el URDF y se comprueba que sus

@@ -345,7 +345,8 @@ La clave (por ejemplo `"joint_1"`) es el **nombre** de la articulación en ROS y
 debe ser uno de los `joint` de `dh.yaml` (`joint_1` a `joint_5`, de la cintura a
 la muñeca); otro nombre detiene el xacro. El orden del archivo es el orden del
 bloque `<ros2_control>` y del JTC. El cargador es estricto: una clave desconocida
-es un error.
+es un error. Estos campos son los de un eje con SPARK; la muñeca que mueve la
+ESP32 del gripper lleva otros ([4.6](#46-la-muñeca-en-la-esp32-del-gripper-joint_5)).
 
 | Campo | Tipo | Regla | Significado |
 |---|---|---|---|
@@ -514,6 +515,127 @@ El ejemplo agrega `joint_3`.
    ([9.1](#91-ver-el-brazo-en-rviz)) para confirmar que el modelo y el brazo
    giran en el mismo sentido. Desde ese momento, los goals de la acción llevan
    también el eje nuevo ([11.2](#112-mover)).
+
+### 4.6 La muñeca en la ESP32 del gripper (`joint_5`)
+
+El giro de muñeca (`joint_5`) no tiene SPARK: lo mueve el motor a pasos de la
+ESP32 del gripper ([`tools/esp32_tmc2209`](../../../../../tools/esp32_tmc2209/README.md)),
+con sus propias tramas (`spec/gripper-frames-1.0.0`). Para ROS es un eje más:
+aparece en `/joint_states`, lo mueven el JTC, MoveIt y el jog, y respeta sus
+límites. Su bloque en `joints.json` lleva `"device": "gripper"` y otros campos,
+porque la ESP32 trabaja en grados de muñeca y aplica ella misma la reducción:
+
+```json
+"joint_5": {
+  "device": "gripper",
+  "can_id": 5,
+  "direction": 1,
+  "zero_offset_rad": 0,
+  "min_position_rad": -3.14,
+  "max_position_rad": 3.14,
+  "max_velocity_rad_s": 1.57,
+  "max_acceleration_rad_s2": 3.14
+}
+```
+
+| Campo | Regla | Significado |
+|---|---|---|
+| `device` | `"gripper"` | Eje de la ESP32. Sin el campo (o con `"spark"`), el eje es un SPARK. |
+| `can_id` | 0–63 | Número de dispositivo de la ESP32: `CAN_DISPOSITIVO` en el firmware (5). Puede coincidir con el CAN ID de un SPARK, porque sus IDs difieren en tipo y fabricante. |
+| `direction` | `1` o `-1` | `-1` si la muñeca gira al revés que en ROS. Corrige el sentido aquí **o** con `INVERTIR_MUNECA` en el firmware, no en los dos. |
+| `zero_offset_rad` | finito | Ángulo de la muñeca cuando la ESP32 cuenta 0, es decir, al encenderla ([4.4](#44-cuidados)). |
+| `min_position_rad`, `max_position_rad` | `min < max`, a no más de 360° del cero | Límites, como en un SPARK. El firmware no acepta posiciones más allá de ±360° (`LIMITE_GRADOS`). |
+| `max_velocity_rad_s` | > 0 | Límite del URDF y velocidad que el driver le manda a la ESP32 al configurar (`SET_MOTION_PROFILE`, en °/s). |
+| `max_acceleration_rad_s2` | > 0 | Aceleración del perfil, en rad/s². Con `VEL_INICIAL` mayor que la velocidad del perfil, el firmware arranca sin rampa y la ignora. |
+
+No lleva `gear_ratio` (la reducción es `REDUCCION` en el firmware) ni los
+bloques `spark`, `control`, `slots` y `homing`; el cargador los rechaza.
+
+**Qué hace el driver con la muñeca:**
+
+- **Al configurar:** manda el perfil y espera el `STATUS_0` de la ESP32. Si
+  otro programa está mandando el heartbeat del gripper (por ejemplo, el ciclo
+  de `cansend` de las pruebas), **se niega a arrancar**: ese heartbeat
+  mantendría la muñeca habilitada después del paro. Si la ESP32 acaba de
+  encender (`NOT_REFERENCED`), toma su postura de encendido como referencia,
+  igual que con un SPARK, y lo avisa en el log.
+- **Activo:** en cada ciclo manda la posición objetivo en grados
+  (`WRIST_POSITION_SETPOINT`) y el heartbeat del gripper (`0x0A080C05`) junto
+  con el global de los SPARK. El paro es el mismo para los dos: al dejar de
+  mandarlos, en menos de 100 ms la muñeca se detiene **con torque** y no se
+  mueve sola al volver.
+- **Lectura:** la posición sale del `STATUS_0`. La velocidad se estima entre
+  dos `STATUS_0` seguidos, y la muñeca no publica `current`: la ESP32 no la
+  mide.
+- **Reinicio de la ESP32 con el nodo activo** (un corte o abrir el monitor
+  serie, que la reinicia): fallo, igual que el `HAS_RESET` de un SPARK.
+
+El firmware cuenta pasos en lazo abierto: si el motor pierde pasos, la
+posición reportada no se entera. Por eso conviene encontrar antes la velocidad
+máxima segura de la muñeca con las pruebas de `cansend`.
+
+**Puesta en marcha:**
+
+1. **Firmware:** `CAN_DISPOSITIVO` igual a `can_id`, y `PASOS_MOTOR`,
+   `MICROPASOS` (igual que MS1/MS2) y `REDUCCION` reales. Comprueba con las
+   pruebas de `cansend` del README del firmware que +90° gira 90°, con el
+   driver de ROS apagado.
+2. **Corta cualquier heartbeat de prueba** (el ciclo de `cansend`). Desde
+   aquí, el único que lo manda es el driver.
+3. **Enciende el brazo en Home,** con la ESP32. Su cero es la postura en que
+   enciende.
+4. **Arranca** el launch y comprueba:
+
+   ```bash
+   ros2 control list_hardware_interfaces     # aparece joint_5/position
+   ros2 topic echo /joint_states --once      # name incluye joint_5
+   ```
+
+5. **Primer movimiento, despacio,** con `rqt_joint_trajectory_controller` o el
+   jog, y RViz abierto. Si la muñeca gira al revés que el modelo,
+   `direction: -1`.
+
+El servo de la pinza, en la misma ESP32, se configura aparte ([4.7](#47-el-servo-del-gripper)).
+
+### 4.7 El servo del gripper
+
+La pinza la mueve el servo de la misma ESP32 que la muñeca. Se configura con un
+bloque `gripper` al nivel de `joints`, no dentro de él:
+
+```json
+"gripper": {
+  "can_id": 5,
+  "closed_deg": 80,
+  "open_deg": 120
+}
+```
+
+| Campo | Regla | Significado |
+|---|---|---|
+| `can_id` | el `can_id` del eje con `"device": "gripper"` | El servo está en esa misma ESP32. |
+| `closed_deg` | 0–180 | Ángulo del servo con la pinza cerrada. |
+| `open_deg` | 0–180, distinto de `closed_deg` | Ángulo con la pinza abierta. Puede ser menor que `closed_deg` si tu servo abre hacia el otro lado. |
+
+Los ángulos del archivo son de ejemplo: cámbialos por los de tu pinza. Búscalos
+antes con `cansend` (prueba del servo en el README del firmware), con el driver
+apagado y sin forzar el servo contra un tope.
+
+En ROS el gripper se manda con una **apertura de 0 (cerrado) a 1 (abierto)**;
+0.5 lo deja a medias. El driver la convierte al ángulo del servo, así que si
+cambias la pinza solo cambias este bloque.
+
+- **Al arrancar no se mueve:** el driver no manda nada al servo hasta el primer
+  comando. Si el servo ya tenía un ángulo, por ejemplo de antes de reiniciar el
+  nodo, lo conserva.
+- **Al detenerse** (paro o fallo), el servo se queda en su último ángulo: no
+  suelta la pieza.
+- **Una apertura fuera de 0–1** (por ejemplo 120 en lugar de 1) es un fallo,
+  como un objetivo fuera de límites.
+- **La apertura que reporta es la del último comando,** no una medición: el
+  servo no tiene sensor.
+
+Sin el bloque `gripper`, el launch no arranca el `gripper_controller`. Para
+abrir y cerrar la pinza: [11.6](#116-abrir-y-cerrar-el-gripper).
 
 ---
 
@@ -1076,6 +1198,8 @@ El switch del pendant decide quién manda las articulaciones:
   el joystick la mueve; al soltarlo, el eje se sostiene. Si hay una trayectoria
   en curso, el jog espera a que termine.
 - **AUTO:** devuelve las articulaciones al `joint_trajectory_controller`.
+- **Botón del joystick:** cierra el gripper y, al presionarlo otra vez, lo
+  abre, en MANUAL y en AUTO ([11.6](#116-abrir-y-cerrar-el-gripper)).
 - **Pendant desconectado:** no cambia nada; el jog se detiene y el brazo se
   sostiene. Perder el pendant nunca pasa el brazo a movimiento automático.
 - **Tras un fallo del hardware** los dos controladores quedan inactivos y el
@@ -1137,6 +1261,27 @@ sudo systemctl enable --now movemaster
 - **RViz** no corre en el servicio. Ábrelo desde una laptop con este workspace
   compilado, en la misma red y con el mismo `ROS_DOMAIN_ID`:
   `rviz2 -d $(ros2 pkg prefix --share movemaster_description)/rviz/display.rviz`.
+
+### 11.6 Abrir y cerrar el gripper
+
+Si `joints.json` tiene el bloque `gripper` ([4.7](#47-el-servo-del-gripper)), el
+launch arranca el `gripper_controller`, un `ForwardCommandController` que copia
+lo último que llega a su tópico a la interfaz `gripper/opening`:
+
+```bash
+ros2 topic pub --once /gripper_controller/commands std_msgs/msg/Float64MultiArray "{data: [1.0]}"   # abrir
+ros2 topic pub --once /gripper_controller/commands std_msgs/msg/Float64MultiArray "{data: [0.0]}"   # cerrar
+ros2 topic pub --once /gripper_controller/commands std_msgs/msg/Float64MultiArray "{data: [0.5]}"   # a medias
+```
+
+- `ros2 control list_hardware_interfaces` muestra `gripper/opening` como
+  interfaz de comando y de estado.
+- La apertura que reporta el servo sale en `/dynamic_joint_states`, con el
+  nombre `gripper` y la interfaz `opening`. Es `nan` mientras el servo no ha
+  recibido ningún comando desde que encendió la ESP32.
+- **Con el teach pendant,** el botón del joystick lo alterna: la primera
+  presión cierra (agarra) y la siguiente abre, en MANUAL y en AUTO. Conectar o
+  reconectar el pendant no mueve la pinza: solo cuenta un cambio del botón.
 
 ---
 
@@ -1433,7 +1578,8 @@ argumentos y una `OpaqueFunction` que, ya con los valores resueltos:
   `SparkFrameDatabase` lo lea igual. Usa el tipo 10 (*Miscellaneous*) y el
   fabricante 8 (*Team Use*), que FRC reserva para dispositivos propios. Es el
   contrato con el firmware de `tools/esp32_tmc2209/`: si cambia una trama, se
-  cambian los dos juntos.
+  cambian los dos juntos. El driver lo busca junto a `spark-frames-2.1.0` para
+  mover la muñeca ([4.6](#46-la-muñeca-en-la-esp32-del-gripper-joint_5)).
 
 Los dos archivos de REV no se modifican.
 
@@ -1501,6 +1647,14 @@ Los dos archivos de REV no se modifican.
 | `spark_home`: `Aviso: el eje casi no se movio` | El tope quedó a menos de `backoff_rad` del inicio: hay un tope ahí o el límite de corriente no alcanza para mover el eje. | Si no hay tope ahí, sube `current_limit_a`. |
 | `CAN error frame received: bus-off ...` o `... tx-timeout ...` | El adaptador dejó de transmitir: errores de bus repetidos (cableado, terminación, bitrate). Son las únicas tramas de error que enclavan un fallo, porque el heartbeat ya no sale. | `ip -details -statistics link show can0` y `candump -e can0,0~0,#FFFFFFFF` mientras se reproduce; revisa resistencias de 120 Ω, cableado y bitrate. Para salir de `BUS-OFF`: `sudo ip link set can0 down` y `sudo ip link set can0 up`. |
 | `CAN error frame received: bus-off ...` unos segundos después de `Successful 'activate'`, cada vez, aunque la terminación mida ~60 Ω | La Raspberry no comparte tierra con la fuente de los SPARK. Al habilitarse, los motores toman corriente y mueven la referencia del bus respecto a la Raspberry, y su transceptor lee mal sus propios bits. Con el brazo deshabilitado no aparece. `candump -td -e can0,0~0,#FFFFFFFF \| grep -E "tx-\|bus-off"` muestra `tx-error-warning` → `tx-error-passive` → `bus-off`. | Une con un cable un GND de la Raspberry (o la terminal GND del HAT) al negativo de la fuente de los SPARK, en un solo punto. Lo mismo para cualquier otro nodo con fuente propia, como el gripper. Comprobado en el banco: con la tierra unida, 15 minutos y más de 200 000 tramas enviadas sin errores. |
+| `joint_5: another program is sending the gripper HEARTBEAT; ...` | Otro programa manda el heartbeat del gripper, casi siempre el ciclo de `cansend 0A080C05#` de las pruebas. | Ciérralo: con la muñeca en ROS, el único que manda ese heartbeat es el driver ([4.6](#46-la-muñeca-en-la-esp32-del-gripper-joint_5)). |
+| `STATUS_0 required from the gripper ESP32; none from device 5` | La ESP32 no envía su `STATUS_0`: apagada, sin CAN o con otro número de dispositivo. | `candump can0,0A080805:1FFFFFFF` debe mostrarla cada 20 ms. Revisa alimentación, cableado y que `CAN_DISPOSITIVO` del firmware sea el `can_id` de `joint_5`. |
+| `joint_5: the gripper ESP32 restarted (NOT_REFERENCED); its position is lost`, o al configurar `... the gripper ESP32 restarted (power cut or reset) ...` | La ESP32 se reinició con el nodo vivo: un corte, una caída de los 5 V o abrir el monitor serie, que la reinicia. Cuenta otra vez desde donde quedó. | Como con un SPARK: cierra el nodo, lleva el brazo a Home y vuelve a lanzar. No abras el monitor serie con el nodo activo. |
+| `joint_5: the gripper firmware takes positions within 360 degrees of its zero` | Un límite de la muñeca queda a más de 360° de su cero. | Ajusta `min_position_rad` y `max_position_rad`. |
+| `gripper: opening command must be in 0 (closed) .. 1 (open)` | Llegó a `/gripper_controller/commands` una apertura fuera de 0–1, por ejemplo un ángulo (120) en lugar de 1. | Manda aperturas de 0 a 1 ([11.6](#116-abrir-y-cerrar-el-gripper)); recupera ([paso 9](#12-paso-9--detener-fallos-y-recuperación)). |
+| `gripper.can_id must be the can_id of the joint with "device": "gripper"` | El bloque `gripper` apunta a otra ESP32 que la de la muñeca. | Usa el `can_id` de `joint_5`. |
+| `The gripper GPIO of ros2_control and the gripper block of joints.json go together` | Un URDF propio sin el bloque `<gpio name="gripper">`, o al revés. | Usa el macro `movemaster_ros2_control`, que genera los dos desde `joints.json`. |
+| `gear_ratio does not apply to a gripper joint` | El bloque de la muñeca tiene `gear_ratio`. | Quítalo: la reducción es `REDUCCION` en el firmware de la ESP32. |
 | `STATUS_0/2 watchdog expired` y `ip -details -statistics link show can0` muestra `overrun` creciendo | El adaptador pierde tramas recibidas porque no las lee a tiempo: típico de un HAT con MCP2515 en la Raspberry Pi con la CPU ocupada. Unas pocas no afectan (el driver no las ve); muchas seguidas vencen el watchdog. | Permiso de tiempo real ([10.1](#101-permiso-de-tiempo-real-una-sola-vez)), menos tráfico (`period_s: 0.02` y `status_period_ms: 20`) o un adaptador USB-CAN con más búfer (`gs_usb`). |
 | `No state interfaces found to publish` / `Failed to activate controller : joint_state_broadcaster` | El hardware se desactivó antes (mira la línea `[MovemasterHardware]` anterior) y ya no tiene interfaces que publicar. | Corrige la causa de esa línea; recupera (paso 9) o vuelve a lanzar. |
 | `Could not enable FIFO RT scheduling policy ... Operation not permitted` (advertencia) | El usuario no tiene permiso de prioridad de tiempo real. | [10.1](#101-permiso-de-tiempo-real-una-sola-vez). |

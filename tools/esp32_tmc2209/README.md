@@ -174,6 +174,8 @@ cansend can0 0A080045#50    # 80°
 ```
 
 Busca de a poco los ángulos de abierto y cerrado del gripper, sin forzar el servo contra un tope.
+Esos dos ángulos van en el bloque `gripper` de `joints.json` (`closed_deg` y `open_deg`): desde
+ROS 2 el gripper se manda con una apertura de 0 a 1 (MANUAL §4.7 y §11.6).
 
 **4. Muñeca** (VM a 12 V con la corriente ya ajustada en Vref):
 
@@ -226,5 +228,7 @@ heartbeat.stop()
 
 `send_periodic` deja al kernel enviando el heartbeat cada 20 ms.
 
-Cuando el driver de ROS controle el gripper, no mandes el heartbeat de prueba al mismo tiempo: el
-paro del driver consiste en dejar de mandarlo, y un segundo emisor lo anularía.
+El driver de ROS 2 ya mueve la muñeca como `joint_5` (MANUAL §4.6) y manda él mismo este
+heartbeat. No mandes el heartbeat de prueba al mismo tiempo: el paro del driver consiste en dejar
+de mandarlo, y un segundo emisor lo anularía. Por eso el driver se niega a arrancar si lo detecta.
+Estas pruebas se hacen con el driver apagado.

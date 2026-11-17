@@ -214,7 +214,9 @@ PID.
 
 Ejemplo de un eje con dos slots: el 0 con perfil MAXMotion y el 2 solo para
 Position. El cargador es estricto: una clave desconocida es un error, nunca un
-ajuste que se queda en su valor por defecto.
+ajuste que se queda en su valor por defecto. La muñeca que mueve la ESP32 del
+gripper (`"device": "gripper"`) no tiene parámetros de SPARK; sus campos están
+en el [MANUAL §4.6](../../docs/MANUAL.md#46-la-muñeca-en-la-esp32-del-gripper-joint_5).
 
 ```json
 "joint_1": {

@@ -263,6 +263,194 @@ void current_limit(const char *spec) {
   rejects_with([&] { driver.set_current_limit(1, 40); }, "only while configured and not active");
   check(driver.active() && driver.fault().empty(), "A refused current limit tripped the driver");
 }
+// The gripper wrist next to two SPARKs: profile and reference at setup, both heartbeats,
+// degrees on the bus and radians in the states, limits, deactivation.
+void gripper_session(const char *spec) {
+  const auto config = config_with_gripper(spec);
+  const auto &wrist = config.joints[2];
+  auto bus = std::make_unique<SimulatedSparkBus>(config);
+  auto *spy = bus.get();
+  spy->gripper.degrees = 12.5;  // where it powered up, after a test with cansend
+  MoveMasterDriver driver(config, std::move(bus));
+  check(driver.configure() == std::vector<std::string>{"joint_1", "joint_2", "joint_3"},
+      "The powered-up gripper was not reported");
+  const double deg = 180 / 3.14159265358979323846;
+  check(std::abs(spy->gripper.profile_velocity - 1.5 * deg) < 1e-4 &&
+      std::abs(spy->gripper.profile_acceleration - 3 * deg) < 1e-4, "Wrist profile not sent in deg/s and deg/s^2");
+  check(spy->gripper.referenced && spy->gripper.degrees == 12.5,
+      "The reference must keep the power-up count: SET_WRIST_POSITION with the reported position");
+  for (const auto &p : spy->sent)
+    check(p.arbitration_id != kEnableHeartbeatId && spy->gripper_frame_name(p) != "HEARTBEAT",
+        "Setup unexpectedly enabled the motors or the wrist");
+  check(std::abs(driver.states()[2].position - MoveMasterDriver::wrist_degrees_to_radians(12.5, wrist)) < 1e-12 &&
+      std::abs(driver.states()[2].position - (0.1 - 12.5 / deg)) < 1e-12, "Wrist position conversion incorrect");
+  check(std::isnan(driver.states()[2].current), "The gripper reports no current");
+  rejects_with([&] { driver.set_control(2, ControlMode::kPosition, 0); }, "has no SPARK control modes");
+  rejects_with([&] { driver.set_current_limit(2, 5); }, "has no SPARK control modes");
+  check(driver.fault().empty(), "A refused wrist request tripped the driver");
+
+  spy->sent.clear();
+  driver.activate();
+  // Setpoints first (the wrist one ignored, without heartbeat yet), then both heartbeats.
+  check(spy->sent.size() == 5 && spy->gripper_frame_name(spy->sent[2]) == "WRIST_POSITION_SETPOINT" &&
+      spy->sent[3].arbitration_id == kEnableHeartbeatId && spy->gripper_frame_name(spy->sent[4]) == "HEARTBEAT",
+      "Activation frames or their order");
+  check(spy->gripper_frames["WRIST_POSITION_SETPOINT"].decode_payload(spy->sent[2].data).at("SETPOINT") == 12.5f &&
+      spy->gripper.setpoints == 0, "Activation did not hold the measured wrist position, or moved it");
+  std::vector<double> targets;
+  for (const auto &s : driver.states()) targets.push_back(s.position);
+  targets[2] += 0.2;  // the wrist turns 0.2 rad, -11.46 degrees with direction -1
+  pause_cycle(); driver.read(); spy->sent.clear(); driver.write(targets);
+  check(spy->sent.size() == 5 && spy->gripper.setpoints == 1, "Wrist setpoint not accepted with its heartbeat");
+  const double setpoint =
+      spy->gripper_frames["WRIST_POSITION_SETPOINT"].decode_payload(spy->sent[2].data).at("SETPOINT");
+  check(std::abs(setpoint - MoveMasterDriver::radians_to_wrist_degrees(targets[2], wrist)) < 1e-4 &&
+      std::abs(setpoint - (12.5 - 0.2 * deg)) < 1e-4, "Wrist command units incorrect");
+  pause_cycle(); driver.read();
+  check(std::abs(driver.states()[2].position - targets[2]) < 1e-6, "The wrist did not report its new position");
+  check(driver.states()[2].velocity == 0, "A wrist at rest reported velocity");
+
+  // Velocity is estimated while the wrist reports WRIST_MOVING.
+  spy->gripper.moving = true;
+  spy->gripper.degrees += 10;  // -10 degrees of joint with direction -1
+  pause_cycle(); driver.read();
+  check(driver.states()[2].velocity < 0 && std::isfinite(driver.states()[2].velocity), "Wrist velocity estimate");
+  spy->gripper.moving = false;
+  spy->gripper.degrees -= 10;
+  pause_cycle(); driver.read();
+
+  targets[2] = 3.5;  // beyond max_position_rad
+  spy->sent.clear();
+  rejects_with([&] { driver.write(targets); }, "joint_3: position command outside calibrated limits");
+  check(spy->sent.empty() && !driver.active() && !driver.fault().empty(),
+      "An invalid wrist target transmitted or did not latch");
+}
+// Deactivation stops both heartbeats; a gripper restart or a lost STATUS_0 is a fault.
+void gripper_faults(const char *spec) {
+  const auto config = config_with_gripper(spec, 1);
+  {
+    auto bus = std::make_unique<SimulatedSparkBus>(config);
+    auto *spy = bus.get();
+    MoveMasterDriver driver(config, std::move(bus));
+    driver.configure(); driver.activate();
+    std::vector<double> hold;
+    for (const auto &s : driver.states()) hold.push_back(s.position);
+    driver.deactivate(); spy->sent.clear(); driver.write(hold);
+    check(spy->sent.empty(), "An inactive driver kept a heartbeat");
+    driver.activate();
+    spy->gripper.referenced = false;  // the ESP32 resets mid-session
+    pause_cycle();
+    rejects_with([&] { driver.read(); }, "joint_2: the gripper ESP32 restarted (NOT_REFERENCED)");
+    spy->sent.clear();
+    rejects([&] { driver.write(hold); }, "A restarted gripper did not latch a fault");
+    check(spy->sent.empty(), "A restarted gripper kept the heartbeats");
+  }
+  {
+    auto bus = std::make_unique<SimulatedSparkBus>(config);
+    auto *spy = bus.get();
+    MoveMasterDriver driver(config, std::move(bus));
+    driver.configure(); driver.activate();
+    spy->gripper.muted = true;  // cable or power of the gripper lost
+    std::this_thread::sleep_for(std::chrono::milliseconds(90));
+    rejects_with([&] { driver.read(); }, "watchdog expired");
+  }
+  // Reconfiguring after a restart is refused (kFault), and the flag stays for whoever looks next.
+  auto restarted = std::make_unique<SimulatedSparkBus>(config);
+  auto *spy = restarted.get();
+  spy->has_reset[1] = false;
+  MoveMasterDriver refused(config, std::move(restarted));
+  rejects_with([&] { refused.configure(SparkResetPolicy::kFault); }, "joint_2: the gripper ESP32 restarted");
+  check(!spy->gripper.referenced, "A refused gripper restart was cleared");
+  // Another program sending the gripper heartbeat would outlive the driver's emergency stop.
+  auto busy = std::make_unique<SimulatedSparkBus>(config);
+  busy->gripper.foreign_heartbeat = true;
+  MoveMasterDriver blocked(config, std::move(busy));
+  rejects_with([&] { blocked.configure(); }, "another program is sending the gripper HEARTBEAT");
+  // A gripper that is off or disconnected.
+  auto absent = std::make_unique<SimulatedSparkBus>(config);
+  absent->gripper.muted = true;
+  MoveMasterDriver missing(config, std::move(absent));
+  rejects_with([&] { missing.configure(); }, "STATUS_0 required from the gripper ESP32; none from device 5");
+}
+// The gripper takes positions within 360 degrees of its zero, and needs its acceleration.
+void gripper_validation(const char *spec) {
+  auto wide = config_with_gripper(spec);
+  wide.joints[2].max_position_rad = 0.1 + 6.4;  // 366.7 degrees from the zero
+  rejects_with([&] { MoveMasterDriver driver(wide); }, "within 360 degrees of its zero");
+  auto no_acceleration = config_with_gripper(spec);
+  no_acceleration.joints[2].max_acceleration_rad_s2 = std::numeric_limits<double>::quiet_NaN();
+  rejects_with([&] { MoveMasterDriver driver(no_acceleration); }, "max_acceleration_rad_s2 must be positive");
+  auto slow_watchdog = config_with_gripper(spec);
+  slow_watchdog.feedback_timeout_s = 0.040;
+  rejects_with([&] { MoveMasterDriver driver(slow_watchdog); }, "three gripper STATUS_0 periods");
+  // A SPARK and the gripper may share a number: their IDs differ in device type.
+  auto shared = config_with_gripper(spec);
+  shared.joints[2].device_id = 1;
+  validate_driver_config(shared);
+  auto twice = config_with_gripper(spec);
+  twice.joints.push_back(twice.joints[2]);
+  twice.joints.back().name = "joint_4";
+  rejects_with([&] { validate_driver_config(twice); }, "Duplicate or invalid CAN ID");
+}
+// The gripper servo: an opening from 0 (closed, 80 degrees) to 1 (open, 120 degrees), sent only
+// when commanded, and read back from STATUS_0.
+void gripper_servo(const char *spec) {
+  auto config = config_with_gripper(spec, 1);
+  config.gripper = GripperConfig{5, 80, 120};
+  auto bus = std::make_unique<SimulatedSparkBus>(config);
+  auto *spy = bus.get();
+  MoveMasterDriver driver(config, std::move(bus));
+  driver.configure(); driver.activate();
+  check(std::isnan(driver.gripper_opening()), "A servo without signal reported an opening");
+  std::vector<double> hold;
+  for (const auto &s : driver.states()) hold.push_back(s.position);
+  const auto servo_frames = [&] {
+    std::vector<int> angles;
+    for (const auto &p : spy->sent)
+      if (spy->gripper_frame_name(p) == "SERVO_SETPOINT")
+        angles.push_back(spy->gripper_frames["SERVO_SETPOINT"].decode_payload(p.data).at("ANGLE").get<int>());
+    return angles;
+  };
+  pause_cycle(); driver.read(); spy->sent.clear(); driver.write(hold);
+  check(servo_frames().empty() && !spy->gripper.servo_active, "The servo got a signal without a command");
+  for (const auto &[opening, angle] : std::vector<std::pair<double, int>>{{1.0, 120}, {0.5, 100}, {0.0, 80}}) {
+    pause_cycle(); driver.read(); spy->sent.clear(); driver.write(hold, opening);
+    check(servo_frames() == std::vector<int>{angle}, "Opening not sent as the servo angle");
+    pause_cycle(); driver.read();
+    check(spy->gripper.servo_angle == angle && driver.gripper_opening() == opening,
+        "The servo did not take, or report, the commanded opening");
+  }
+  pause_cycle(); driver.read(); spy->sent.clear();
+  rejects_with([&] { driver.write(hold, 1.5); }, "opening command must be in 0 (closed) .. 1 (open)");
+  check(spy->sent.empty() && !driver.active() && !driver.fault().empty(),
+      "An invalid opening transmitted or did not latch");
+
+  // A servo that already has an angle reports it, so the plugin can hold it after activation.
+  auto held = std::make_unique<SimulatedSparkBus>(config);
+  held->gripper.servo_active = true;
+  held->gripper.servo_angle = 110;
+  MoveMasterDriver again(config, std::move(held));
+  again.configure();
+  check(std::abs(again.gripper_opening() - 0.75) < 1e-12, "The servo's current opening was not reported");
+
+  // Without a gripper block the servo is never commanded.
+  auto bare = config_with_gripper(spec, 1);
+  auto bare_bus = std::make_unique<SimulatedSparkBus>(bare);
+  MoveMasterDriver plain(bare, std::move(bare_bus));
+  plain.configure(); plain.activate();
+  pause_cycle(); plain.read();
+  rejects_with([&] { plain.write(hold, 0.5); }, "No gripper configured");
+
+  auto elsewhere = config;
+  elsewhere.gripper->device_id = 6;
+  rejects_with([&] { validate_driver_config(elsewhere); }, "gripper.can_id must be the can_id of the joint");
+  auto wide = config;
+  wide.gripper->open_deg = 190;
+  rejects_with([&] { validate_driver_config(wide); }, "closed_deg and open_deg must be in 0..180");
+  auto same = config;
+  same.gripper->open_deg = 80;
+  rejects_with([&] { validate_driver_config(same); }, "closed_deg and open_deg must differ");
+}
 }
 int main(int argc, char **argv) {
   if (argc != 2) return 2;
@@ -275,6 +463,10 @@ int main(int argc, char **argv) {
     spark_restarts(argv[1]);
     current_limit(argv[1]);
     lost_replies(argv[1]);
+    gripper_session(argv[1]);
+    gripper_faults(argv[1]);
+    gripper_validation(argv[1]);
+    gripper_servo(argv[1]);
     auto duplicate = config_for(argv[1]); duplicate.joints[1].device_id = 1;
     rejects([&] { MoveMasterDriver driver(duplicate); }, "Duplicate CAN IDs accepted");
     auto missing = config_for(argv[1]); missing.joints[0].gear_ratio = 0;
@@ -316,7 +508,9 @@ int main(int argc, char **argv) {
     }
     std::cout << "PASS: 1/3/6 axes, conversions, ACK checks, activation order, limits, paced writes, "
         "baseline and slots in RAM, Position/MAXMotion per joint, following error, "
-        "stale/malformed feedback, TX failure, loop gap, SPARK restarts, current limit and lost replies.\n";
+        "stale/malformed feedback, TX failure, loop gap, SPARK restarts, current limit, lost replies, "
+        "and the gripper wrist: profile, reference, heartbeats, units, limits, restarts and watchdog; "
+        "and the gripper servo: opening to angle, state, limits and validation.\n";
     return 0;
   } catch (const std::exception &e) { std::cerr << "FAIL: " << e.what() << '\n'; return 1; }
 }

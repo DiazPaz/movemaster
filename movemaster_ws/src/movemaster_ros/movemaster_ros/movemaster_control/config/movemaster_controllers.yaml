@@ -26,6 +26,17 @@ controller_manager:
     jog_controller:
       type: position_controllers/JointGroupPositionController
 
+    # El servo del gripper (bloque gripper de joints.json): copia a gripper/opening lo último
+    # que llega a /gripper_controller/commands, de 0 (cerrado) a 1 (abierto). El launch lo
+    # arranca solo si joints.json tiene ese bloque.
+    gripper_controller:
+      type: forward_command_controller/ForwardCommandController
+
+gripper_controller:
+  ros__parameters:
+    joints: [gripper]
+    interface_name: opening
+
 joint_trajectory_controller:
   ros__parameters:
     command_interfaces: [position]

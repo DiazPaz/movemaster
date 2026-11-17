@@ -105,6 +105,46 @@ void loader_errors() {
       position.slots.at(1).maxmotion.is_null(), "Position-only slot not loaded");
   check(position.slots.at(0).output_min == -1 && position.slots.at(0).output_max == 1, "Default output range");
 }
+// The gripper wrist ("device": "gripper"): its own fields, and the SPARK ones refused by name.
+void gripper_joint() {
+  auto data = Json::parse(kFixture);
+  data["joints"]["joint_5"] = {{"device", "gripper"}, {"can_id", 5}, {"direction", -1}, {"zero_offset_rad", 0.1},
+      {"min_position_rad", -3.0}, {"max_position_rad", 3.0}, {"max_velocity_rad_s", 1.5},
+      {"max_acceleration_rad_s2", 3.0}};
+  const auto config = load(data);
+  const auto &w = config.joints.at(1);
+  check(config.joints.at(0).device == JointDevice::kSpark && w.device == JointDevice::kGripper &&
+      w.name == "joint_5" && w.device_id == 5 && w.direction == -1 && w.zero_offset_rad == 0.1 &&
+      w.min_position_rad == -3 && w.max_position_rad == 3 && w.max_velocity_rad_s == 1.5 &&
+      w.max_acceleration_rad_s2 == 3, "Gripper joint fields not loaded");
+  data["joints"]["joint_1"]["device"] = "spark";
+  check(load(data).joints.at(0).device == JointDevice::kSpark, "\"device\": \"spark\" not accepted");
+  const auto broken = [&](auto mutate, const std::string &expected) {
+    auto copy = data;
+    mutate(copy["joints"]["joint_5"]);
+    rejects_with([&] { load(copy); }, expected);
+  };
+  broken([](Json &j) { j["gear_ratio"] = 5; }, "gear_ratio does not apply to a gripper joint");
+  broken([](Json &j) { j["spark"] = Json::object(); }, "spark is not a known key");
+  broken([](Json &j) { j.erase("max_acceleration_rad_s2"); }, "max_acceleration_rad_s2 is missing");
+  broken([](Json &j) { j["device"] = "esp32"; }, "device must be one of: spark, gripper");
+  broken([](Json &j) { j["max_position_rad"] = 7.0; }, "within 360 degrees of its zero");
+
+  // The servo: a top-level block, next to joints.
+  data["gripper"] = {{"can_id", 5}, {"closed_deg", 80}, {"open_deg", 120}};
+  const auto servo = load(data).gripper;
+  check(servo && servo->device_id == 5 && servo->closed_deg == 80 && servo->open_deg == 120,
+      "gripper block not loaded");
+  check(!load(Json::parse(kFixture)).gripper, "A gripper appeared without its block");
+  const auto broken_servo = [&](auto mutate, const std::string &expected) {
+    auto copy = data;
+    mutate(copy["gripper"]);
+    rejects_with([&] { load(copy); }, expected);
+  };
+  broken_servo([](Json &g) { g["closing"] = 80; }, "joints.json: gripper.closing is not a known key");
+  broken_servo([](Json &g) { g.erase("open_deg"); }, "joints.json: gripper.open_deg is missing");
+  broken_servo([](Json &g) { g["can_id"] = 1; }, "gripper.can_id must be the can_id of the joint");
+}
 // The optional homing block: loaded as written, and every rule names its field.
 void homing_block() {
   auto data = Json::parse(kFixture);
@@ -202,6 +242,10 @@ void commission_tool() {
   check(!review.apply && review.joints.size() == 3 && every.apply && every.joints.size() == 3, "Joint selection");
   check(second.apply && second.joints.size() == 1 && second.joints[0]->name == "joint_2",
       "Naming one joint must select only that joint");
+  // The gripper wrist has no flash to commission.
+  const auto with_wrist = config_with_gripper(spec, 2);
+  check(spark_commission::parse(with_wrist, {"--apply"}).joints.size() == 2, "The gripper wrist was not left out");
+  rejects_with([&] { spark_commission::parse(with_wrist, {"joint_3"}); }, "joint_3 es la muneca del gripper");
   std::string output;
   const auto run = [&](SimulatedSparkBus &bus, const spark_commission::Request &request) {
     std::ostringstream out;
@@ -317,12 +361,13 @@ int main(int argc, char **argv) {
     fixture_loads();
     parameter_table();
     loader_errors();
+    gripper_joint();
     homing_block();
     commissioning();
     commission_tool();
     survey();
     std::cout << "PASS: bench joints.json valid, loader fields, parameter IDs against SparkParameters-v0.1.2.md, "
-        "v2 loader errors, Position-only slots, homing block, commissioning order, "
+        "v2 loader errors, Position-only slots, gripper joint, homing block, commissioning order, "
         "magic numbers and failures, spark_commission selection and refusals, bus survey.\n";
   } catch (const std::exception &e) {
     std::cerr << "FAIL: " << e.what() << '\n';

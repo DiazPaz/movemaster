@@ -93,6 +93,12 @@ controladores se cambian a mano con `ros2 control switch_controllers`.
 dice cuándo se conecta el pendant, qué articulaciones están seleccionadas y qué
 controlador manda.
 
+El **botón del joystick** abre y cierra el gripper, en MANUAL y en AUTO: el
+pendant alterna su bandera `gripper` con cada presión, y `jog_node` publica en
+`/gripper_controller/commands` 0 (cerrar) cuando se activa y 1 (abrir) cuando se
+desactiva (`movemaster_teleop/gripper.py`). Solo cuenta un cambio: la primera
+trama tras conectar o reconectar el pendant no mueve la pinza.
+
 ### Probar sin el ESP32
 
 `pendant_sim` imita al pendant en un puerto serie virtual:

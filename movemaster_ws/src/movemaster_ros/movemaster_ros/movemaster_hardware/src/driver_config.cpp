@@ -77,13 +77,36 @@ HomingConfig load_homing(const Json &h) {
   homing.max_travel_rad = number(h, "max_travel_rad");
   return homing;
 }
+// The wrist of the gripper's ESP32: positions in degrees, with the reduction in its firmware.
+JointConfig load_gripper_joint(const std::string &name, const Json &j) {
+  if (j.contains("gear_ratio"))
+    throw std::invalid_argument("gear_ratio does not apply to a gripper joint: the reduction is REDUCCION "
+        "in the ESP32 firmware");
+  only_keys(j, {"device", "can_id", "direction", "zero_offset_rad", "min_position_rad", "max_position_rad",
+      "max_velocity_rad_s", "max_acceleration_rad_s2"});
+  JointConfig joint;
+  joint.name = name;
+  joint.device = JointDevice::kGripper;
+  joint.device_id = integer(j, "can_id");
+  joint.direction = integer(j, "direction");
+  joint.zero_offset_rad = number(j, "zero_offset_rad");
+  joint.min_position_rad = number(j, "min_position_rad");
+  joint.max_position_rad = number(j, "max_position_rad");
+  joint.max_velocity_rad_s = number(j, "max_velocity_rad_s");
+  joint.max_acceleration_rad_s2 = number(j, "max_acceleration_rad_s2");
+  return joint;
+}
 JointConfig load_joint(const std::string &name, const Json &j) {
   if (!j.is_object()) throw std::invalid_argument("the joint entry must be an object");
+  if (j.contains("device") &&
+      choice<JointDevice>(j, "device", {{"spark", JointDevice::kSpark}, {"gripper", JointDevice::kGripper}}) ==
+          JointDevice::kGripper)
+    return load_gripper_joint(name, j);
   for (const auto *moved : {"slot", "pidf", "maxmotion"})
     if (j.contains(moved))
       throw std::invalid_argument(std::string(moved) + " moved in joints.json v2: PIDF and MAXMotion go in "
           "slots.<n>, the slot in control.slot (docs/PARAMETROS.md)");
-  only_keys(j, {"can_id", "gear_ratio", "direction", "zero_offset_rad", "min_position_rad",
+  only_keys(j, {"device", "can_id", "gear_ratio", "direction", "zero_offset_rad", "min_position_rad",
       "max_position_rad", "max_velocity_rad_s", "spark", "control", "slots", "homing"});
   JointConfig joint;
   joint.name = name;
@@ -139,9 +162,21 @@ DriverConfig load_driver_config(const std::filesystem::path &config_path,
   try {
     if (!data.is_object()) throw std::invalid_argument("the file must hold a JSON object");
     only_keys(data, {"period_s", "status_period_ms", "feedback_timeout_s", "response_timeout_s",
-        "disable_settle_s", "max_cycle_gap_s", "parameter_layout", "joints"});
+        "disable_settle_s", "max_cycle_gap_s", "parameter_layout", "joints", "gripper"});
   } catch (const std::exception &e) {
     throw std::invalid_argument("joints.json: " + std::string(e.what()));
+  }
+  std::optional<GripperConfig> gripper;
+  if (data.contains("gripper")) {
+    try {
+      const auto &g = object_field(data, "gripper");
+      in("gripper", [&] {
+        only_keys(g, {"can_id", "closed_deg", "open_deg"});
+        gripper = GripperConfig{integer(g, "can_id"), number(g, "closed_deg"), number(g, "open_deg")};
+      });
+    } catch (const std::exception &e) {
+      throw std::invalid_argument("joints.json: " + std::string(e.what()));
+    }
   }
   const auto &joints = field(data, "joints");
   if (!joints.is_object()) throw std::invalid_argument("joints must be an object indexed by joint name");
@@ -155,6 +190,7 @@ DriverConfig load_driver_config(const std::filesystem::path &config_path,
   config.max_cycle_gap_s = data.value("max_cycle_gap_s", config.max_cycle_gap_s);
   config.status_period_ms = data.value("status_period_ms", config.status_period_ms);
   config.parameter_layout = data.value("parameter_layout", Json(nullptr));
+  config.gripper = gripper;
   std::vector<std::string> order = joint_order;
   if (order.empty()) for (const auto &entry : joints.items()) order.push_back(entry.key());
   if (order.size() != joints.size() || std::set<std::string>(order.begin(), order.end()).size() != order.size())

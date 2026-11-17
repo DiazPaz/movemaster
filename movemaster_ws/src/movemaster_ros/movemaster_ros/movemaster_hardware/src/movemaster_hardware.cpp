@@ -32,9 +32,19 @@ CallbackReturn MovemasterHardware::on_init(const hardware_interface::HardwareInf
       order.push_back(joint.name);
     }
     if (order.empty()) throw std::invalid_argument("No joints in ros2_control");
+    for (const auto &gpio : info_.gpios) {
+      const auto only_opening = [](const auto &interfaces) {
+        return interfaces.size() == 1 && interfaces[0].name == "opening";
+      };
+      if (gpio.name != "gripper" || !only_opening(gpio.command_interfaces) || !only_opening(gpio.state_interfaces))
+        throw std::invalid_argument("The only GPIO is gripper, with one opening command and one opening state");
+      has_gripper_ = true;
+    }
     const auto &params = info_.hardware_parameters;
     config_ = load_driver_config(params.at("joint_config_path"), params.at("spec_path"),
         params.count("can_interface") ? params.at("can_interface") : "can0", order);
+    if (has_gripper_ != config_.gripper.has_value())
+      throw std::invalid_argument("The gripper GPIO of ros2_control and the gripper block of joints.json go together");
     // Parse and validate now; CAN is opened only during on_configure().
     MoveMasterDriver validated(config_);
     const double nan = std::numeric_limits<double>::quiet_NaN();
@@ -52,12 +62,14 @@ std::vector<hardware_interface::StateInterface> MovemasterHardware::export_state
       double *value = s.name == "position" ? &positions_[i] : s.name == "velocity" ? &velocities_[i] : &currents_[i];
       result.emplace_back(info_.joints[i].name, s.name, value);
     }
+  if (has_gripper_) result.emplace_back("gripper", "opening", &gripper_opening_);
   return result;
 }
 std::vector<hardware_interface::CommandInterface> MovemasterHardware::export_command_interfaces() {
   std::vector<hardware_interface::CommandInterface> result;
   for (std::size_t i = 0; i < info_.joints.size(); ++i)
     result.emplace_back(info_.joints[i].name, "position", &commands_[i]);
+  if (has_gripper_) result.emplace_back("gripper", "opening", &gripper_command_);
   return result;
 }
 CallbackReturn MovemasterHardware::on_configure(const rclcpp_lifecycle::State &) {
@@ -67,7 +79,8 @@ CallbackReturn MovemasterHardware::on_configure(const rclcpp_lifecycle::State &)
         reference_taken_ ? SparkResetPolicy::kFault : SparkResetPolicy::kAcceptPowerOnPose);
     for (const auto &name : restarted)
       RCLCPP_WARN(rclcpp::get_logger("MovemasterHardware"),
-          "%s: SPARK powered up; its zero is the pose it powered up in, which zero_offset_rad assumes is Home.",
+          "%s: powered up (SPARK or gripper ESP32); its zero is the pose it powered up in, which "
+          "zero_offset_rad assumes is Home.",
           name.c_str());
     if (driver_->setup_retries() > 0)
       RCLCPP_WARN(rclcpp::get_logger("MovemasterHardware"),
@@ -84,6 +97,7 @@ void MovemasterHardware::copy_states() {
     velocities_[i] = s.velocity;
     currents_[i] = s.current;
   }
+  gripper_opening_ = driver_->gripper_opening();
 }
 CallbackReturn MovemasterHardware::on_activate(const rclcpp_lifecycle::State &) {
   try {
@@ -92,6 +106,8 @@ CallbackReturn MovemasterHardware::on_activate(const rclcpp_lifecycle::State &) 
     copy_states();
     // Seed exported command storage from measured position, never from zero.
     std::copy(positions_.begin(), positions_.end(), commands_.begin());
+    // The gripper keeps its last angle; without one (NaN) its servo waits for the first command.
+    gripper_command_ = gripper_opening_;
     return CallbackReturn::SUCCESS;
   } catch (const std::exception &e) { stop(); report(e); return CallbackReturn::ERROR; }
 }
@@ -116,7 +132,7 @@ Return MovemasterHardware::read(const rclcpp::Time &, const rclcpp::Duration &) 
 }
 Return MovemasterHardware::write(const rclcpp::Time &, const rclcpp::Duration &) {
   if (!driver_) return Return::OK;
-  try { driver_->write(commands_); return Return::OK; }
+  try { driver_->write(commands_, gripper_command_); return Return::OK; }
   catch (const std::exception &e) { stop(); report(e); return Return::ERROR; }
 }
 }  // namespace movemaster
