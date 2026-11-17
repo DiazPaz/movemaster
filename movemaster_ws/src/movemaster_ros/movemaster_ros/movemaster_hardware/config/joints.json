@@ -5,8 +5,8 @@
   "response_timeout_s": 0.5,
   "disable_settle_s": 0.5,
   "max_cycle_gap_s": 0.1,
-  "joints": {
-    "joint_1": {
+  "joints": {  
+     "joint_1": {
       "can_id": 1,
       "gear_ratio": 224.0,
       "direction": 1,
@@ -28,7 +28,7 @@
         "0": {
           "pidf": {
             "p": 0.25,
-            "i": 0,
+            "i": 0.001,
             "d": 0,
             "f": 0
           },
@@ -48,7 +48,7 @@
         "backoff_rad": 0.125,
         "max_travel_rad": 6.3
       }
-    },     
+    },   
     "joint_2": {
       "can_id": 2,
       "gear_ratio": 216.0,
@@ -71,14 +71,14 @@
         "0": {
           "pidf": {
             "p": 0.25,
-            "i": 0.0,
+            "i": 0.001,
             "d": 0,
             "f": 0
           },
           "maxmotion": {
             "cruise_velocity": 500,
             "max_acceleration": 1000,
-            "allowed_profile_error": 0.5
+            "allowed_profile_error": 0.25
           }
         }
       },
@@ -114,23 +114,23 @@
         "0": {
           "pidf": {
             "p": 0.25,
-            "i": 0,
+            "i": 0.001,
             "d": 0,
             "f": 0
           },
           "maxmotion": {
             "cruise_velocity": 500,
             "max_acceleration": 1000,
-            "allowed_profile_error": 0.5
+            "allowed_profile_error": 0.2
           }
         }
       },
       "homing": {
-        "current_limit_a": 6,
-        "stall_current_a": 4,
-        "stall_time_s": 0.2,
-        "fast_speed_rad_s": 0.1,
-        "slow_speed_rad_s": 0.02,
+        "current_limit_a": 1,
+        "stall_current_a": 0.9,
+        "stall_time_s": 0.1,
+        "fast_speed_rad_s": 0.5,
+        "slow_speed_rad_s": 0.05,
         "backoff_rad": 0.05,
         "max_travel_rad": 6.3
       }
@@ -191,7 +191,7 @@
   },
   "gripper": {
     "can_id": 5,
-    "closed_deg": 80,
-    "open_deg": 120
+    "closed_deg": 0,
+    "open_deg": 90
   }
 }
