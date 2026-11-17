@@ -71,7 +71,7 @@ La clase agrupa las tramas por función: 0 comandos de movimiento, 1 configuraci
 | Bits | Señal | Significado |
 |---|---|---|
 | 0–31 | `WRIST_POSITION` | float32: posición de la muñeca en grados |
-| 32–39 | `SERVO_ANGLE` | Último ángulo mandado al servo |
+| 32–39 | `SERVO_ANGLE` | Último ángulo aplicado al PWM del servo |
 | 40 | `DRIVER_ENERGIZED` | El TMC2209 está habilitado: la muñeca tiene torque |
 | 41 | `WRIST_MOVING` | La muñeca se mueve o no ha llegado a su objetivo |
 | 42 | `HEARTBEAT_PRESENT` | Llega `HEARTBEAT` |
@@ -102,6 +102,12 @@ Reglas del firmware:
   pieza). Cuando vuelve el heartbeat, nada se mueve hasta recibir un setpoint nuevo.
 - **Al encender:** el TMC2209 queda apagado hasta el primer heartbeat y el servo no recibe señal
   hasta su primer setpoint. Nada se mueve solo.
+- **Servo:** el ángulo se escribe al PWM solo cuando cambia, y nunca antes de 50 ms desde la
+  escritura anterior (`ESPERA_SERVO_US`). Un `ledcWrite` que llega antes de que el PWM aplique el
+  anterior detiene a la ESP32 hasta dos periodos (40 ms) sin atender el CAN; como el driver de
+  ROS 2 manda `SERVO_SETPOINT` en cada ciclo, la ESP32 dejaba de mandar `STATUS_0` y el nodo se
+  caía por watchdog. Un ángulo repetido no hace nada, y si llegan varios distintos en esos 50 ms
+  se aplica el último.
 
 ---
 
@@ -120,6 +126,7 @@ Todos son constantes al inicio de `esp32_tmc2209.ino`:
 | `HEARTBEAT_TIMEOUT_MS` | 100 | Tiempo sin heartbeat para detenerse. |
 | `CAN_DISPOSITIVO` | 5 | Número de dispositivo en el bus. |
 | `SERVO_US_MIN`, `SERVO_US_MAX` | 500, 2500 | Pulso del servo en 0° y en 180°. |
+| `ESPERA_SERVO_US` | 50000 | Tiempo mínimo entre dos escrituras al PWM del servo: más de dos periodos de 20 ms. |
 
 La conversión queda en `PASOS_POR_GRADO = PASOS_MOTOR * MICROPASOS * REDUCCION / 360`. Al
 arrancar, el monitor serie la imprime junto con la velocidad máxima de la muñeca.
