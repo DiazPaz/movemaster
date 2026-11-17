@@ -50,7 +50,7 @@ const int PIN_CAN_RX = 22;
 // STEPPER
 const int PASOS_MOTOR = 200; 
 const int MICROPASOS = 64;
-const float REDUCCION = 1.0;
+const float REDUCCION = 10.0;
 const bool INVERTIR_MUNECA = false;
 const float PASOS_POR_GRADO = PASOS_MOTOR * MICROPASOS * REDUCCION / 360;
 const float LIMITE_GRADOS = 360;    
