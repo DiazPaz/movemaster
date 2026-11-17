@@ -70,8 +70,8 @@
       "slots": {
         "0": {
           "pidf": {
-            "p": 0.25,
-            "i": 0.001,
+            "p": 0.18,
+            "i": 0.002,
             "d": 0,
             "f": 0
           },
@@ -83,11 +83,11 @@
         }
       },
       "homing": {
-        "current_limit_a": 2,
-        "stall_current_a": 1,
-        "stall_time_s": 0.2,
-        "fast_speed_rad_s": 0.1,
-        "slow_speed_rad_s": 0.02,
+        "current_limit_a": 1,
+        "stall_current_a": 0.9,
+        "stall_time_s": 0.1,
+        "fast_speed_rad_s": 0.3,
+        "slow_speed_rad_s": 0.1,
         "backoff_rad": 0.05,
         "max_travel_rad": 6.3
       }
@@ -129,8 +129,8 @@
         "current_limit_a": 1,
         "stall_current_a": 0.9,
         "stall_time_s": 0.1,
-        "fast_speed_rad_s": 0.5,
-        "slow_speed_rad_s": 0.05,
+        "fast_speed_rad_s": 0.4,
+        "slow_speed_rad_s": 0.1,
         "backoff_rad": 0.05,
         "max_travel_rad": 6.3
       }
@@ -157,14 +157,14 @@
         "0": {
           "pidf": {
             "p": 0.25,
-            "i": 0,
+            "i": 0.01,
             "d": 0,
             "f": 0
           },
           "maxmotion": {
             "cruise_velocity": 500,
             "max_acceleration": 1000,
-            "allowed_profile_error": 0.5
+            "allowed_profile_error": 0.25
           }
         }
       },
@@ -183,8 +183,8 @@
       "can_id": 5,
       "direction": 1,
       "zero_offset_rad": 0,
-      "min_position_rad": -3.14,
-      "max_position_rad": 3.14,
+      "min_position_rad": -6.280001,
+      "max_position_rad": 6.280001,
       "max_velocity_rad_s": 1.57,
       "max_acceleration_rad_s2": 3.14
     }
@@ -192,6 +192,6 @@
   "gripper": {
     "can_id": 5,
     "closed_deg": 0,
-    "open_deg": 90
+    "open_deg": 180
   }
 }
