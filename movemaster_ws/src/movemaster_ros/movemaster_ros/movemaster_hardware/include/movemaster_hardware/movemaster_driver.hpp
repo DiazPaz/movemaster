@@ -132,6 +132,9 @@ class MoveMasterDriver {
   bool active() const { return active_; }
   // Setup requests configure() sent again because no reply arrived (see SparkSetup).
   int setup_retries() const { return setup_retries_; }
+  // Cycles write() cut short because the CAN adapter's TX queue was full: frames sent earlier
+  // had not left it yet. The next cycle sends everything again.
+  long tx_queue_full_cycles() const { return tx_queue_full_cycles_; }
   const std::string &fault() const { return fault_; }
   static double radians_to_rotations(double radians, const JointConfig &joint);
   static double rotations_to_radians(double rotations, const JointConfig &joint);
@@ -149,6 +152,10 @@ class MoveMasterDriver {
   double gripper_status_period_s_ = 0;                   // its STATUS_0 period
   std::vector<CANPacket> gripper_heartbeats_;            // one per gripper joint
   double gripper_opening_ = std::numeric_limits<double>::quiet_NaN();
+  long gripper_servo_angle_ = -1;  // as STATUS_0 reports it; -1 while the servo has no signal
+  // The last servo angle sent, and when: SERVO_SETPOINT goes out only when it changes.
+  std::optional<long> servo_sent_;
+  std::optional<Clock::time_point> servo_sent_at_;
   bool has_spark_ = false;
   std::vector<JointState> states_;
   std::vector<JointControl> controls_;
@@ -158,7 +165,11 @@ class MoveMasterDriver {
   // Each joint's STATUS_0/1/2 arbitration IDs, resolved once: receive() checks every frame.
   struct StatusIds { std::uint32_t status0, status1, status2; };
   std::vector<StatusIds> status_ids_;
-  std::optional<Clock::time_point> last_tx_;
+  std::optional<Clock::time_point> last_tx_;  // the last complete cycle, heartbeats included
+  // Since when write() finds the TX queue full, with no complete cycle since, and why.
+  std::optional<Clock::time_point> tx_full_since_;
+  std::string tx_full_error_;
+  long tx_queue_full_cycles_ = 0;
   bool configured_ = false, active_ = false, report_only_ = false;
   std::string fault_;
   int setup_retries_ = 0;

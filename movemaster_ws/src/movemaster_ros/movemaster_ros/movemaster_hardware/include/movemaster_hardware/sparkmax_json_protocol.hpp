@@ -20,6 +20,8 @@ extern const std::map<int, std::string> PARAMETER_TYPE_NAME;
 
 struct SpecError : std::runtime_error { using std::runtime_error::runtime_error; };
 struct TimeoutError : std::runtime_error { using std::runtime_error::runtime_error; };
+// The adapter's TX queue is full: frames sent earlier have not left it yet.
+struct TxQueueFull : std::runtime_error { using std::runtime_error::runtime_error; };
 
 // Each setpoint frame sets the control type itself; nothing is written beforehand.
 // kPosition: the slot's PID tracks each setpoint. kMAXMotionPosition: the SPARK

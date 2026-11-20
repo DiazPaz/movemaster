@@ -80,6 +80,7 @@ std::vector<hardware_interface::CommandInterface> MovemasterHardware::export_com
 CallbackReturn MovemasterHardware::on_configure(const rclcpp_lifecycle::State &) {
   try {
     driver_ = std::make_unique<MoveMasterDriver>(config_);
+    tx_queue_full_warned_ = 0;
     const auto restarted = driver_->configure(reference_taken_ || require_reference_
         ? SparkResetPolicy::kFault : SparkResetPolicy::kAcceptPowerOnPose);
     for (const auto &name : restarted)
@@ -137,8 +138,21 @@ Return MovemasterHardware::read(const rclcpp::Time &, const rclcpp::Duration &) 
 }
 Return MovemasterHardware::write(const rclcpp::Time &, const rclcpp::Duration &) {
   if (!driver_) return Return::OK;
-  try { driver_->write(commands_, gripper_command_); return Return::OK; }
+  try { driver_->write(commands_, gripper_command_); warn_tx_queue_full(); return Return::OK; }
   catch (const std::exception &e) { stop(); report(e); return Return::ERROR; }
+}
+// A full TX queue costs the driver a cycle, not the session; it trips only if the queue stays
+// full. Warned at most once per second: an adapter that falls behind should be seen before then.
+void MovemasterHardware::warn_tx_queue_full() {
+  const long cycles = driver_->tx_queue_full_cycles();
+  const auto now = std::chrono::steady_clock::now();
+  if (cycles == tx_queue_full_warned_ || now - tx_queue_full_warned_at_ < std::chrono::seconds(1)) return;
+  RCLCPP_WARN(rclcpp::get_logger("MovemasterHardware"),
+      "CAN TX queue full: %ld cycle(s) cut short since the last warning, %ld in total. The CAN adapter "
+      "is not sending frames as fast as they are queued; see MANUAL section 14",
+      cycles - tx_queue_full_warned_, cycles);
+  tx_queue_full_warned_ = cycles;
+  tx_queue_full_warned_at_ = now;
 }
 }  // namespace movemaster
 PLUGINLIB_EXPORT_CLASS(movemaster::MovemasterHardware, hardware_interface::SystemInterface)

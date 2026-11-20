@@ -11,6 +11,9 @@ namespace {
 constexpr double tau = 6.283185307179586476925286766559;
 constexpr std::size_t rx_budget = 256;
 constexpr int kStatus1PeriodMs = 100;  // faults and warnings, HAS_RESET among them
+// The ESP32 applies a new servo angle within 50 ms (ESPERA_SERVO_US in its firmware) and reports
+// it in its next STATUS_0; an angle still not reported after this long is sent again.
+constexpr double kServoRetryS = 0.1;
 void require(bool condition, const std::string &message) {
   if (!condition) throw std::invalid_argument(message);
 }
@@ -328,9 +331,11 @@ void MoveMasterDriver::receive_gripper(std::size_t i, const CANPacket &packet) {
   status0_at_[i] = now;
   if (config_.gripper && config_.gripper->device_id == j.device_id) {
     const auto &g = *config_.gripper;
-    gripper_opening_ = d.at("SERVO_ACTIVE").get<bool>()
-        ? (d.at("SERVO_ANGLE").get<double>() - g.closed_deg) / (g.open_deg - g.closed_deg)
-        : std::numeric_limits<double>::quiet_NaN();
+    const bool active = d.at("SERVO_ACTIVE").get<bool>();
+    const double angle = d.at("SERVO_ANGLE").get<double>();
+    gripper_opening_ = active ? (angle - g.closed_deg) / (g.open_deg - g.closed_deg)
+                              : std::numeric_limits<double>::quiet_NaN();
+    gripper_servo_angle_ = active ? std::lround(angle) : -1;
   }
 }
 void MoveMasterDriver::receive(const CANPacket &packet) {
@@ -419,7 +424,8 @@ void MoveMasterDriver::wait_status1(const std::vector<std::size_t> &joints, bool
 }
 void MoveMasterDriver::check_cycle_gap() const {
   if (active_ && last_tx_ && std::chrono::duration<double>(Clock::now() - *last_tx_).count() > config_.max_cycle_gap_s)
-    throw std::runtime_error("Control loop gap exceeded; refusing automatic re-enable");
+    throw std::runtime_error(tx_full_since_ ? tx_full_error_ + " for more than max_cycle_gap_s"
+                                            : "Control loop gap exceeded; refusing automatic re-enable");
 }
 double MoveMasterDriver::checked_target(double radians, const JointConfig &j) const {
   if (!std::isfinite(radians) || radians < j.min_position_rad || radians > j.max_position_rad)
@@ -456,6 +462,8 @@ void MoveMasterDriver::activate() {
     std::vector<double> hold;
     for (const auto &s : states_) hold.push_back(s.position);
     last_tx_.reset();
+    tx_full_since_.reset();
+    servo_sent_.reset();  // the first command of the activation always goes out
     active_ = true;
     write(hold);  // All setpoints are loaded before the first global heartbeat.
   } catch (const std::exception &e) { trip(e.what()); throw; }
@@ -582,22 +590,49 @@ void MoveMasterDriver::write(const std::vector<double> &positions, double grippe
         throw std::out_of_range(j.name + ": Position target exceeds max_following_error_rad from the measured position");
       packets.push_back(protocols_[i]->setpoint_packet(control.mode, rotations, control.slot));
     }
+    std::optional<long> servo_angle;  // the servo angle this cycle sends, if any
     if (!std::isnan(gripper_opening)) {
       require(config_.gripper.has_value(), "No gripper configured in joints.json");
       if (!(gripper_opening >= 0 && gripper_opening <= 1))
         throw std::out_of_range("gripper: opening command must be in 0 (closed) .. 1 (open)");
-      // Like the wrist setpoint, the ESP32 ignores it until its heartbeat arrives.
       const auto &g = *config_.gripper;
-      packets.push_back((*gripper_frames_)["SERVO_SETPOINT"].packet(g.device_id,
-          {{"ANGLE", std::lround(g.closed_deg + gripper_opening * (g.open_deg - g.closed_deg))}}));
+      const long angle = std::lround(g.closed_deg + gripper_opening * (g.open_deg - g.closed_deg));
+      // The ESP32 keeps its angle, so it is sent only when it changes, not every cycle. It goes
+      // again if STATUS_0 has not reported it kServoRetryS later: the ESP32 ignores it without
+      // its heartbeat, as in the first cycle after activation, like the wrist setpoint.
+      if (!servo_sent_ || angle != *servo_sent_ || (angle != gripper_servo_angle_ &&
+          std::chrono::duration<double>(Clock::now() - *servo_sent_at_).count() > kServoRetryS)) {
+        packets.push_back((*gripper_frames_)["SERVO_SETPOINT"].packet(g.device_id, {{"ANGLE", angle}}));
+        servo_angle = angle;
+      }
     }
     // A caller paced at period_s (the controller_manager loop) wakes up a little early or late
     // every cycle; requiring a full period would drop about a third of the cycles.
     if (last_tx_ && std::chrono::duration<double>(Clock::now() - *last_tx_).count() < 0.5 * config_.period_s) return;
-    for (const auto &packet : packets) bus_->send(packet, 0);
-    if (has_spark_) bus_->send(heartbeat_, 0);
-    for (const auto &packet : gripper_heartbeats_) bus_->send(packet, 0);
+    try {
+      for (const auto &packet : packets) bus_->send(packet, 0);
+      if (has_spark_) bus_->send(heartbeat_, 0);
+      for (const auto &packet : gripper_heartbeats_) bus_->send(packet, 0);
+    } catch (const TxQueueFull &e) {
+      // Frames from earlier cycles are still in the adapter: a burst, or an SPI adapter (MCP2515)
+      // that cannot keep up. The rest of this cycle is dropped; the SPARKs and the ESP32 keep
+      // their last setpoint, and the next cycle sends everything again. A queue that stays full
+      // (no node acknowledges frames) leaves no complete cycle, so the heartbeats stop too: it
+      // trips here, or in check_cycle_gap(), once max_cycle_gap_s passes without one.
+      ++tx_queue_full_cycles_;
+      const auto now = Clock::now();
+      if (!tx_full_since_) tx_full_since_ = now;
+      tx_full_error_ = e.what();
+      if (std::chrono::duration<double>(now - (last_tx_ ? *last_tx_ : *tx_full_since_)).count() > config_.max_cycle_gap_s)
+        throw std::runtime_error(tx_full_error_ + " for more than max_cycle_gap_s");
+      return;
+    }
+    tx_full_since_.reset();
     last_tx_ = Clock::now();
+    if (servo_angle) {
+      servo_sent_ = servo_angle;
+      servo_sent_at_ = last_tx_;
+    }
   } catch (const std::exception &e) { trip(e.what()); throw; }
 }
 }  // namespace movemaster

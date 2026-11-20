@@ -3,6 +3,7 @@
 #include <hardware_interface/system_interface.hpp>
 #include <rclcpp/macros.hpp>
 #include <rclcpp_lifecycle/state.hpp>
+#include <chrono>
 
 namespace movemaster {
 class MovemasterHardware final : public hardware_interface::SystemInterface {
@@ -33,6 +34,10 @@ class MovemasterHardware final : public hardware_interface::SystemInterface {
   // means the position was lost.
   bool require_reference_ = false;
   bool reference_taken_ = false;
+  // Cycles the driver cut short because the CAN TX queue was full, as last warned about.
+  long tx_queue_full_warned_ = 0;
+  std::chrono::steady_clock::time_point tx_queue_full_warned_at_{};
+  void warn_tx_queue_full();
   void copy_states();
   void stop() noexcept;
 };
