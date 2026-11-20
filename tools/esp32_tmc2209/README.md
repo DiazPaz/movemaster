@@ -71,7 +71,7 @@ La clase agrupa las tramas por función: 0 comandos de movimiento, 1 configuraci
 | Bits | Señal | Significado |
 |---|---|---|
 | 0–31 | `WRIST_POSITION` | float32: posición de la muñeca en grados |
-| 32–39 | `SERVO_ANGLE` | Último ángulo mandado al servo |
+| 32–39 | `SERVO_ANGLE` | Último ángulo aplicado al PWM del servo |
 | 40 | `DRIVER_ENERGIZED` | El TMC2209 está habilitado: la muñeca tiene torque |
 | 41 | `WRIST_MOVING` | La muñeca se mueve o no ha llegado a su objetivo |
 | 42 | `HEARTBEAT_PRESENT` | Llega `HEARTBEAT` |
@@ -102,6 +102,12 @@ Reglas del firmware:
   pieza). Cuando vuelve el heartbeat, nada se mueve hasta recibir un setpoint nuevo.
 - **Al encender:** el TMC2209 queda apagado hasta el primer heartbeat y el servo no recibe señal
   hasta su primer setpoint. Nada se mueve solo.
+- **Servo:** el ángulo se escribe al PWM solo cuando cambia, y nunca antes de 50 ms desde la
+  escritura anterior (`ESPERA_SERVO_US`). Un `ledcWrite` que llega antes de que el PWM aplique el
+  anterior detiene a la ESP32 hasta dos periodos (40 ms) sin atender el CAN; como el driver de
+  ROS 2 manda `SERVO_SETPOINT` en cada ciclo, la ESP32 dejaba de mandar `STATUS_0` y el nodo se
+  caía por watchdog. Un ángulo repetido no hace nada, y si llegan varios distintos en esos 50 ms
+  se aplica el último.
 
 ---
 
@@ -111,15 +117,17 @@ Todos son constantes al inicio de `esp32_tmc2209.ino`:
 
 | Constante | Valor | Qué es |
 |---|---|---|
-| `REDUCCION` | 1.0 | Vueltas del motor por vuelta de la muñeca. Con varias etapas, se multiplican (`3.0 * 4.0`). |
+| `REDUCCION` | 10.0 | Vueltas del motor por vuelta de la muñeca. Con varias etapas, se multiplican (`3.0 * 4.0`). |
 | `INVERTIR_MUNECA` | false | `true` si la reducción invierte el sentido de giro. |
 | `PASOS_MOTOR` | 200 | Pasos por vuelta del motor: 200 si es de 1.8°, 400 si es de 0.9°. |
-| `MICROPASOS` | 8 | Debe coincidir con MS1/MS2: 8, 16, 32 o 64. Sin UART el TMC2209 no trabaja en paso completo. |
+| `MICROPASOS` | 64 | Debe coincidir con MS1/MS2: 8, 16, 32 o 64. Sin UART el TMC2209 no trabaja en paso completo. |
 | `LIMITE_GRADOS` | 360 | Recorrido permitido de la muñeca, en ambos sentidos. |
-| `VEL_MAXIMA` | 20000 | Pasos/s máximos. La muñeca llega como máximo a `VEL_MAXIMA / PASOS_POR_GRADO` °/s. |
+| `VEL_INICIAL` | 15000 | Pasos/s con los que arranca y termina cada movimiento: debajo de ella no hay rampa. Igual a `VEL_MAXIMA`, la muñeca arranca y frena sin rampa, a la velocidad del perfil. |
+| `VEL_MAXIMA` | 15000 | Pasos/s máximos. La muñeca llega como máximo a `VEL_MAXIMA / PASOS_POR_GRADO` °/s. |
 | `HEARTBEAT_TIMEOUT_MS` | 100 | Tiempo sin heartbeat para detenerse. |
 | `CAN_DISPOSITIVO` | 5 | Número de dispositivo en el bus. |
 | `SERVO_US_MIN`, `SERVO_US_MAX` | 500, 2500 | Pulso del servo en 0° y en 180°. |
+| `ESPERA_SERVO_US` | 50000 | Tiempo mínimo entre dos escrituras al PWM del servo: más de dos periodos de 20 ms. |
 
 La conversión queda en `PASOS_POR_GRADO = PASOS_MOTOR * MICROPASOS * REDUCCION / 360`. Al
 arrancar, el monitor serie la imprime junto con la velocidad máxima de la muñeca.
@@ -134,7 +142,7 @@ arrancar, el monitor serie la imprime junto con la velocidad máxima de la muñe
 3. El monitor serie (115200) muestra al arrancar:
    ```
    Gripper: CAN a 1 Mbit/s, dispositivo 5, STATUS_0 en 0x0A080805
-   Muñeca: 4.444 pasos por grado, hasta 4500.0 °/s
+   Muñeca: 355.556 pasos por grado, hasta 42.2 °/s
    ```
    y después, una vez por segundo, la posición, el servo, el heartbeat y el estado del CAN.
 

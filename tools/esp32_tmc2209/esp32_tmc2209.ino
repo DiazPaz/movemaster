@@ -96,8 +96,14 @@ unsigned long ultimoPaso = 0;
 bool energizado = false;
 bool sinReferencia = true;
 
-int anguloServo = 90;
+int anguloServo = 90;                    // último ángulo aplicado al PWM
 bool servoConSenal = false;
+int anguloPedido = -1;                   // último ángulo pedido por CAN; -1 = nada pendiente
+unsigned long ultimaEscrituraServo = 0;  // micros() del último ledcWrite
+// Un ledcWrite que llega antes de que el LEDC aplique el anterior detiene la ESP32 hasta dos
+// periodos del PWM (40 ms), sin atender ni el CAN. Por eso el ángulo se escribe solo cuando
+// cambia y con más de dos periodos (2 x 20 ms) desde la escritura anterior.
+const unsigned long ESPERA_SERVO_US = 50000;
 
 bool heartbeat = false;
 unsigned long ultimoHeartbeat = 0;
@@ -181,8 +187,21 @@ void iniciarServo() {
 #endif
 }
 
+// Solo guarda el ángulo: aplicarServo() lo escribe desde loop() cuando el PWM puede recibirlo.
+// El driver de ROS 2 manda el mismo ángulo en cada ciclo; repetido, no toca el PWM.
 void moverServo(int angulo) {
-  anguloServo = constrain(angulo, 0, 180);
+  anguloPedido = constrain(angulo, 0, 180);
+}
+
+void aplicarServo() {
+  if (!heartbeat || anguloPedido < 0) return;
+  if (servoConSenal && anguloPedido == anguloServo) {
+    anguloPedido = -1;
+    return;
+  }
+  if (servoConSenal && micros() - ultimaEscrituraServo < ESPERA_SERVO_US) return;
+  anguloServo = anguloPedido;
+  anguloPedido = -1;
   servoConSenal = true;
   uint32_t us = map(anguloServo, 0, 180, SERVO_US_MIN, SERVO_US_MAX);
   uint32_t duty = us * ((1UL << SERVO_RESOLUCION) - 1) / (1000000UL / SERVO_FRECUENCIA);
@@ -191,6 +210,7 @@ void moverServo(int angulo) {
 #else
   ledcWrite(SERVO_CANAL, duty);
 #endif
+  ultimaEscrituraServo = micros();
 }
 
 bool iniciarCan() {
@@ -259,6 +279,7 @@ void revisarHeartbeat() {
   if (heartbeat && millis() - ultimoHeartbeat > HEARTBEAT_TIMEOUT_MS) {
     heartbeat = false;
     detenerEnSeco();  // el driver sigue energizado: la muñeca mantiene su posición
+    anguloPedido = -1;  // el servo se queda en su último ángulo, aunque hubiera uno pendiente
   }
 }
 
@@ -319,6 +340,7 @@ void setup() {
 void loop() {
   atenderCan();
   revisarHeartbeat();
+  aplicarServo();
   actualizarMuneca();
 
   unsigned long ahora = millis();
