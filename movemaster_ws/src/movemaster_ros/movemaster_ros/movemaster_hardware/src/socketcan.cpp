@@ -73,11 +73,12 @@ void SocketCAN::send(const CANPacket &packet, double timeout) {
   if (!ready(POLLOUT, timeout)) throw TimeoutError("SocketCAN TX timeout");
   const auto n = ::write(fd_, &frame, sizeof(frame));
   if (n < 0) {
-    // The interface queue fills when frames stop leaving the adapter: on this bus, because no
-    // SPARK acknowledges them.
+    // The interface queue (txqueuelen, 10 by default) fills when frames stop leaving the adapter:
+    // no node acknowledges them, or the adapter sends them slower than they are queued.
     if (errno == ENOBUFS)
-      throw std::runtime_error("write(SocketCAN): TX queue full; no SPARK acknowledges frames (powered off, "
-          "e.g. by the emergency stop, or bus disconnected)");
+      throw TxQueueFull("write(SocketCAN): TX queue full; frames are not leaving the CAN adapter (no node "
+          "acknowledges them: SPARK MAX and gripper ESP32 powered off, e.g. by the emergency stop, or bus "
+          "disconnected; or more frames per cycle than the adapter can send)");
     fail("write(SocketCAN)");
   }
   if (n != sizeof(frame)) throw std::runtime_error("Short SocketCAN write");

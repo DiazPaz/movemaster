@@ -1,4 +1,5 @@
 #include "simulated_spark_bus.hpp"
+#include <algorithm>
 #include <cmath>
 
 using namespace movemaster;
@@ -420,6 +421,37 @@ void gripper_servo(const char *spec) {
     check(spy->gripper.servo_angle == angle && driver.gripper_opening() == opening,
         "The servo did not take, or report, the commanded opening");
   }
+  // The ESP32 keeps its angle: an unchanged opening sends nothing, cycle after cycle.
+  const auto cycle = [&](double opening) {
+    pause_cycle(); driver.read(); spy->sent.clear(); driver.write(hold, opening);
+    return servo_frames();
+  };
+  const int accepted = spy->gripper.servo_setpoints;
+  for (int i = 0; i < 30; ++i) check(cycle(0.0).empty(), "An unchanged opening was sent again");
+  check(spy->gripper.servo_setpoints == accepted, "The ESP32 got an unchanged angle");
+  // A command the ESP32 does not report goes again kServoRetryS (0.1 s) after the last send.
+  spy->gripper.drop_servo = true;
+  const auto lost_at = std::chrono::steady_clock::now();
+  check(cycle(1.0) == std::vector<int>{120}, "A new opening was not sent at once");
+  int resent = 0;
+  while (std::chrono::steady_clock::now() - lost_at < std::chrono::milliseconds(150))
+    if (!cycle(1.0).empty()) {
+      check(std::chrono::steady_clock::now() - lost_at >= std::chrono::milliseconds(100),
+          "A lost servo command was sent again too soon");
+      ++resent;
+    }
+  check(resent == 1, "A lost servo command was not sent again exactly once in 0.15 s");
+  spy->gripper.drop_servo = false;
+  const auto retry_at = std::chrono::steady_clock::now();
+  while (spy->gripper.servo_angle != 120 && std::chrono::steady_clock::now() - retry_at < std::chrono::milliseconds(300))
+    cycle(1.0);
+  pause_cycle(); driver.read();
+  check(spy->gripper.servo_angle == 120 && driver.gripper_opening() == 1.0, "A lost servo command was never retried");
+  for (int i = 0; i < 30; ++i) check(cycle(1.0).empty(), "A servo angle already reported was sent again");
+  // Each activation sends its first command, even an unchanged one.
+  driver.deactivate(); driver.activate();
+  check(cycle(1.0) == std::vector<int>{120}, "The first command after reactivation was not sent");
+  check(cycle(1.0).empty(), "An unchanged opening was sent again after reactivation");
   pause_cycle(); driver.read(); spy->sent.clear();
   rejects_with([&] { driver.write(hold, 1.5); }, "opening command must be in 0 (closed) .. 1 (open)");
   check(spy->sent.empty() && !driver.active() && !driver.fault().empty(),
@@ -452,6 +484,53 @@ void gripper_servo(const char *spec) {
   rejects_with([&] { validate_driver_config(same); }, "closed_deg and open_deg must differ");
 }
 }
+// A TX queue full for a moment (frames still in the adapter) drops the rest of that cycle and the
+// next one sends everything; one that stays full, as when no node acknowledges frames, trips
+// once max_cycle_gap_s passes without a complete cycle.
+void tx_queue_full(const char *spec) {
+  auto config = config_with_gripper(spec, 2);
+  config.gripper = GripperConfig{5, 80, 120};
+  auto bus = std::make_unique<SimulatedSparkBus>(config);
+  auto *spy = bus.get();
+  MoveMasterDriver driver(config, std::move(bus));
+  driver.configure(); driver.activate();
+  std::vector<double> hold;
+  for (const auto &s : driver.states()) hold.push_back(s.position);
+  for (int full_cycles = 1; full_cycles <= 3; ++full_cycles) {
+    spy->tx_queue_full = true;
+    for (int i = 0; i < full_cycles; ++i) { pause_cycle(); driver.read(); driver.write(hold, 0.5); }
+    check(driver.active() && driver.fault().empty(), "A TX queue full for a moment tripped the driver");
+    spy->tx_queue_full = false;
+    pause_cycle(); driver.read(); spy->sent.clear(); driver.write(hold, 0.5);
+    // 2 SPARK setpoints, the wrist, the servo only the first time, both heartbeats.
+    const auto names = spy->names_sent_to_gripper();
+    check(spy->sent.size() == (full_cycles == 1 ? 6U : 5U) &&
+        std::count(names.begin(), names.end(), "HEARTBEAT") == 1 &&
+        spy->sent[spy->sent.size() - 2].arbitration_id == 0x01011840U,
+        "The cycle after a full TX queue did not send everything again");
+  }
+  check(driver.tx_queue_full_cycles() == 6, "Cycles cut short by a full TX queue not counted");
+
+  spy->tx_queue_full = true;
+  const auto full_at = std::chrono::steady_clock::now();
+  rejects_with([&] { for (;;) { pause_cycle(); driver.read(); driver.write(hold, 0.5); } },
+      "TX queue full for more than max_cycle_gap_s");
+  check(std::chrono::steady_clock::now() - full_at >= std::chrono::duration<double>(config.max_cycle_gap_s - 0.01),
+      "A full TX queue tripped before max_cycle_gap_s");
+  check(!driver.active() && driver.fault().find("TX queue full") != std::string::npos,
+      "A TX queue that stayed full did not latch its own fault");
+
+  // Full already at activation: activate() succeeds, and the queue still trips if it stays full.
+  auto full_bus = std::make_unique<SimulatedSparkBus>(config);
+  auto *full_spy = full_bus.get();
+  MoveMasterDriver late(config, std::move(full_bus));
+  late.configure();
+  full_spy->tx_queue_full = true;
+  late.activate();
+  check(late.active(), "A full TX queue at activation was fatal at once");
+  rejects_with([&] { for (;;) { pause_cycle(); late.read(); late.write(hold); } },
+      "TX queue full for more than max_cycle_gap_s");
+}
 int main(int argc, char **argv) {
   if (argc != 2) return 2;
   try {
@@ -467,6 +546,7 @@ int main(int argc, char **argv) {
     gripper_faults(argv[1]);
     gripper_validation(argv[1]);
     gripper_servo(argv[1]);
+    tx_queue_full(argv[1]);
     auto duplicate = config_for(argv[1]); duplicate.joints[1].device_id = 1;
     rejects([&] { MoveMasterDriver driver(duplicate); }, "Duplicate CAN IDs accepted");
     auto missing = config_for(argv[1]); missing.joints[0].gear_ratio = 0;
@@ -510,7 +590,8 @@ int main(int argc, char **argv) {
         "baseline and slots in RAM, Position/MAXMotion per joint, following error, "
         "stale/malformed feedback, TX failure, loop gap, SPARK restarts, current limit, lost replies, "
         "and the gripper wrist: profile, reference, heartbeats, units, limits, restarts and watchdog; "
-        "and the gripper servo: opening to angle, state, limits and validation.\n";
+        "and the gripper servo: opening to angle, only on change, retried, state, limits and validation; "
+        "and a full TX queue: cycles dropped, then tripped after max_cycle_gap_s.\n";
     return 0;
   } catch (const std::exception &e) { std::cerr << "FAIL: " << e.what() << '\n'; return 1; }
 }

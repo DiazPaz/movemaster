@@ -154,9 +154,13 @@ SPARK MAX (CAN 1 a 4).
 
 Esta prueba corrigió dos cosas: el manual esperaba que el primer fallo del paro
 fuera el de la telemetría o `HAS_RESET`, y el mensaje del sistema operativo no
-decía la causa. Ahora es `write(SocketCAN): TX queue full; no SPARK
-acknowledges frames (powered off, e.g. by the emergency stop, or bus
-disconnected)`.
+decía la causa. Ahora es `write(SocketCAN): TX queue full; frames are not
+leaving the CAN adapter (...) for more than max_cycle_gap_s`: con la ESP32 del
+gripper en el bus, una cola llena ya no significa solo que los SPARK estén
+apagados. A 100 Hz el MCP2515 también llenaba la cola por momentos
+(`tc -s qdisc`: `dropped 7`, `requeues 254933`; 3598 `rx-overflow`), así que el
+driver se salta esos ciclos y solo falla si la cola sigue llena más de
+`max_cycle_gap_s`.
 
 **Pendiente en el equipo de destino:**
 

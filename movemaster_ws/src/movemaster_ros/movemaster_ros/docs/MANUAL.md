@@ -627,6 +627,10 @@ cambias la pinza solo cambias este bloque.
 - **Al arrancar no se mueve:** el driver no manda nada al servo hasta el primer
   comando. Si el servo ya tenía un ángulo, por ejemplo de antes de reiniciar el
   nodo, lo conserva.
+- **Solo manda el ángulo cuando cambia,** no en cada ciclo: la ESP32 lo
+  conserva. Si su `STATUS_0` no lo reporta 0.1 s después (la ESP32 lo ignoró
+  sin heartbeat o se perdió), lo vuelve a mandar. Cada activación manda su
+  primer comando aunque no haya cambiado.
 - **Al detenerse** (paro o fallo), el servo se queda en su último ángulo: no
   suelta la pieza.
 - **Una apertura fuera de 0–1** (por ejemplo 120 en lugar de 1) es un fallo,
@@ -658,7 +662,7 @@ ejemplos y las pruebas. La carpeta `build/` está ignorada por git.
 
 | Prueba (`ctest`) | Programa | Qué verifica |
 |---|---|---|
-| `driver_fake_bus` | `tests/driver_test.cpp` | El driver completo contra un SPARK simulado (`tests/simulated_spark_bus.hpp`): 1, 3 y 6 ejes, conversiones, ACKs, orden setpoints → heartbeat, límites, envío en cada ciclo del lazo, baseline y slots en RAM, modos Position y MAXMotion por eje, error de seguimiento, telemetría vencida o corrupta, fallo de TX, lazo detenido, reinicio de un SPARK (`HAS_RESET`), también solo informado (`kReport`), y cambio del límite de corriente. |
+| `driver_fake_bus` | `tests/driver_test.cpp` | El driver completo contra un SPARK simulado (`tests/simulated_spark_bus.hpp`): 1, 3 y 6 ejes, conversiones, ACKs, orden setpoints → heartbeat, límites, envío en cada ciclo del lazo, baseline y slots en RAM, modos Position y MAXMotion por eje, error de seguimiento, telemetría vencida o corrupta, fallo de TX, lazo detenido, reinicio de un SPARK (`HAS_RESET`), también solo informado (`kReport`), cambio del límite de corriente, el gripper (muñeca y servo, que solo se manda al cambiar y se reintenta si la ESP32 no lo reporta) y la cola de TX llena: por un momento se salta el ciclo, sostenida falla tras `max_cycle_gap_s`. |
 | `config_and_commissioning` | `tests/setup_test.cpp` | Que los `joints.json` del repositorio cargan; que cada parámetro que escribe el código coincide en ID, nombre, tipo y valores con `spec/SparkParameters-v0.1.2.md`; los mensajes de error del cargador, también los del bloque `homing`; y la puesta en marcha: orden restablecer → baseline → persistir, números mágicos, fallos, `spark_commission` y la escucha del bus. |
 | `protocol_demo_no_can` | `examples/protocol_demo.cpp` | Que se puede leer el JSON de REV y armar tramas sin abrir CAN. |
 | `console_input_and_cycle` | `tests/console_test.cpp` | La lógica de `spark_console` con un driver falso y entrada por tubería, incluidos los comandos `mode` y `slot`. |
@@ -1313,10 +1317,11 @@ La reactivación crea un driver nuevo, repite la configuración de los SPARK y
 vuelve a mantener la posición medida.
 
 **Paro de emergencia o corte de alimentación**: los SPARK se apagan y pierden
-la posición. Sin ellos nadie confirma (ACK) las tramas del bus, la cola de
-transmisión se llena y el driver enclava un fallo en milisegundos:
-`write(SocketCAN): TX queue full; no SPARK acknowledges frames ...`. Con un
-corte breve puede ser `STATUS_0/2 watchdog expired` o `the SPARK restarted
+la posición. Si nadie más confirma (ACK) las tramas del bus (la ESP32 también
+las confirma mientras tenga alimentación), la cola de transmisión se llena y,
+en `max_cycle_gap_s` (0.1 s), el driver enclava un fallo:
+`write(SocketCAN): TX queue full; frames are not leaving the CAN adapter ...
+for more than max_cycle_gap_s`. Con un corte breve puede ser `STATUS_0/2 watchdog expired` o `the SPARK restarted
 (HAS_RESET)`. Después ya no permite reactivar: `joint_1: the SPARK restarted
 (power cut or emergency stop) and lost its position; power it up with the arm in
 Home and restart the node`. El SPARK cuenta desde que enciende, así que el brazo
@@ -1628,7 +1633,8 @@ Los dos archivos de REV no se modifican.
 | `Parameter ACK mismatch: CAN 1, p` | El SPARK no aceptó o no confirmó el valor de un parámetro. | Revisa el valor en `joints.json` y el firmware. Si el parámetro es `motor_type`, `idle_mode`, `smart_current_*`, `voltage_comp_mode`, `compensated_nominal_voltage`, `output_min` u `output_max`, anótalo: son IDs que aún no se habían probado con un SPARK real. |
 | `Fresh STATUS_0 and STATUS_2 required for every joint` | Al activar, falta telemetría reciente de algún eje. | Revisa cableado, `status_period_ms` y que todos los ejes respondan en `driver_monitor`. |
 | `STATUS_0/2 watchdog expired` | Se dejó de recibir telemetría con el brazo activo. | Cable o alimentación; luego recupera (paso 9). |
-| `write(SocketCAN): TX queue full; no SPARK acknowledges frames ...` (antes, `write(SocketCAN): No buffer space available`) | Ningún SPARK confirma las tramas: paro de emergencia presionado, SPARK sin alimentación o bus desconectado. | Si fue el paro, recupera como en el [paso 9](#12-paso-9--detener-fallos-y-recuperación). Si no, revisa alimentación y cableado con `candump can0`. |
+| `write(SocketCAN): TX queue full; frames are not leaving the CAN adapter ... for more than max_cycle_gap_s` (antes, `... no SPARK acknowledges frames ...` o `No buffer space available`) | La cola de envío de `can0` (`qlen 10`) siguió llena más de `max_cycle_gap_s`. Puede ser que nadie confirme las tramas (paro de emergencia, SPARK y ESP32 sin alimentación, bus desconectado) o que el adaptador no alcance a mandarlas: el MCP2515 maneja una trama a la vez por SPI y a 100 Hz pasan por él unas 1700 tramas/s. | Si fue el paro, recupera como en el [paso 9](#12-paso-9--detener-fallos-y-recuperación). Si no: `tc -s qdisc show dev can0` (`dropped` cuenta las veces que se llenó) y `ip -details -statistics link show can0` (`errors` de RX son `rx-overflow`: el MCP2515 saturado). Para darle aire: `sudo ip link set can0 txqueuelen 100`, o 50 Hz (`period_s: 0.02`, `status_period_ms: 20`). La solución de fondo es un adaptador MCP2518FD o USB-CAN `gs_usb`. |
+| `CAN TX queue full: N cycle(s) cut short ...` (advertencia) | La cola de envío se llenó por un momento y el driver se saltó esos ciclos; los SPARK y la ESP32 conservaron su último setpoint. No es un fallo. | Nada, si es ocasional. Si aparece seguido, el adaptador va al límite: haz lo de la fila anterior antes de que se vuelva fallo. |
 | `joint_1: the SPARK restarted (HAS_RESET); its position and RAM configuration are lost` | El SPARK se reinició con el brazo activo: un corte breve o una caída de tensión. | Revisa la alimentación y las conexiones de ese SPARK; después, como la fila siguiente. |
 | `joint_1: the SPARK restarted (power cut or emergency stop) and lost its position; ...` al recuperar | El SPARK se apagó y volvió a encender con el nodo vivo: cuenta desde otra postura. | Cierra el nodo, lleva el brazo a Home con el paro presionado, suéltalo y vuelve a lanzar ([paso 9](#12-paso-9--detener-fallos-y-recuperación)). |
 | `joint_1: SPARK powered up; its zero is the pose it powered up in, ...` (advertencia) | Normal en el primer arranque tras encender los SPARK. | Nada, si se encendieron en Home ([4.4](#44-cuidados)). Si no, la posición en ROS está desplazada: cierra el nodo y enciende los SPARK en Home. |
