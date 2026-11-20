@@ -1,6 +1,6 @@
 {
-  "period_s": 0.02,
-  "status_period_ms": 20,
+  "period_s": 0.01,
+  "status_period_ms": 10,
   "feedback_timeout_s": 0.3,
   "response_timeout_s": 0.5,
   "disable_settle_s": 0.5,
@@ -8,7 +8,7 @@
   "joints": {  
      "joint_1": {
       "can_id": 1,
-      "gear_ratio": 85.49,
+      "gear_ratio": 89,
       "direction": 1,
       "zero_offset_rad": 0,
       "min_position_rad": -5.0,
@@ -84,7 +84,7 @@
       },
       "homing": {
         "current_limit_a": 2,
-        "stall_current_a": 1.9,
+        "stall_current_a": 1,
         "stall_time_s": 0.1,
         "fast_speed_rad_s": 0.15,
         "slow_speed_rad_s": 0.1,
