@@ -5,6 +5,7 @@
   "response_timeout_s": 0.5,
   "disable_settle_s": 0.5,
   "max_cycle_gap_s": 0.1,
+  "homing_order": ["joint_2", "joint_3", "joint_4", "joint_1"],
   "joints": {  
      "joint_1": {
       "can_id": 1,
@@ -46,7 +47,9 @@
         "fast_speed_rad_s": 0.4,
         "slow_speed_rad_s": 0.2,
         "backoff_rad": 0.03,
-        "max_travel_rad": 6.3
+        "max_travel_rad": 6.3,
+        "stop": "-",
+        "stop_rad": -2.751
       }
     },   
     "joint_2": {
@@ -89,7 +92,9 @@
         "fast_speed_rad_s": 0.15,
         "slow_speed_rad_s": 0.1,
         "backoff_rad": 0.05,
-        "max_travel_rad": 6.3
+        "max_travel_rad": 6.3,
+        "stop": "-",
+        "stop_rad": -2.075
       }
     },     
     "joint_3": {
@@ -132,7 +137,9 @@
         "fast_speed_rad_s": 0.1,
         "slow_speed_rad_s": 0.05,
         "backoff_rad": 0.05,
-        "max_travel_rad": 6.3
+        "max_travel_rad": 6.3,
+        "stop": "-",
+        "stop_rad": -0.06
       }
     },     
     "joint_4": {
@@ -175,7 +182,9 @@
         "fast_speed_rad_s": 0.1,
         "slow_speed_rad_s": 0.05,
         "backoff_rad": 0.05,
-        "max_travel_rad": 6.3
+        "max_travel_rad": 6.3,
+        "stop": "-",
+        "stop_rad": -2.1
       }
     },
     "joint_5": {

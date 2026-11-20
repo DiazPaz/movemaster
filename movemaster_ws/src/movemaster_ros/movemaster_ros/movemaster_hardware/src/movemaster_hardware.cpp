@@ -45,6 +45,11 @@ CallbackReturn MovemasterHardware::on_init(const hardware_interface::HardwareInf
         params.count("can_interface") ? params.at("can_interface") : "can0", order);
     if (has_gripper_ != config_.gripper.has_value())
       throw std::invalid_argument("The gripper GPIO of ros2_control and the gripper block of joints.json go together");
+    if (params.count("require_reference")) {
+      const auto &value = params.at("require_reference");
+      if (value != "true" && value != "false") throw std::invalid_argument("require_reference must be true or false");
+      require_reference_ = value == "true";
+    }
     // Parse and validate now; CAN is opened only during on_configure().
     MoveMasterDriver validated(config_);
     const double nan = std::numeric_limits<double>::quiet_NaN();
@@ -75,12 +80,12 @@ std::vector<hardware_interface::CommandInterface> MovemasterHardware::export_com
 CallbackReturn MovemasterHardware::on_configure(const rclcpp_lifecycle::State &) {
   try {
     driver_ = std::make_unique<MoveMasterDriver>(config_);
-    const auto restarted = driver_->configure(
-        reference_taken_ ? SparkResetPolicy::kFault : SparkResetPolicy::kAcceptPowerOnPose);
+    const auto restarted = driver_->configure(reference_taken_ || require_reference_
+        ? SparkResetPolicy::kFault : SparkResetPolicy::kAcceptPowerOnPose);
     for (const auto &name : restarted)
       RCLCPP_WARN(rclcpp::get_logger("MovemasterHardware"),
-          "%s: powered up (SPARK or gripper ESP32); its zero is the pose it powered up in, which "
-          "zero_offset_rad assumes is Home.",
+          "%s: powered up (SPARK or gripper ESP32) and not homed; the pose it powered up in is now "
+          "its zero_offset_rad.",
           name.c_str());
     if (driver_->setup_retries() > 0)
       RCLCPP_WARN(rclcpp::get_logger("MovemasterHardware"),

@@ -121,11 +121,13 @@ desde la postura en que está. Lo avisa con `HAS_RESET_STICKY_WARNING`, en
 "Sticky warnings can be cleared with SparkBase::clearFaults()"). El driver pide
 `STATUS_1` cada 100 ms (de fábrica, 250) y:
 
-- la primera vez que el `controller_manager` configura, y en
-  `spark_home --measure`, toma la postura de encendido como referencia, borra el
-  aviso y lo informa;
-- `spark_home` sin `--measure` solo lo informa y deja el aviso puesto, para que
-  el `controller_manager` lo vea al configurar;
+- `spark_home --home` busca el tope del eje, le escribe al SPARK su posición
+  ahí (`SET_PRIMARY_ENCODER_POSITION`) y borra el aviso;
+- tras ese homing, el `controller_manager` del bringup (`require_reference`)
+  trata un aviso puesto como un fallo; sin homing, la primera vez que configura
+  toma la postura de encendido como referencia, borra el aviso y lo informa;
+- `spark_home` sin opciones y `spark_home --measure` solo lo informan y dejan el
+  aviso puesto;
 - si el `controller_manager` vuelve a configurar (al recuperarse de un fallo) y
   encuentra el aviso, se niega: la posición ya no corresponde al brazo;
 - con el brazo activo, enclava un fallo si el aviso aparece en `read()`.
@@ -256,11 +258,13 @@ en el [MANUAL §4.6](../../docs/MANUAL.md#46-la-muñeca-en-la-esp32-del-gripper-
 | `slots.<n>.pidf` | `p`, `i`, `d`, `f` ≥ 0 | Ganancias del slot, en unidades del motor. |
 | `slots.<n>.output_range` | `[min, max]`, −1 ≤ min < 0 < max ≤ 1; por defecto `[-1, 1]` | Ciclo de trabajo máximo del PID. |
 | `slots.<n>.maxmotion` | Opcional: `cruise_velocity` (RPM) > 0, `max_acceleration` (RPM/s) > 0, `allowed_profile_error` (rotaciones) ≥ 0 | Perfil MAXMotion del slot. |
-| `homing` | Opcional | Cómo busca `spark_home` los topes mecánicos del eje; solo lo usa esa herramienta. |
+| `homing` | Opcional | Cómo busca `spark_home` los topes mecánicos del eje y contra cuál lo referencia; solo lo usa esa herramienta. |
 | `homing.current_limit_a` | Entero, 1 a `spark.current_limit_a` | Límite de corriente mientras busca, solo en RAM; al terminar se restaura `spark.current_limit_a`. |
 | `homing.stall_current_a`, `homing.stall_time_s` | 0 < corriente < `current_limit_a`; 3·`period_s` ≤ tiempo ≤ 5 s | Contacto: el eje deja de seguir su objetivo con al menos esa corriente durante ese tiempo. |
 | `homing.fast_speed_rad_s`, `homing.slow_speed_rad_s` | 0 < lenta ≤ rápida ≤ `max_velocity_rad_s` | Velocidades del primer acercamiento y del segundo, que fija el tope. |
 | `homing.backoff_rad`, `homing.max_travel_rad` | Retroceso ≥ `control.max_following_error_rad`/4; recorrido > 2·retroceso | Retroceso entre los dos acercamientos (y margen de los límites sugeridos) y recorrido máximo sin tope. |
+| `homing.stop`, `homing.stop_rad` | Opcionales y juntos: `"+"` o `"-"`, y un ángulo a `backoff_rad` del cual el eje queda dentro de sus límites | Tope contra el que `spark_home --home` referencia el eje y su ángulo DH ahí. |
+| `homing_order` (global) | Lista de ejes, cada uno una vez y con `homing.stop` | Ejes cuyo tope busca `spark_home --home`, en ese orden. |
 
 ### Pasar del formato anterior
 

@@ -26,12 +26,13 @@ THREE_AXES = """{"joints": {
   "joint_3": {"min_position_rad": 0.2, "max_position_rad": 2.5, "max_velocity_rad_s": 2e0}}}"""
 
 
-def robot(use_mock_hardware=False, joint_config=JOINT_CONFIG, preview=False):
+def robot(use_mock_hardware=False, joint_config=JOINT_CONFIG, preview=False, **arguments):
     urdf = xacro.process_file(str(PACKAGE / 'urdf' / 'movemaster.urdf.xacro'), mappings={
         'joint_config': str(joint_config),
         'dh_config': str(DH_CONFIG),
         'use_mock_hardware': 'true' if use_mock_hardware else 'false',
         'preview': 'true' if preview else 'false',
+        **arguments,
     }).toxml()
     return ET.fromstring(urdf)
 
@@ -72,11 +73,9 @@ def rot_z(angle):
 
 
 def dh_tool0(q):
-    """base_link → tool0 straight from the table: Rz(θ) · Tz(d) · Tx(a) · Rx(α) per row,
-    with θ = q + theta_offset_deg."""
+    """base_link → tool0 straight from the table: Rz(θ) · Tz(d) · Tx(a) · Rx(α) per row, θ = q."""
     return multiply(*(multiply(
-        rot_z(q[row['joint']] + math.radians(row['theta_offset_deg'])),
-        translation(row['a_mm'] / 1000, 0, row['d_mm'] / 1000),
+        rot_z(q[row['joint']]), translation(row['a_mm'] / 1000, 0, row['d_mm'] / 1000),
         rot_x(math.radians(row['alpha_deg']))) for row in CHAIN))
 
 
@@ -105,30 +104,49 @@ def assert_same_pose(actual, expected):
         assert row_a == pytest.approx(row_e, abs=1e-9)
 
 
-def test_home_is_zero_with_the_arm_upright():
-    assert all(value == 0 for value in HOME.values())
+def position(pose):
+    return [pose[i][3] for i in range(3)]
+
+
+def axis(pose, column):
+    return [pose[i][column] for i in range(3)]
+
+
+def test_zero_pose_has_the_arm_level():
+    pose = urdf_tool0(robot(preview=True), {name: 0.0 for name in HOME})
+    # Arm and forearm level toward the front, 250 mm up; the faceplate 150 mm below the wrist,
+    # facing down, with its mark (x of tool0) toward the front.
+    assert position(pose) == pytest.approx([0.3774, 0, 0.100], abs=1e-9)
+    assert axis(pose, 2) == pytest.approx([0, 0, -1], abs=1e-9)
+    assert axis(pose, 0) == pytest.approx([1, 0, 0], abs=1e-9)
+
+
+def test_home_has_the_arm_upright_and_the_forearm_level():
+    assert HOME == pytest.approx(
+        {'joint_1': 0, 'joint_2': -math.pi / 2, 'joint_3': math.pi / 2, 'joint_4': 0, 'joint_5': 0})
     pose = urdf_tool0(robot(preview=True), HOME)
-    # Every link vertical: 250 + 220 + 157.4 + 146 mm, the faceplate facing up with its
-    # mark (x of tool0) toward the front.
-    assert [pose[i][3] for i in range(3)] == pytest.approx([0, 0, 0.7734], abs=1e-9)
-    assert [pose[i][2] for i in range(3)] == pytest.approx([0, 0, 1], abs=1e-9)
-    assert [pose[i][0] for i in range(3)] == pytest.approx([1, 0, 0], abs=1e-9)
+    assert position(pose) == pytest.approx([0.1574, 0, 0.320], abs=1e-9)
+    assert axis(pose, 2) == pytest.approx([0, 0, -1], abs=1e-9)
 
 
 def test_positive_joint_motion_matches_the_agreed_senses():
     root = robot(preview=True)
+    # Every link vertical, the faceplate facing up: any forward tilt moves it to +x.
+    upright = {**HOME, 'joint_2': -math.pi / 2, 'joint_3': 0.0, 'joint_4': -math.pi / 2}
 
     def pose(**moved):
-        return urdf_tool0(root, {**HOME, **moved})
+        return urdf_tool0(root, {**upright, **moved})
 
-    home = pose()
+    start = pose()
+    assert position(start) == pytest.approx([0, 0, 0.7774], abs=1e-9)
     # Shoulder, elbow and wrist pitch tilt the arm forward (+x of base_link).
     for name in ('joint_2', 'joint_3', 'joint_4'):
-        assert pose(**{name: 0.1})[0][3] > home[0][3] + 1e-3
+        assert position(pose(**{name: 0.1}))[0] > 1e-3
     # Waist: counterclockwise seen from above, so an arm leaning forward swings to +y.
-    assert pose(joint_2=0.5, joint_1=0.1)[1][3] > 1e-3
-    # Faceplate: counterclockwise seen from its front (from above at Home): its mark turns to +y.
-    assert pose(joint_5=0.1)[1][0] > 1e-3
+    assert position(pose(joint_2=0.5, joint_1=0.1))[1] > 1e-3
+    # Faceplate: counterclockwise seen from its front, from above here: its mark turns that way.
+    before, after = axis(start, 0), axis(pose(joint_5=0.1), 0)
+    assert before[0] * after[1] - before[1] * after[0] > 1e-3
 
 
 def test_urdf_chain_matches_the_dh_product():
@@ -208,6 +226,10 @@ def test_real_hardware_receives_the_plugin_parameters():
     assert Path(parameters['joint_config_path']) == JOINT_CONFIG
     assert Path(parameters['spec_path']).is_file()
     assert parameters['can_interface'] == 'can0'
+    # Without the bringup's homing, the plugin takes the pose each joint powered up in.
+    assert parameters['require_reference'] == 'false'
+    homed = robot(require_reference='true').find('ros2_control/hardware')
+    assert {p.get('name'): p.text for p in homed.findall('param')}['require_reference'] == 'true'
 
 
 def test_mock_hardware_starts_at_home_inside_the_limits(three_axes):
@@ -219,6 +241,6 @@ def test_mock_hardware_starts_at_home_inside_the_limits(three_axes):
         initial = root.find(
             f"ros2_control/joint[@name='{name}']/state_interface[@name='position']/param")
         assert initial.get('name') == 'initial_value'
-        # joint_3's range excludes Home (0), so it starts at its lower limit.
+        # joint_2's Home (-90°) is below its range, so it starts at its lower limit.
         expected = min(max(HOME[name], joint['min_position_rad']), joint['max_position_rad'])
         assert float(initial.text) == pytest.approx(expected)

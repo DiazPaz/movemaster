@@ -67,7 +67,7 @@ uso está en [../docs/MANUAL.md](../docs/MANUAL.md) y los términos en
 | `examples/driver_monitor.cpp` | Configuración RAM y lectura de telemetría, sin habilitación. |
 | `examples/spark_console.cpp` | Habilitación y envío interactivo de SP para un eje, en Position o MAXMotion. |
 | `examples/spark_commission.cpp` | Puesta en marcha: restablece, escribe el baseline y lo persiste. |
-| `examples/spark_home.cpp` | Muestra qué SPARK se reiniciaron (sin borrar el aviso) y mide los topes mecánicos de un eje. |
+| `examples/spark_home.cpp` | Muestra qué ejes se reiniciaron (sin borrar el aviso), mide los topes mecánicos de un eje y hace el homing (`--home`): referencia cada eje contra su tope y lleva el brazo a una postura. El bringup lo corre al arrancar. |
 | `tests/` | Comparación contra Python, y pruebas del driver, la configuración, la puesta en marcha y la búsqueda de topes con transporte simulado. |
 
 La dependencia es:
@@ -175,9 +175,10 @@ motor_rotations = d * (q_rad - q0) * G / (2*pi)
 velocity_rad_s = d * motor_rpm * (2*pi) / (60*G)
 ```
 
-Aún no hay homing automático. Un SPARK que se reinicia pierde la posición; el
-driver lo detecta (aviso `HAS_RESET`) y `spark_home` mide los topes mecánicos
-de cada eje ([MANUAL §7.3](../docs/MANUAL.md#73-spark_home-reinicios-y-topes-mecánicos)). Una transmisión
+Un SPARK que se reinicia pierde la posición; el driver lo detecta (aviso
+`HAS_RESET`) y `spark_home --home` la recupera: busca un tope mecánico del eje y
+le escribe al SPARK su ángulo ahí (`homing.stop_rad`), con lo que `q0` deja de
+importar ([MANUAL §7.3](../docs/MANUAL.md#73-spark_home-reinicios-topes-mecánicos-y-homing)). Una transmisión
 diferencial o varios ejes acoplados requieren una conversión adicional; el
 modelo actual utiliza una reducción y un sentido por articulación.
 

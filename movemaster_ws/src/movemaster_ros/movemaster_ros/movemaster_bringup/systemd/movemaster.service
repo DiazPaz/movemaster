@@ -6,6 +6,9 @@
 #
 # Ajusta User, las rutas y pendant:= a tu equipo. Para el pendant conviene la ruta fija
 # de /dev/serial/by-id/: /dev/ttyUSB0 puede cambiar al reconectar el cable.
+#
+# Al arrancar, el bringup hace el homing: el brazo se mueve solo hasta Home en cuanto la
+# Raspberry Pi enciende. Antes de habilitar el servicio, prueba el homing a mano.
 
 [Unit]
 Description=MoveMaster: ros2_control, controladores y teach pendant
@@ -25,8 +28,8 @@ LimitMEMLOCK=infinity
 # Como Ctrl+C: el launch cierra todo y el heartbeat se detiene.
 KillSignal=SIGINT
 TimeoutStopSec=20
-# Sin reinicio automático: tras un paro de emergencia, un arranque nuevo tomaría la
-# postura de encendido como referencia aunque el brazo no esté en Home.
+# Sin reinicio automático: tras un paro de emergencia, un arranque nuevo haría el homing
+# otra vez y el brazo se movería solo, sin que nadie lo pida.
 Restart=no
 
 [Install]

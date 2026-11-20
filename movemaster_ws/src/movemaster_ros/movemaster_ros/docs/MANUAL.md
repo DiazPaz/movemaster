@@ -7,7 +7,7 @@ en [DICCIONARIO.md](DICCIONARIO.md).
 
 **Homing:** para ver qué SPARK se reiniciaron y medir los topes mecánicos de
 cada eje con `spark_home`, ve a
-[7.3](#73-spark_home-reinicios-y-topes-mecánicos).
+[7.3](#73-spark_home-reinicios-topes-mecánicos-y-homing).
 
 **Índice**
 
@@ -199,6 +199,7 @@ sequenceDiagram
     participant H as MovemasterHardware
     participant S as SPARK MAX
     participant P as spawner
+    L->>S: solo el bringup: spark_home --home busca los topes y escribe la referencia en cada SPARK (7.3)
     L->>L: URDF (dh.yaml + joints.json) y parámetros
     L->>R: robot_description (URDF)
     L->>C: movemaster_controllers.yaml y parámetros derivados
@@ -208,7 +209,7 @@ sequenceDiagram
     C->>H: on_configure
     H->>S: STOP_FOLLOWER_MODE, baseline, unidades, SET_STATUSES_ENABLED y slots, cada uno con ACK
     S-->>H: STATUS_1 de todos los ejes, con HAS_RESET si el SPARK se reinició
-    H->>S: CLEAR_FAULTS a los reiniciados, cuya postura de encendido queda como referencia
+    H->>S: tras el homing, un reiniciado es un fallo; sin homing, CLEAR_FAULTS y su postura de encendido queda como referencia
     C->>H: on_activate
     S-->>H: STATUS_0 y STATUS_2 recientes de todos los ejes
     H->>S: setpoint igual a la posición medida y primer heartbeat
@@ -338,6 +339,7 @@ tabla DH, `movemaster_description/config/dh.yaml` (ver
 | `disable_settle_s` | `0.500` | 0 – 10 s | Pausa en silencio antes de configurar y antes de reactivar, para que expire un heartbeat anterior. |
 | `max_cycle_gap_s` | `0.100` | `≥ 2·period_s` | Tiempo máximo sin transmitir estando activo; si el lazo se detiene más, fallo. Déjalo en 0.1 también a 100 Hz: con 2 periodos (0.02 s) cualquier retraso de Linux enclava un fallo falso. |
 | `parameter_layout` | catálogo interno | avanzado | Catálogo alternativo de IDs de parámetros PIDF/MAXMotion. Normalmente no se pone. |
+| `homing_order` | sin homing | lista de ejes, cada uno una vez y con `homing.stop` | Ejes cuyo tope busca `spark_home --home`, en ese orden ([7.3](#73-spark_home-reinicios-topes-mecánicos-y-homing)). Los ejes sin referencia que no están aquí, como la muñeca del gripper, toman la postura en que se encendieron. |
 
 ### 4.2 Campos de cada articulación
 
@@ -353,13 +355,13 @@ ESP32 del gripper lleva otros ([4.6](#46-la-muñeca-en-la-esp32-del-gripper-join
 | `can_id` | entero | 0–63, único | CAN ID del SPARK de ese eje. |
 | `gear_ratio` | número | > 0 | Vueltas del motor por cada vuelta de la articulación. |
 | `direction` | **entero** | `1` o `-1` (no `1.0`) | `-1` si el motor gira al revés que la articulación en ROS. |
-| `zero_offset_rad` | número | finito | Ángulo de la articulación cuando el encoder del motor marca 0, es decir, al encender el SPARK (ver [4.4](#44-cuidados)). |
+| `zero_offset_rad` | número | finito | Ángulo de la articulación cuando el encoder del motor marca 0, es decir, al encender el SPARK. Solo se nota en un eje sin homing (ver [4.4](#44-cuidados)). |
 | `min_position_rad`, `max_position_rad` | número | `min < max` | Límites calibrados. El driver rechaza objetivos fuera; también son los límites del URDF. |
 | `max_velocity_rad_s` | número | > 0 | Velocidad máxima de la articulación: límite del URDF, con el que planea MoveIt. Ninguna `cruise_velocity` puede superarla. |
 | `spark` | objeto | ver abajo | Lo que la puesta en marcha guarda en la flash del SPARK. El driver lo vuelve a escribir en RAM al configurar. |
 | `control` | objeto | ver abajo | Modo y slot con que se activa el eje. |
 | `slots` | objeto | `"0"` a `"3"`, al menos uno | Presets del eje: ganancias y perfiles. |
-| `homing` | objeto | opcional, ver abajo | Cómo busca `spark_home` los topes mecánicos del eje ([7.3](#73-spark_home-reinicios-y-topes-mecánicos)). |
+| `homing` | objeto | opcional, ver abajo | Cómo busca `spark_home` los topes mecánicos del eje, y contra cuál hace el homing ([7.3](#73-spark_home-reinicios-topes-mecánicos-y-homing)). |
 
 | Campo de `spark` | Regla | Significado |
 |---|---|---|
@@ -392,6 +394,8 @@ ESP32 del gripper lleva otros ([4.6](#46-la-muñeca-en-la-esp32-del-gripper-join
 | `fast_speed_rad_s`, `slow_speed_rad_s` | `0 < slow_speed_rad_s ≤ fast_speed_rad_s ≤ max_velocity_rad_s` | Velocidades del primer acercamiento y del segundo, que fija el tope. |
 | `backoff_rad` | ≥ `control.max_following_error_rad` / 4 | Retroceso entre los dos acercamientos; también el margen de los límites sugeridos. Más corto, el eje podría seguir en el tope al empezar el acercamiento lento. |
 | `max_travel_rad` | > `2·backoff_rad` | Recorrido máximo sin encontrar tope; más allá, aborta. |
+| `stop` | `"+"` o `"-"`; opcional, junto con `stop_rad` | Tope contra el que `spark_home --home` referencia el eje. Elige el que se alcanza sin chocar desde cualquier postura de encendido. |
+| `stop_rad` | con `stop`; a `backoff_rad` de él el eje queda dentro de `min_position_rad`..`max_position_rad` | Ángulo DH del eje en ese tope: lo que el homing le escribe al SPARK. Se calibra como en [7.3](#73-spark_home-reinicios-topes-mecánicos-y-homing). |
 
 ### 4.3 Ejemplo de un eje
 
@@ -430,23 +434,29 @@ del formato anterior están en
 
 ### 4.4 Cuidados
 
-- **Aún no hay homing automático.** El encoder del NEO es relativo: al
-  apagarse (corte de alimentación o paro de emergencia), el SPARK pierde la
-  posición y, al encender, cuenta desde la postura en que está. El driver
-  detecta cada reinicio ([7.3](#73-spark_home-reinicios-y-topes-mecánicos)),
-  pero no recupera la posición; de ahí la convención de encender en Home.
-- **Home es el cero de todos los ejes.** Home es el brazo vertical: hombro,
-  codo e inclinación de muñeca alineados, y el faceplate hacia arriba con su
-  marca hacia el frente. `dh.yaml` lleva un desfase por eje (θ = q +
-  `theta_offset_deg`) para que en esa postura q = 0 en ROS. Los positivos:
-  cintura y faceplate antihorario vistos desde arriba en Home; hombro, codo e
-  inclinación de muñeca inclinan el brazo hacia adelante. Si un motor gira al
-  revés, `direction: -1`.
-- **Se enciende en Home, con `zero_offset_rad: 0`.** Como el encoder marca 0 al
-  encender, el eje lee `zero_offset_rad` en la postura en que se encendió. Con
-  el brazo encendido en Home y `zero_offset_rad` en 0 en todos los ejes, el
-  modelo de RViz y MoveIt coincide con el brazo real desde el arranque. El
-  hardware simulado también arranca en Home.
+- **El homing fija la referencia al arrancar.** El encoder del NEO es relativo:
+  al apagarse (corte de alimentación o paro de emergencia), el SPARK pierde la
+  posición y, al encender, cuenta desde la postura en que está. El bringup
+  ([11.4](#114-arrancar-todo-con-un-comando)) corre primero
+  `spark_home --home`: busca un tope mecánico de cada eje (`homing.stop`) y le
+  escribe a su SPARK la posición que tiene ahí (`homing.stop_rad`). Desde
+  entonces el SPARK reporta el ángulo DH real, hasta que se vuelva a apagar
+  ([7.3](#73-spark_home-reinicios-topes-mecánicos-y-homing)).
+- **q = θ: la pose cero es la de la tabla DH.** La posición de cada eje en ROS
+  es su θ de `dh.yaml`, sin desfases. Con todos en 0, el brazo y el antebrazo
+  quedan horizontales al frente y el faceplate hacia abajo, con su marca al
+  frente. Los positivos: cintura antihorario vista desde arriba; hombro, codo e
+  inclinación de muñeca inclinan el brazo hacia adelante; faceplate antihorario
+  visto de frente. Si un motor gira al revés, `direction: -1`.
+- **Home no es la pose cero.** Home es (0, −90°, 90°, 0, 0): el brazo vertical,
+  el antebrazo horizontal al frente y el faceplate hacia abajo. La define
+  `home_deg` en `dh.yaml`; el homing termina ahí y el hardware simulado arranca
+  ahí.
+- **Sin homing, `zero_offset_rad`.** Un eje que no busca tope (la muñeca del
+  gripper, o todos con `homing:=false`) lee `zero_offset_rad` en la postura en
+  que se encendió: con `zero_offset_rad: 0`, enciéndelo en su posición 0. En un
+  eje con homing no cambia nada visible: el homing escribe la posición en
+  radianes.
 - El launch lee la copia **instalada** de `joints.json`. Si la editas, vuelve a
   compilar (o compila con `--symlink-install`, ver el paso 5) o pásala con
   `joint_config:=/ruta/joints.json`.
@@ -556,9 +566,10 @@ bloques `spark`, `control`, `slots` y `homing`; el cargador los rechaza.
 - **Al configurar:** manda el perfil y espera el `STATUS_0` de la ESP32. Si
   otro programa está mandando el heartbeat del gripper (por ejemplo, el ciclo
   de `cansend` de las pruebas), **se niega a arrancar**: ese heartbeat
-  mantendría la muñeca habilitada después del paro. Si la ESP32 acaba de
-  encender (`NOT_REFERENCED`), toma su postura de encendido como referencia,
-  igual que con un SPARK, y lo avisa en el log.
+  mantendría la muñeca habilitada después del paro. La muñeca no tiene
+  sensor de corriente para buscar un tope: si la ESP32 acaba de encender
+  (`NOT_REFERENCED`), el homing le da como referencia la postura en que
+  encendió (sin homing, el plugin al configurar, y lo avisa en el log).
 - **Activo:** en cada ciclo manda la posición objetivo en grados
   (`WRIST_POSITION_SETPOINT`) y el heartbeat del gripper (`0x0A080C05`) junto
   con el global de los SPARK. El paro es el mismo para los dos: al dejar de
@@ -582,8 +593,8 @@ máxima segura de la muñeca con las pruebas de `cansend`.
    driver de ROS apagado.
 2. **Corta cualquier heartbeat de prueba** (el ciclo de `cansend`). Desde
    aquí, el único que lo manda es el driver.
-3. **Enciende el brazo en Home,** con la ESP32. Su cero es la postura en que
-   enciende.
+3. **Enciende la ESP32 con la muñeca en su 0** (`zero_offset_rad: 0`): esa
+   postura es su referencia.
 4. **Arranca** el launch y comprueba:
 
    ```bash
@@ -658,11 +669,11 @@ ejemplos y las pruebas. La carpeta `build/` está ignorada por git.
 
 | Prueba (`ctest`) | Programa | Qué verifica |
 |---|---|---|
-| `driver_fake_bus` | `tests/driver_test.cpp` | El driver completo contra un SPARK simulado (`tests/simulated_spark_bus.hpp`): 1, 3 y 6 ejes, conversiones, ACKs, orden setpoints → heartbeat, límites, envío en cada ciclo del lazo, baseline y slots en RAM, modos Position y MAXMotion por eje, error de seguimiento, telemetría vencida o corrupta, fallo de TX, lazo detenido, reinicio de un SPARK (`HAS_RESET`), también solo informado (`kReport`), y cambio del límite de corriente. |
-| `config_and_commissioning` | `tests/setup_test.cpp` | Que los `joints.json` del repositorio cargan; que cada parámetro que escribe el código coincide en ID, nombre, tipo y valores con `spec/SparkParameters-v0.1.2.md`; los mensajes de error del cargador, también los del bloque `homing`; y la puesta en marcha: orden restablecer → baseline → persistir, números mágicos, fallos, `spark_commission` y la escucha del bus. |
+| `driver_fake_bus` | `tests/driver_test.cpp` | El driver completo contra un SPARK simulado (`tests/simulated_spark_bus.hpp`): 1, 3 y 6 ejes, conversiones, ACKs, orden setpoints → heartbeat, límites, envío en cada ciclo del lazo, baseline y slots en RAM, modos Position y MAXMotion por eje, error de seguimiento, telemetría vencida o corrupta, fallo de TX, lazo detenido, reinicio de un SPARK (`HAS_RESET`), también solo informado (`kReport`), la referencia del homing (`kHoming` y `shift_reference`: `SET_PRIMARY_ENCODER_POSITION` en el SPARK y `SET_WRIST_POSITION` en la muñeca) y cambio del límite de corriente. |
+| `config_and_commissioning` | `tests/setup_test.cpp` | Que los `joints.json` del repositorio cargan; que cada parámetro que escribe el código coincide en ID, nombre, tipo y valores con `spec/SparkParameters-v0.1.2.md`; los mensajes de error del cargador, también los del bloque `homing` (con `stop` y `stop_rad`) y de `homing_order`; y la puesta en marcha: orden restablecer → baseline → persistir, números mágicos, fallos, `spark_commission` y la escucha del bus. |
 | `protocol_demo_no_can` | `examples/protocol_demo.cpp` | Que se puede leer el JSON de REV y armar tramas sin abrir CAN. |
 | `console_input_and_cycle` | `tests/console_test.cpp` | La lógica de `spark_console` con un driver falso y entrada por tubería, incluidos los comandos `mode` y `slot`. |
-| `homing_stop_search` | `tests/homing_test.cpp` | La búsqueda de topes contra un eje simulado: los dos topes, corriente alta en movimiento que no es tope, tope falso, sin tope dentro de `max_travel_rad`, eje que no avanza o que empuja un tope con menos de `stall_current_a` (aborta a los `stall_time_s` + 2 s) y retenciones breves que no abortan. Y `spark_home` contra un brazo simulado: medición, regreso al inicio, límites sugeridos, límite de corriente restaurado también tras un fallo o Ctrl+C, argumentos y estado, que no borra `HAS_RESET`. |
+| `homing_stop_search` | `tests/homing_test.cpp` | La búsqueda de topes contra un eje simulado: los dos topes, corriente alta en movimiento que no es tope, tope falso, sin tope dentro de `max_travel_rad`, eje que no avanza o que empuja un tope con menos de `stall_current_a` (aborta a los `stall_time_s` + 2 s) y retenciones breves que no abortan. Y `spark_home` contra un brazo simulado: medición, regreso al inicio, límites sugeridos, límite de corriente restaurado también tras un fallo o Ctrl+C, argumentos y estado, que no borra `HAS_RESET`; y el homing: orden de `homing_order`, referencia en el tope, postura de encendido para la muñeca, `--pose` con todos los ejes a la vez, solo los ejes reiniciados, ejes nombrados y fallos. |
 | `python_cpp_parity` | `tests/differential_test.py` + `tests/protocol_oracle.cpp` | Que el protocolo C++ produce exactamente los mismos bytes que la librería Python original (`tests/reference/`) en todas las tramas. |
 
 ### 5.2 Ver tramas sin hardware
@@ -793,24 +804,28 @@ eje. Comandos:
 En modo `position` sirve para ver la respuesta del PID a escalones pequeños.
 Más detalle en [SPARK_CONSOLE.md](../movemaster_hardware/docs/SPARK_CONSOLE.md).
 
-### 7.3 spark_home: reinicios y topes mecánicos
+### 7.3 spark_home: reinicios, topes mecánicos y homing
 
-`spark_home` es la herramienta de homing. Hoy hace la **fase 1**: dice qué SPARK
-se reiniciaron y mide los topes mecánicos de cada eje, para fijar
-`min_position_rad` y `max_position_rad` y ajustar su bloque `homing`. **Todavía
-no fija el cero**: la referencia de cada eje sigue siendo la postura en que se
-encendió su SPARK, que por convención es Home ([4.4](#44-cuidados)).
+`spark_home` es la herramienta de homing. Dice qué ejes perdieron su referencia,
+mide los topes mecánicos de cada eje (de ahí salen `min_position_rad`,
+`max_position_rad` y `homing.stop_rad`) y hace el **homing**: busca un tope de
+cada eje y le escribe a su SPARK la posición que tiene ahí. El bringup corre el
+homing al arrancar ([11.4](#114-arrancar-todo-con-un-comando)).
 
 El encoder del NEO es relativo. Cuando el SPARK se apaga, por un corte de
 alimentación o por el paro de emergencia, pierde la posición; al encender
-cuenta desde la postura en que está y lo avisa con `HAS_RESET`, en su trama
-`STATUS_1`, hasta que se borran sus avisos (`CLEAR_FAULTS`).
+cuenta desde la postura en que está (ahí lee `zero_offset_rad`) y lo avisa con
+`HAS_RESET`, en su trama `STATUS_1`, hasta que se borran sus avisos
+(`CLEAR_FAULTS`). La ESP32 del gripper hace lo mismo con su cuenta de pasos y
+`NOT_REFERENCED`. Un eje así está **sin referencia**.
 
-| Uso | Argumentos después de `SPEC JOINTS can0` | Habilita motores | Borra `HAS_RESET` |
+| Uso | Argumentos después de `SPEC JOINTS can0` | Habilita motores | Referencias |
 |---|---|---|---|
-| Ver qué SPARK se reiniciaron | ninguno | no | no |
-| Medir los dos topes de un eje | `--measure joint_N` | sí; solo se mueve ese eje | sí: toma la postura de encendido como referencia, como el `controller_manager` |
-| Medir un solo tope | `--measure joint_N +` o `--measure joint_N -` | sí | sí |
+| Ver qué ejes se reiniciaron | ninguno | no | no cambia nada |
+| Medir los dos topes de un eje | `--measure joint_N` | sí; solo se mueve ese eje | no cambia nada |
+| Medir un solo tope | `--measure joint_N +` o `--measure joint_N -` | sí | no cambia nada |
+| Homing | `--home [--pose joint_1=0,joint_2=-1.5708,...]` | sí | referencia los ejes de `homing_order` que no la tienen; los demás ejes sin referencia toman la postura de encendido |
+| Homing de ejes elegidos | `--home joint_N ... [--pose ...]` | sí | solo esos ejes, aunque ya la tengan |
 
 **Antes de empezar**
 
@@ -820,17 +835,15 @@ cuenta desde la postura en que está y lo avisa con `HAS_RESET`, en su trama
 - `can0` arriba y sin `bus-off`, y cada SPARK con su puesta en marcha
   ([paso 3](#6-paso-3--preparar-el-bus-can-y-los-spark)).
 - El eje tiene bloque `homing` en `joints.json`
-  ([4.2](#42-campos-de-cada-articulación)). Los valores del repositorio son
-  conservadores para la primera vez: 0.1 y 0.02 rad/s, 6 A.
+  ([4.2](#42-campos-de-cada-articulación)); para `--home`, también `stop` y
+  `stop_rad`, y está en `homing_order` ([4.1](#41-campos-globales-opcionales-si-faltan-se-usa-el-valor-por-defecto)).
 - **Un solo dueño del bus.** Cierra el `controller_manager` (Ctrl+C en el launch
   o, con el servicio de [11.5](#115-arrancar-al-encender-la-raspberry-pi),
   `sudo systemctl stop movemaster`), `jog_node`, `spark_console` y cualquier otro
   programa que use `can0`.
-- Los SPARK se encendieron con el brazo en **Home**: los ángulos se cuentan
-  desde esa postura.
 - Espacio libre alrededor del brazo y el paro de emergencia a la mano.
 
-**Paso a paso**
+**Paso a paso: estado y topes**
 
 1. **Terminal.** Como en [4.5](#45-agregar-un-eje), paso 3:
 
@@ -853,24 +866,19 @@ cuenta desde la postura en que está y lo avisa con `HAS_RESET`, en su trama
    Con SPARK simulados recién encendidos:
 
    ```text
-   Estado de los SPARK en can0:
+   Estado de los ejes en can0:
      joint_1  CAN 1  reiniciado    posicion 0.014 rad (0.8 grados)
      joint_2  CAN 2  reiniciado    posicion -0.015 rad (-0.8 grados)
      joint_3  CAN 3  reiniciado    posicion -0.022 rad (-1.2 grados)
      joint_4  CAN 4  reiniciado    posicion -0.029 rad (-1.7 grados)
-   Los SPARK reiniciados cuentan desde la postura en que se encendieron, que zero_offset_rad
-   supone Home. Su aviso de reinicio sigue puesto: el controller_manager (o --measure) toma
-   esa postura como referencia al configurar, lo avisa en su log y lo borra.
+   Los ejes reiniciados no tienen referencia: cuentan desde la postura en que se encendieron.
+   Su aviso de reinicio sigue puesto hasta que spark_home --home (el bringup lo corre al arrancar)
+   busca sus topes y les escribe la referencia.
    ```
 
-   - `reiniciado`: el SPARK encendió desde que se tomó su referencia. Es lo
-     normal después de encenderlo. Dice lo mismo cada vez que lo ejecutes, hasta
-     que el `controller_manager` o `--measure` tomen la postura de encendido como
-     referencia.
-   - `sin reinicio`: el SPARK conserva la referencia que ya se tomó.
-   - Si un SPARK dice `reiniciado` y el brazo **no** estaba en Home al
-     encenderlo, sus ángulos están desplazados: con el paro de emergencia
-     presionado lleva el brazo a Home, suéltalo y empieza de nuevo.
+   - `reiniciado`: el eje encendió desde que se tomó su referencia. Es lo normal
+     después de encenderlo, y lo dice cada vez hasta el homing.
+   - `sin reinicio`: el eje conserva su referencia.
 
 3. **Primer tope, en un solo sentido.** Así ves hacia dónde gira el eje antes de
    confiar en él:
@@ -880,10 +888,11 @@ cuenta desde la postura en que está y lo avisa con `HAS_RESET`, en su trama
    ```
 
    El sentido es el de la tabla DH ([4.4](#44-cuidados)): `+` es el positivo
-   (antihorario alrededor del eje z de la articulación: cintura y faceplate
-   antihorario vistos desde arriba; hombro, codo e inclinación de muñeca hacia
-   adelante) y `-`, el contrario. Si el eje gira al revés de lo que esperas,
-   detenlo con Ctrl+C y corrige `direction` en `joints.json`.
+   (antihorario alrededor del eje z de la articulación: cintura antihorario
+   vista desde arriba; hombro, codo e inclinación de muñeca hacia adelante;
+   faceplate antihorario visto de frente) y `-`, el contrario. Si el eje gira al
+   revés de lo que esperas, detenlo con Ctrl+C y corrige `direction` en
+   `joints.json`.
 
 4. **Los dos topes.** Sin sentido mide `+` y después `-`, y regresa a la
    posición inicial después de cada uno:
@@ -892,11 +901,12 @@ cuenta desde la postura en que está y lo avisa con `HAS_RESET`, en su trama
    ros2 run movemaster_hardware spark_home $SPEC $JOINTS can0 --measure joint_2
    ```
 
-5. **Leer el resultado.** Con un eje simulado, con topes en −0.4 y 0.6 rad:
+5. **Leer el resultado.** Con un eje simulado, ya referenciado, con topes en
+   −0.4 y 0.6 rad:
 
    ```text
-   joint_1: angulos respecto a la referencia actual (la postura de encendido del SPARK,
-   Home por convencion). Limite de corriente 6 A mientras mide.
+   joint_1: angulos respecto a su referencia (convencion DH).
+   Limite de corriente 6 A mientras mide.
    +: buscando el tope antihorario...
       contacto; retrocede y se acerca despacio
       tope + en 0.600 rad (34.4 grados)
@@ -913,9 +923,10 @@ cuenta desde la postura en que está y lo avisa con `HAS_RESET`, en su trama
      "min_position_rad": -0.350, "max_position_rad": 0.550
    ```
 
-   Si algún SPARK se había reiniciado, al principio aparece una línea
-   `joint_N: SPARK reiniciado; su referencia es la postura en que se encendio
-   (Home).` por cada uno.
+   En un eje sin referencia la primera línea dice `respecto a la postura en que
+   se encendio: todavia no tiene referencia`: los topes salen desde donde se
+   encendió, y solo el recorrido entre ellos es útil. `--measure` no toma ni
+   borra referencias.
 
 6. **Ajustar el bloque `homing`**, si hace falta:
    - `stall_current_a` debe quedar entre el pico en movimiento libre y la
@@ -929,34 +940,90 @@ cuenta desde la postura en que está y lo avisa con `HAS_RESET`, en su trama
 
    Vuelve a medir después de cada cambio.
 
-7. **Copiar los límites.** Pon en `joints.json` los `min_position_rad` y
-   `max_position_rad` sugeridos: quedan a `backoff_rad` de cada tope. El launch
-   lee la copia instalada: vuelve a compilar o usa `--symlink-install`
-   ([4.4](#44-cuidados)).
+7. **Copiar los límites**, ya con el eje referenciado: pon en `joints.json` los
+   `min_position_rad` y `max_position_rad` sugeridos, que quedan a
+   `backoff_rad` de cada tope. El launch lee la copia instalada: vuelve a
+   compilar o usa `--symlink-install` ([4.4](#44-cuidados)).
 
-8. **Los demás ejes.** Repite los pasos 3 a 7 con cada uno. Cada `--measure`
-   toma la referencia de **todos** los SPARK reiniciados, no solo la del eje
-   medido: después de la primera medición, el estado dice `sin reinicio` en
-   todos.
+**Homing (`--home`)**
 
-9. **Volver al nodo.** `sudo systemctl start movemaster` o el launch de siempre.
-   Si ya mediste, el log no muestra `SPARK powered up`: la referencia ya estaba
-   tomada. Si solo consultaste el estado, muestra uno por eje reiniciado.
+Para cada eje de `homing_order` sin referencia, en ese orden: busca su tope
+`homing.stop`, se retira `backoff_rad` y, ya sin heartbeat, le escribe a su
+SPARK la posición que le corresponde (`SET_PRIMARY_ENCODER_POSITION`, con
+`stop_rad` en el tope) y borra `HAS_RESET` (`CLEAR_FAULTS`). Los ejes sin
+referencia que no están en `homing_order`, como la muñeca del gripper, toman la
+postura en que se encendieron. Al final lleva el brazo a `--pose`: todos los
+ejes a la vez, en línea recta en el espacio articular, cada uno a la velocidad
+que lo hace llegar junto con el más lento (`fast_speed_rad_s` de su homing; la
+muñeca, `max_velocity_rad_s`). Si todos los ejes conservan su referencia, no
+busca ni mueve nada.
+
+1. **El primer homing, eje por eje.** Nombrado, un eje se busca aunque ya tenga
+   referencia, y no se toca ningún otro:
+
+   ```bash
+   ros2 run movemaster_hardware spark_home $SPEC $JOINTS can0 --home joint_2
+   ```
+
+2. **Todo, hasta Home**, como lo corre el bringup:
+
+   ```bash
+   ros2 run movemaster_hardware spark_home $SPEC $JOINTS can0 --home \
+       --pose joint_1=0,joint_2=-1.5708,joint_3=1.5708,joint_4=0,joint_5=0
+   ```
+
+   En un brazo simulado (tres ejes con topes y la muñeca):
+
+   ```text
+   joint_4: sin tope que buscar; su referencia es la postura en que se encendio, 0.000 rad (0.0 grados).
+   joint_2: buscando el tope -, en -2.000 rad (-114.6 grados), con 6 A...
+      contacto; retrocede y se acerca despacio
+      tope a -0.400 rad (-22.9 grados) de donde empezo, al topar 6.0 A.
+      Referenciado: queda en -1.950 rad (-111.7 grados)
+   joint_3: buscando el tope +, en 1.500 rad (85.9 grados), con 6 A...
+      contacto; retrocede y se acerca despacio
+      tope a 0.300 rad (17.2 grados) de donde empezo, al topar 6.0 A.
+      Referenciado: queda en 1.450 rad (83.1 grados)
+   joint_1: buscando el tope -, en -1.000 rad (-57.3 grados), con 6 A...
+      contacto; retrocede y se acerca despacio
+      tope a -1.200 rad (-68.8 grados) de donde empezo, al topar 6.0 A.
+      Referenciado: queda en -0.950 rad (-54.4 grados)
+   Moviendo a --pose...
+     joint_1  -0.004 rad (-0.3 grados)
+     joint_2  -1.573 rad (-90.1 grados)
+     joint_3  1.002 rad (57.4 grados)
+     joint_4  0.299 rad (17.1 grados)
+   Homing terminado.
+   ```
+
+   Cada eje SPARK termina a menos de `max_following_error_rad` / 8 de `--pose`
+   (0.0125 rad con 0.1); ahí deja de enviar heartbeat.
+
+3. **Calibrar `stop_rad`.** Después del homing, lleva el eje a una postura que
+   puedas medir (la pose cero con un nivel, por ejemplo) y compara: si con
+   q = 0 el eje queda girado e radianes en su sentido positivo, súmale e a su
+   `stop_rad`. Repite hasta que coincida. `--measure joint_N` con el eje
+   referenciado da además el otro tope en la convención DH.
+
+Si una búsqueda falla, ese eje y los que siguen quedan sin referencia y
+`spark_home` termina con código 1; el bringup no arranca el `controller_manager`.
 
 **Cómo busca cada tope**
 
 Baja el límite de corriente de ese SPARK a `homing.current_limit_a`, solo en
 RAM, y habilita todos los ejes; los demás se sostienen en su posición. El eje
-medido pasa a modo `position` y su objetivo nunca se adelanta más de la mitad
-de `max_following_error_rad`. Para cada tope, como el homing de una CNC:
+pasa a modo `position` y su objetivo nunca se adelanta más de la mitad de
+`max_following_error_rad`. Para cada tope, como el homing de una CNC:
 
 1. Se acerca a `fast_speed_rad_s` hasta que el eje deja de seguir su objetivo
    con al menos `stall_current_a` durante `stall_time_s`: contacto.
 2. Retrocede `backoff_rad` y se acerca de nuevo a `slow_speed_rad_s`. Ese
    segundo contacto, más lento y repetible, es el tope.
-3. Regresa a la posición inicial.
+3. Con `--measure`, regresa a la posición inicial; con `--home`, se retira
+   `backoff_rad` y escribe la referencia.
 
-Aborta, muestra el motivo y la corriente, y regresa a la posición inicial si:
+Aborta y muestra el motivo y la corriente (con `--measure`, regresa además a la
+posición inicial) si:
 
 - no encuentra tope dentro de `max_travel_rad`;
 - el eje se queda atrás de su objetivo más de `stall_time_s` + 2 s sin llegar a
@@ -970,16 +1037,24 @@ Al terminar, al fallar o con Ctrl+C deja de enviar heartbeat y restaura
 
 **Cuidados**
 
-- La primera vez, con velocidades bajas, un límite de corriente bajo y el paro
-  de emergencia a la mano.
-- Mientras mide, el eje puede pasar de sus límites actuales, hasta
-  `max_travel_rad`: son justo los que se están midiendo. Pon en
-  `max_travel_rad` poco más del recorrido que esperas: con 6.3 rad (una vuelta),
-  la cintura podría enredar cables antes de abortar.
+- La primera vez, eje por eje, con velocidades bajas, un límite de corriente
+  bajo y el paro de emergencia a la mano.
+- **El homing mueve el brazo solo**, desde la postura en que se encendió, y con
+  el servicio de [11.5](#115-arrancar-al-encender-la-raspberry-pi) en cuanto
+  enciende la Raspberry Pi. Elige `homing_order` y el `stop` de cada eje para
+  que ninguna búsqueda choque, empiece donde empiece el brazo.
+- Mientras busca, el eje puede pasar de sus límites, hasta `max_travel_rad`:
+  sin referencia no sabe dónde está. Pon en `max_travel_rad` poco más del
+  recorrido que esperas: con 6.3 rad (una vuelta), la cintura podría enredar
+  cables antes de abortar.
+- Con el límite de corriente de homing, un eje cargado (el hombro) puede no
+  sostener el brazo contra la gravedad.
 - Con Ctrl+C se detiene: sin heartbeat los SPARK se deshabilitan, y el brazo
-  puede caer por gravedad.
+  puede caer por gravedad. Lo mismo entre el final del homing y la activación
+  del `controller_manager`, unos segundos en los que los motores solo frenan
+  (`idle_mode: brake`).
 - El tope se mide en el encoder del motor: incluye lo que cede la reducción con
-  `current_limit_a`. Mide siempre con el mismo límite.
+  `current_limit_a`. Mide y haz el homing siempre con el mismo límite.
 
 ---
 
@@ -1049,8 +1124,9 @@ tenga a todos. Arranca en Home.
 ros2 launch movemaster_description display.launch.py
 ```
 
-En Home, `tool0` (el centro de la cara del faceplate) está en (0, 0, 0.7734) m
-de `base_link`, apuntando hacia arriba:
+En Home (0, −90°, 90°, 0, 0), `tool0` (el centro de la cara del faceplate) está
+en (0.1574, 0, 0.320) m de `base_link`, apuntando hacia abajo; en la pose cero
+(todos los ejes en 0), en (0.3774, 0, 0.100) m:
 
 ```bash
 ros2 run tf2_ros tf2_echo base_link tool0
@@ -1220,10 +1296,20 @@ ros2 launch movemaster_bringup bringup.launch.py pendant:=/dev/ttyUSB0          
 ros2 launch movemaster_bringup bringup.launch.py pendant:=/dev/ttyUSB0 rviz:=true  # además, RViz (banco)
 ```
 
+Primero corre el **homing**: `spark_home --home` referencia los ejes que
+perdieron su referencia y lleva el brazo a Home, con los `home_deg` de
+`dh.yaml` ([7.3](#73-spark_home-reinicios-topes-mecánicos-y-homing)). **El
+brazo se mueve solo**: ten el paro de emergencia a la mano. Si todos los ejes
+conservan su referencia (relanzaste sin apagar los SPARK), no mueve nada. Solo
+si el homing termina bien arrancan el `controller_manager`, el jog y RViz, y el
+plugin trata un eje sin referencia como un fallo (`require_reference:=true`);
+si falla, el launch se cierra y su salida dice por qué.
+
 | Argumento | Por defecto | Uso |
 |---|---|---|
 | `pendant` | vacío | Puerto serie del pendant; vacío, sin jog. Conviene la ruta fija de `/dev/serial/by-id/`: `/dev/ttyUSB0` puede cambiar al reconectar el cable. |
 | `rviz` | `false` | `true` abre RViz; necesita pantalla. |
+| `homing` | `true` | `false`: sin homing; cada eje toma como referencia la postura en que se encendió ([4.4](#44-cuidados)). Con `use_mock_hardware:=true` no hay homing. |
 | `use_mock_hardware`, `joint_config`, `can_interface` | los de [10](#10-paso-7--arrancar-el-nodo-con-los-spark-max) | Pasan a `movemaster_control`; `joint_config` también al jog. |
 
 Ctrl+C cierra todo junto. Si el `controller_manager` termina por su cuenta, el
@@ -1251,9 +1337,13 @@ sudo systemctl enable --now movemaster
 
 - **Un solo dueño del bus.** Detén el servicio antes de usar `spark_home`,
   `spark_commission`, `driver_monitor`, `spark_console` o un launch a mano.
+- **El brazo se mueve al encender.** El bringup hace el homing en cuanto
+  arranca el servicio. Antes de habilitarlo, prueba el homing a mano
+  ([7.3](#73-spark_home-reinicios-topes-mecánicos-y-homing)) y deja el brazo
+  libre al apagar.
 - **Sin reinicio automático, a propósito.** Si el nodo termina, el servicio no
-  lo relanza: tras un paro de emergencia, un arranque nuevo tomaría la postura de
-  encendido como referencia aunque el brazo no esté en Home
+  lo relanza: tras un paro de emergencia, un arranque nuevo haría el homing otra
+  vez y el brazo se movería solo, sin que nadie lo pida
   ([12](#12-paso-9--detener-fallos-y-recuperación)).
 - **Tiempo real.** El servicio da la prioridad de tiempo real con `LimitRTPRIO`:
   el grupo `realtime` de [10.1](#101-permiso-de-tiempo-real-una-sola-vez) solo
@@ -1318,24 +1408,25 @@ transmisión se llena y el driver enclava un fallo en milisegundos:
 `write(SocketCAN): TX queue full; no SPARK acknowledges frames ...`. Con un
 corte breve puede ser `STATUS_0/2 watchdog expired` o `the SPARK restarted
 (HAS_RESET)`. Después ya no permite reactivar: `joint_1: the SPARK restarted
-(power cut or emergency stop) and lost its position; power it up with the arm in
-Home and restart the node`. El SPARK cuenta desde que enciende, así que el brazo
-debe estar en Home **al encenderlo**:
+(power cut or emergency stop) and lost its position; reference it again
+(spark_home --home, which the bringup runs) and restart the node`:
 
 1. cierra el nodo (Ctrl+C);
-2. con el paro de emergencia presionado, lleva el brazo a Home;
-3. suelta el paro y vuelve a lanzar el nodo.
+2. revisa que ninguna búsqueda de tope vaya a chocar desde la postura en que
+   quedó el brazo y suelta el paro;
+3. vuelve a lanzar el bringup: el homing referencia los ejes reiniciados y
+   lleva el brazo a Home.
 
 Con el servicio de [11.5](#115-arrancar-al-encender-la-raspberry-pi), el paso 1
 es `sudo systemctl stop movemaster` y el 3, `sudo systemctl start movemaster`.
 
-Para ver qué SPARK se reiniciaron sin habilitar nada ni borrar su aviso, con el
-nodo cerrado: `spark_home` sin `--measure`
-([7.3](#73-spark_home-reinicios-y-topes-mecánicos)).
+Para ver qué ejes se reiniciaron sin habilitar nada ni borrar su aviso, con el
+nodo cerrado: `spark_home` sin opciones
+([7.3](#73-spark_home-reinicios-topes-mecánicos-y-homing)).
 
-Al configurar, el log confirma qué SPARK tomaron su postura de encendido como
-referencia: `joint_1: SPARK powered up; its zero is the pose it powered up in,
-which zero_offset_rad assumes is Home.`
+Sin homing (`homing:=false`), al configurar el log avisa qué ejes tomaron su
+postura de encendido como referencia: `joint_1: powered up (SPARK or gripper
+ESP32) and not homed; the pose it powered up in is now its zero_offset_rad.`
 
 Las tramas que quedaron en la cola salen en cuanto los SPARK encienden. No
 mueven nada: los SPARK arrancan con el PID de fábrica, en 0, porque la flash
@@ -1464,17 +1555,17 @@ MoveIt. Junta dos archivos:
 
 | Archivo | Qué aporta |
 |---|---|
-| `movemaster_description/config/dh.yaml` | La tabla Denavit-Hartenberg (a, α, d en mm y grados), el desfase de cada θ, la postura Home y los radios de los eslabones. |
+| `movemaster_description/config/dh.yaml` | La tabla Denavit-Hartenberg (a, α, d en mm y grados), la postura Home y los radios de los eslabones. |
 | `movemaster_hardware/config/joints.json` | Qué ejes tienen SPARK MAX y sus límites. |
 
 Cada fila *i* de la tabla, `T(i-1 → i) = Rz(θi) · Tz(di) · Tx(ai) · Rx(αi)`,
 se convierte en (`urdf/movemaster_arm.xacro`):
 
-1. `joint_i`: el giro θi = qi + `theta_offset_deg` alrededor de z, donde qi es
-   la posición de la articulación en ROS; el desfase va en el origen del joint.
-   Si el eje está en `joints.json` es `revolute`, con `lower`/`upper` = límites
-   de `joints.json` y `velocity` = `max_velocity_rad_s`; si no, es `fixed` en
-   su ángulo Home.
+1. `joint_i`: el giro θi alrededor de z; θi es la posición de la articulación
+   en ROS, sin desfase. Si el eje está en `joints.json` es `revolute`, con
+   `lower`/`upper` = límites de `joints.json` y `velocity` =
+   `max_velocity_rad_s`; si no, es `fixed` en su ángulo Home (con
+   `preview:=true`, `revolute` de −π a π).
 2. `<label>_link` (`waist_link`, `shoulder_link`, …): el eslabón que mueve, con
    cilindros a lo largo de di y ai para verlo y para las colisiones.
 3. `joint_i_dh`: la parte fija `Tz(di) · Tx(ai) · Rx(αi)`, hasta el marco DH
@@ -1487,7 +1578,7 @@ del plugin para el bloque `<ros2_control>`, con los mismos ejes de
 eje que no está en la tabla, el xacro se detiene con un error.
 
 Argumentos: `joint_config`, `dh_config`, `spec_path`, `can_interface`,
-`use_mock_hardware` y `preview`. Con `preview:=true` los cinco ejes se mueven y
+`use_mock_hardware`, `require_reference` y `preview`. Con `preview:=true` los cinco ejes se mueven y
 no hay bloque `<ros2_control>`; lo usa `display.launch.py`. Para ver el URDF que
 se genera:
 
@@ -1501,7 +1592,9 @@ Macro `movemaster_ros2_control` que escribe el bloque `<ros2_control>`:
 
 - `<hardware>`: con `use_mock_hardware=false`, el plugin
   `movemaster_hardware/MovemasterHardware` y sus parámetros `spec_path`,
-  `joint_config_path`, `can_interface` (los lee `on_init`); con `true`,
+  `joint_config_path`, `can_interface` y `require_reference` (los lee
+  `on_init`; con `require_reference` en `true`, un eje sin referencia es un
+  fallo desde el primer `on_configure`); con `true`,
   `mock_components/GenericSystem`.
 - Un `<joint>` por eje de `joints.json`, en su orden, con la interfaz de comando
   `position` y las de estado `position`, `velocity` y `current`.
@@ -1591,13 +1684,13 @@ Los dos archivos de REV no se modifican.
 | `examples/driver_monitor.cpp` | ejemplo | sí | Configurar y leer telemetría sin habilitar (paso 4). |
 | `examples/spark_console.cpp` | ejemplo | sí | Mover un eje desde el teclado, en Position o MAXMotion (paso 4). |
 | `examples/spark_commission.cpp` | herramienta | sí | Puesta en marcha: restablecer, escribir el baseline y persistir (paso 3). |
-| `examples/spark_home.cpp` | herramienta | sí | Ver qué SPARK se reiniciaron y medir los topes mecánicos de un eje (paso 4). |
+| `examples/spark_home.cpp` | herramienta | sí | Ver qué ejes se reiniciaron, medir los topes mecánicos de un eje y hacer el homing (paso 4; el bringup lo corre al arrancar). |
 | `tests/driver_test.cpp` | prueba | no | Driver contra SPARK simulado. |
 | `tests/setup_test.cpp` | prueba | no | Cargador de `joints.json` y puesta en marcha contra SPARK simulado. |
 | `tests/console_test.cpp` | prueba | no | Bucle de la consola con driver falso. |
-| `tests/homing_test.cpp` | prueba | no | Búsqueda de topes contra un eje simulado y `spark_home`. |
+| `tests/homing_test.cpp` | prueba | no | Búsqueda de topes contra un eje simulado, y `spark_home`: medición, argumentos, estado y homing (orden, referencias, `--pose`, solo lo reiniciado, fallos). |
 | `tests/protocol_oracle.cpp` + `tests/differential_test.py` | prueba | no | Paridad byte a byte con la librería Python. |
-| `movemaster_description/test/test_description.py` | prueba | no | El URDF sigue la tabla DH (cinemática directa contra el producto DH; Home = 0 con el brazo vertical, `tool0` en (0, 0, 0.7734) m; sentidos positivos) y cumple lo que exigen el plugin y `ros2_control`. |
+| `movemaster_description/test/test_description.py` | prueba | no | El URDF sigue la tabla DH (cinemática directa contra el producto DH; pose cero con brazo y antebrazo horizontales, `tool0` en (0.3774, 0, 0.100) m; Home con `tool0` en (0.1574, 0, 0.320) m; sentidos positivos) y cumple lo que exigen el plugin y `ros2_control`. |
 | `movemaster_control/test/test_controllers.py` | prueba | no | Los controladores usan las interfaces que exporta el plugin. |
 | `movemaster_teleop/test/` | prueba | no | Jog, selector MANUAL/AUTO y trama del pendant, sin ROS. |
 | `movemaster_bringup/test/test_bringup.py` | prueba | no | Argumentos del launch de arranque, archivos que incluye y el servicio de `systemd`. |
@@ -1630,8 +1723,8 @@ Los dos archivos de REV no se modifican.
 | `STATUS_0/2 watchdog expired` | Se dejó de recibir telemetría con el brazo activo. | Cable o alimentación; luego recupera (paso 9). |
 | `write(SocketCAN): TX queue full; no SPARK acknowledges frames ...` (antes, `write(SocketCAN): No buffer space available`) | Ningún SPARK confirma las tramas: paro de emergencia presionado, SPARK sin alimentación o bus desconectado. | Si fue el paro, recupera como en el [paso 9](#12-paso-9--detener-fallos-y-recuperación). Si no, revisa alimentación y cableado con `candump can0`. |
 | `joint_1: the SPARK restarted (HAS_RESET); its position and RAM configuration are lost` | El SPARK se reinició con el brazo activo: un corte breve o una caída de tensión. | Revisa la alimentación y las conexiones de ese SPARK; después, como la fila siguiente. |
-| `joint_1: the SPARK restarted (power cut or emergency stop) and lost its position; ...` al recuperar | El SPARK se apagó y volvió a encender con el nodo vivo: cuenta desde otra postura. | Cierra el nodo, lleva el brazo a Home con el paro presionado, suéltalo y vuelve a lanzar ([paso 9](#12-paso-9--detener-fallos-y-recuperación)). |
-| `joint_1: SPARK powered up; its zero is the pose it powered up in, ...` (advertencia) | Normal en el primer arranque tras encender los SPARK. | Nada, si se encendieron en Home ([4.4](#44-cuidados)). Si no, la posición en ROS está desplazada: cierra el nodo y enciende los SPARK en Home. |
+| `joint_1: the SPARK restarted (power cut or emergency stop) and lost its position; ...` al recuperar o al arrancar | El SPARK se apagó y volvió a encender con el nodo vivo, o el bringup arrancó con un eje sin referencia. | Cierra el nodo y vuelve a lanzar el bringup: el homing lo referencia ([paso 9](#12-paso-9--detener-fallos-y-recuperación)). |
+| `joint_1: powered up (SPARK or gripper ESP32) and not homed; ...` (advertencia) | Sin homing (`homing:=false` o `movemaster_control` a mano): el eje toma la postura en que se encendió. | Nada, si se encendió en la postura donde lee `zero_offset_rad` ([4.4](#44-cuidados)). Si no, la posición en ROS está desplazada: usa el bringup con homing. |
 | `CLEAR_FAULTS did not clear HAS_RESET on CAN 1` o `STATUS_1 required from every SPARK; none from CAN 1` | El SPARK no borró su aviso de reinicio o no envía `STATUS_1`. | Revisa el firmware con REV Hardware Client (25 o posterior) y anótalo: el manejo de `HAS_RESET` aún no se ha probado con un SPARK real. |
 | `Control loop gap exceeded; refusing automatic re-enable` | El lazo se detuvo más de `max_cycle_gap_s` (PC sobrecargado, depurador, sin permiso de tiempo real). Con `max_cycle_gap_s` = 2 periodos (0.02 s a 100 Hz) salta por la variación normal de Linux. | `max_cycle_gap_s: 0.1` en `joints.json` y permiso de tiempo real ([10.1](#101-permiso-de-tiempo-real-una-sola-vez)). Recupera (paso 9). |
 | `joint_1: position command outside calibrated limits` | El JTC pidió un objetivo fuera de los límites. | Envía objetivos dentro de `joints.json`; recupera. |
@@ -1649,7 +1742,7 @@ Los dos archivos de REV no se modifican.
 | `CAN error frame received: bus-off ...` unos segundos después de `Successful 'activate'`, cada vez, aunque la terminación mida ~60 Ω | La Raspberry no comparte tierra con la fuente de los SPARK. Al habilitarse, los motores toman corriente y mueven la referencia del bus respecto a la Raspberry, y su transceptor lee mal sus propios bits. Con el brazo deshabilitado no aparece. `candump -td -e can0,0~0,#FFFFFFFF \| grep -E "tx-\|bus-off"` muestra `tx-error-warning` → `tx-error-passive` → `bus-off`. | Une con un cable un GND de la Raspberry (o la terminal GND del HAT) al negativo de la fuente de los SPARK, en un solo punto. Lo mismo para cualquier otro nodo con fuente propia, como el gripper. Comprobado en el banco: con la tierra unida, 15 minutos y más de 200 000 tramas enviadas sin errores. |
 | `joint_5: another program is sending the gripper HEARTBEAT; ...` | Otro programa manda el heartbeat del gripper, casi siempre el ciclo de `cansend 0A080C05#` de las pruebas. | Ciérralo: con la muñeca en ROS, el único que manda ese heartbeat es el driver ([4.6](#46-la-muñeca-en-la-esp32-del-gripper-joint_5)). |
 | `STATUS_0 required from the gripper ESP32; none from device 5` | La ESP32 no envía su `STATUS_0`: apagada, sin CAN o con otro número de dispositivo. | `candump can0,0A080805:1FFFFFFF` debe mostrarla cada 20 ms. Revisa alimentación, cableado y que `CAN_DISPOSITIVO` del firmware sea el `can_id` de `joint_5`. |
-| `joint_5: the gripper ESP32 restarted (NOT_REFERENCED); its position is lost`, o al configurar `... the gripper ESP32 restarted (power cut or reset) ...` | La ESP32 se reinició con el nodo vivo: un corte, una caída de los 5 V o abrir el monitor serie, que la reinicia. Cuenta otra vez desde donde quedó. | Como con un SPARK: cierra el nodo, lleva el brazo a Home y vuelve a lanzar. No abras el monitor serie con el nodo activo. |
+| `joint_5: the gripper ESP32 restarted (NOT_REFERENCED); its position is lost`, o al configurar `... the gripper ESP32 restarted (power cut or reset) ...` | La ESP32 se reinició con el nodo vivo: un corte, una caída de los 5 V o abrir el monitor serie, que la reinicia. Cuenta otra vez desde donde quedó. | Cierra el nodo. La muñeca no busca tope: el homing le da como referencia la postura en que se reinició la ESP32. Si no estaba en su 0, gírala a 0 sin el nodo (sin heartbeat el driver se apaga), reinicia la ESP32 y vuelve a lanzar el bringup. No abras el monitor serie con el nodo activo. |
 | `joint_5: the gripper firmware takes positions within 360 degrees of its zero` | Un límite de la muñeca queda a más de 360° de su cero. | Ajusta `min_position_rad` y `max_position_rad`. |
 | `gripper: opening command must be in 0 (closed) .. 1 (open)` | Llegó a `/gripper_controller/commands` una apertura fuera de 0–1, por ejemplo un ángulo (120) en lugar de 1. | Manda aperturas de 0 a 1 ([11.6](#116-abrir-y-cerrar-el-gripper)); recupera ([paso 9](#12-paso-9--detener-fallos-y-recuperación)). |
 | `gripper.can_id must be the can_id of the joint with "device": "gripper"` | El bloque `gripper` apunta a otra ESP32 que la de la muñeca. | Usa el `can_id` de `joint_5`. |
@@ -1660,6 +1753,6 @@ Los dos archivos de REV no se modifican.
 | `Could not enable FIFO RT scheduling policy ... Operation not permitted` (advertencia) | El usuario no tiene permiso de prioridad de tiempo real. | [10.1](#101-permiso-de-tiempo-real-una-sola-vez). |
 | El brazo se mueve en sentido contrario | `direction` invertido. | Cambia `direction`; verifica con `driver_monitor` antes. |
 | Después de la puesta en marcha, un eje gira al revés que antes | El restablecimiento dejó `Inverted` (ID 45) en `false`, y antes estaba activado en REV Hardware Client. | Corrige `direction` en `joints.json`; MoveMaster no usa `Inverted`. |
-| La posición en ROS no coincide con la real (o el brazo de RViz con el real) | `zero_offset_rad` o `gear_ratio` incorrectos, el brazo no se encendió en Home o el encoder perdió su cero. | Enciende en Home con los `zero_offset_rad` de [4.4](#44-cuidados); recalibra con `driver_monitor`. |
+| La posición en ROS no coincide con la real (o el brazo de RViz con el real) | `homing.stop_rad` o `gear_ratio` incorrectos, o, sin homing, el eje no se encendió donde lee `zero_offset_rad`. | Calibra `stop_rad` ([7.3](#73-spark_home-reinicios-topes-mecánicos-y-homing)); recalibra `gear_ratio` con `driver_monitor`. |
 | Cambié `joints.json` y no pasa nada | El launch lee la copia instalada. | Compila con `--symlink-install` o vuelve a compilar. |
 | La acción termina tarde | En modo `maxmotion`, el SPARK limita la velocidad a la `cruise_velocity` del slot; la trayectoria pedía más. | Da más `time_from_start` o sube `cruise_velocity`, sin pasar de `max_velocity_rad_s`. |

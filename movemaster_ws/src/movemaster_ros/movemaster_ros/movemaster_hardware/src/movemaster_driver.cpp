@@ -120,7 +120,23 @@ void validate_driver_config(const DriverConfig &config) {
           where + ": backoff_rad must be at least max_following_error_rad / 4");
       require(std::isfinite(h.max_travel_rad) && h.max_travel_rad > 2 * h.backoff_rad,
           where + ": max_travel_rad must exceed twice backoff_rad");
+      require(h.stop == 0 || h.stop == 1 || h.stop == -1, where + ": stop must be + or -");
+      if (h.stop != 0) {
+        // spark_home --home leaves the joint backoff_rad away from its stop, under control.
+        const double rest = h.stop_rad - h.stop * h.backoff_rad;
+        require(std::isfinite(h.stop_rad) && rest >= j.min_position_rad && rest <= j.max_position_rad,
+            where + ": backoff_rad away from stop_rad, the joint must be within min/max_position_rad");
+      }
     }
+  }
+  std::set<std::string> homed;
+  for (const auto &name : config.homing_order) {
+    const auto joint = std::find_if(config.joints.begin(), config.joints.end(),
+        [&](const JointConfig &j) { return j.name == name; });
+    require(joint != config.joints.end(), "homing_order: " + name + " is not a configured joint");
+    require(homed.insert(name).second, "homing_order: " + name + " appears twice");
+    require(joint->homing && joint->homing->stop != 0,
+        "homing_order: " + name + " needs homing.stop and homing.stop_rad");
   }
   if (config.gripper) {
     const auto &g = *config.gripper;
@@ -157,6 +173,7 @@ MoveMasterDriver::MoveMasterDriver(DriverConfig config, std::unique_ptr<CANBus> 
         frames["STATUS_1"].arbitration_id(joint.device_id), frames["STATUS_2"].arbitration_id(joint.device_id)});
   }
   states_.resize(config_.joints.size());
+  referenced_.assign(states_.size(), false);
   status0_at_.resize(states_.size());
   status1_at_.resize(states_.size());
   status2_at_.resize(states_.size());
@@ -267,10 +284,11 @@ std::vector<std::string> MoveMasterDriver::configure(SparkResetPolicy policy) {
       if (!grippers.empty())
         message += (message.empty() ? "" : "; ") + join(grippers) +
             ": the gripper ESP32 restarted (power cut or reset) and lost its position";
-      throw std::runtime_error(message + "; power it up with the arm in Home and restart the node");
+      throw std::runtime_error(message + "; reference it again (spark_home --home, which the bringup runs) "
+          "and restart the node");
     }
     report_only_ = policy == SparkResetPolicy::kReport;
-    if (!report_only_) {
+    if (policy == SparkResetPolicy::kAcceptPowerOnPose) {
       // Cleared now, HAS_RESET (NOT_REFERENCED in the gripper) flags the next restart. The gripper
       // keeps counting from its power-up pose: it is told the position it reports.
       for (const auto i : restarted) {
@@ -282,6 +300,9 @@ std::vector<std::string> MoveMasterDriver::configure(SparkResetPolicy policy) {
       }
       wait_status1(restarted, true);
     }
+    // kHoming leaves the restarted joints unreferenced; kReport references none, so read() never
+    // fails on a restart.
+    for (const auto i : all) referenced_[i] = !report_only_ && !states_[i].spark_reset;
     configured_ = true;  // RAM only; no PERSIST_PARAMETERS.
     return names;
   } catch (const std::exception &e) { trip(e.what()); throw; }
@@ -462,6 +483,57 @@ void MoveMasterDriver::set_current_limit(std::size_t joint, int amps) {
     spark.write(rev::kSmartCurrentFreeLimit, amps);
   } catch (const std::exception &e) { trip(e.what()); throw; }
 }
+void MoveMasterDriver::shift_reference(std::size_t joint, double offset_rad) {
+  ensure_healthy();
+  require(joint < config_.joints.size(), "Unknown joint index");
+  require(std::isfinite(offset_rad), "The reference offset must be finite");
+  if (!configured_ || active_ || report_only_)
+    throw std::logic_error("The reference changes only while configured (not with kReport) and not active");
+  try {
+    if (last_tx_)
+      std::this_thread::sleep_until(*last_tx_ + std::chrono::duration<double>(config_.disable_settle_s));
+    wait_feedback();  // the position where the joint came to rest
+    const auto &j = config_.joints[joint];
+    const double target = states_[joint].position + offset_rad;
+    if (protocols_[joint]) {
+      const auto &frames = protocols_[joint]->frames;
+      bus_->send(frames["SET_PRIMARY_ENCODER_POSITION"].packet(j.device_id,
+          {{"POSITION", radians_to_rotations(target, j)}, {"DATA_TYPE", 3}}), config_.response_timeout_s);
+      bus_->send(frames["CLEAR_FAULTS"].packet(j.device_id), config_.response_timeout_s);
+    } else {
+      const double degrees = radians_to_wrist_degrees(target, j);
+      if (!(std::abs(degrees) <= kGripperMaxDegrees))
+        throw std::out_of_range(j.name + ": the gripper firmware takes a reference within 360 degrees of its zero");
+      bus_->send((*gripper_frames_)["SET_WRIST_POSITION"].packet(j.device_id, {{"POSITION", degrees}}),
+          config_.response_timeout_s);
+    }
+    wait_reference(joint, target);
+    referenced_[joint] = true;
+  } catch (const std::exception &e) { trip(e.what()); throw; }
+}
+void MoveMasterDriver::wait_reference(std::size_t i, double target) {
+  // The joint is disabled: it may only settle a little while the new reference arrives.
+  constexpr double kToleranceRad = 0.01;
+  const auto since = Clock::now();
+  const auto deadline = since + std::chrono::duration<double>(
+      std::max(config_.response_timeout_s, 3 * kStatus1PeriodMs / 1000.0));
+  const auto done = [&] {
+    const auto &position_at = protocols_[i] ? status2_at_[i] : status0_at_[i];
+    const auto &flag_at = protocols_[i] ? status1_at_[i] : status0_at_[i];
+    return position_at && *position_at >= since && flag_at && *flag_at >= since && !states_[i].spark_reset &&
+        std::abs(states_[i].position - target) <= kToleranceRad;
+  };
+  while (!done()) {
+    if (Clock::now() >= deadline) {
+      const auto id = std::to_string(config_.joints[i].device_id);
+      throw TimeoutError(protocols_[i]
+          ? "SET_PRIMARY_ENCODER_POSITION and CLEAR_FAULTS did not take effect on CAN " + id
+          : "SET_WRIST_POSITION did not take effect on the gripper, device " + id + " (the wrist must be stopped)");
+    }
+    const auto rx = bus_->recv(0.005);
+    if (rx) receive(*rx);
+  }
+}
 void MoveMasterDriver::read() {
   ensure_healthy();
   if (!configured_) throw std::logic_error("Driver is not configured");
@@ -475,9 +547,9 @@ void MoveMasterDriver::read() {
       ++count;
     }
     if (count == rx_budget) throw std::runtime_error("RX budget exceeded; feedback could be queued/stale");
-    // kReport only reports restarts: spark_reset stays in the states.
-    for (std::size_t i = 0; i < states_.size() && !report_only_; ++i)
-      if (states_[i].spark_reset)
+    // A restart is a fault only on a referenced joint; the others keep spark_reset in the states.
+    for (std::size_t i = 0; i < states_.size(); ++i)
+      if (states_[i].spark_reset && referenced_[i])
         throw std::runtime_error(config_.joints[i].name + (protocols_[i]
             ? ": the SPARK restarted (HAS_RESET); its position and RAM configuration are lost"
             : ": the gripper ESP32 restarted (NOT_REFERENCED); its position is lost"));

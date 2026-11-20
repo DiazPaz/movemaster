@@ -152,9 +152,10 @@ Transición que prepara el hardware sin habilitarlo. En MoveMaster: abre CAN,
 espera `disable_settle_s` y en cada SPARK envía `STOP_FOLLOWER_MODE`, el
 baseline, los parámetros de unidades y telemetría, `SET_STATUSES_ENABLED` y
 todos sus slots (PIDF, rango de salida y MAXMotion), todo con ACK. Solo en RAM.
-Después lee `HAS_RESET` de cada SPARK: la primera vez toma como referencia la
-postura de encendido de los reiniciados; en las siguientes, un reinicio es un
-fallo.
+Después lee `HAS_RESET` de cada SPARK. Tras el homing del bringup
+(`require_reference`), un eje reiniciado es un fallo. Sin homing, la primera vez
+toma como referencia la postura de encendido de los reiniciados; en las
+siguientes, un reinicio es un fallo.
 
 **control (joints.json)**
 Bloque de cada eje con el modo (`position` o `maxmotion`) y el slot con que se
@@ -194,8 +195,8 @@ Se publica en `/dynamic_joint_states`. No es par (`effort`).
 Convención que describe un brazo serial con cuatro números por articulación.
 En la forma estándar, la fila *i* lleva del marco *i-1* al *i* con
 `Rz(θi) · Tz(di) · Tx(ai) · Rx(αi)`: θ es la variable del eje; d, a y α son
-fijos. En el MoveMaster θi = qi + desfase, donde qi es la posición del eje en
-ROS, para que Home sea q = 0. La tabla está en `dh.yaml`; el URDF crea un marco
+fijos. En el MoveMaster θi = qi, la posición del eje en ROS, sin desfases: con
+todo en 0 queda la pose cero. La tabla está en `dh.yaml`; el URDF crea un marco
 `dh_frame_i` por fila, y el último es `tool0`. MANUAL §13.6.
 
 **depend / exec_depend / test_depend / buildtool_depend**
@@ -204,17 +205,16 @@ solo pruebas; herramienta de compilación. MANUAL §13.2.
 
 **dh.yaml**
 Tabla DH del brazo, en `movemaster_description/config/`: por eje, su nombre en
-ROS (`joint`), su nombre en el brazo (`label`), `a_mm`, `alpha_deg`, `d_mm`, el
-desfase de θ (`theta_offset_deg`), la postura Home (`home_deg`, en q) y un radio
-para dibujarlo. También el tamaño de la base. De ella sale la geometría del
-URDF.
+ROS (`joint`), su nombre en el brazo (`label`), `a_mm`, `alpha_deg`, `d_mm`, la
+postura Home (`home_deg`) y un radio para dibujarlo. También el tamaño de la
+base. De ella sale la geometría del URDF.
 
 **direction**
 Campo de `joints.json`: entero `1` o `-1`. Invierte el sentido del motor
 respecto a la articulación. Debe ser entero (`1`, no `1.0`). El sentido
 positivo de la articulación es el giro alrededor del eje z de la tabla DH:
-cintura y faceplate antihorario vistos desde arriba en Home; hombro, codo e
-inclinación de muñeca hacia adelante.
+cintura antihorario vista desde arriba; hombro, codo e inclinación de muñeca
+hacia adelante; faceplate antihorario visto de frente.
 
 **disable_settle_s**
 Campo global de `joints.json` (0.5 s): pausa sin transmitir antes de configurar
@@ -328,18 +328,22 @@ El gripper no lo escucha: tiene su propio `HEARTBEAT` (`0x0A080C05`, en
 `gripper-frames-1.0.0`), para que probarlo no habilite a los SPARK.
 
 **Home**
-Postura de referencia del brazo y cero de todos los ejes (q = 0): el brazo
-vertical, con el faceplate hacia arriba y su marca hacia el frente; `tool0`
-queda en (0, 0, 0.7734) m de `base_link`. El brazo se enciende en Home
-(MANUAL §4.4); el hardware simulado y la vista previa arrancan ahí, y los ejes
-sin SPARK quedan fijos en ella. Es una postura singular: la cintura y el
-faceplate giran sobre la misma línea.
+Postura de reposo del brazo, (0, −90°, 90°, 0, 0): el brazo vertical, el
+antebrazo horizontal al frente y el faceplate hacia abajo; `tool0` queda en
+(0.1574, 0, 0.320) m de `base_link`. No es la pose cero. La define `home_deg`
+en `dh.yaml`: el homing termina ahí, el hardware simulado y la vista previa
+arrancan ahí, y los ejes sin SPARK quedan fijos en ella (MANUAL §4.4).
 
 **Homing**
 Rutina que encuentra la posición absoluta de un eje con encoder relativo. En
 MoveMaster, contra sus topes mecánicos y por la corriente del motor: el brazo no
-tiene interruptores de fin de carrera. Aún no es automática; `spark_home` mide
-los topes de cada eje (MANUAL §7.3).
+tiene interruptores de fin de carrera. `spark_home --home` busca el tope
+`homing.stop` de cada eje y le escribe a su SPARK `stop_rad` ahí; el bringup lo
+corre al arrancar (MANUAL §7.3).
+
+**homing_order**
+Campo global de `joints.json`: los ejes cuyo tope busca `spark_home --home`, en
+ese orden. El orden decide por dónde pasa el brazo mientras se referencia.
 
 ## I
 
@@ -584,6 +588,11 @@ Paso que se hace una vez por SPARK: restablece sus parámetros a fábrica
 (conserva CAN ID, tipo de motor e idle mode), escribe el baseline y lo guarda
 en flash. MANUAL §6.1.
 
+**Pose cero**
+La postura con todos los ejes en 0, que es la de la tabla DH (θ = q): el brazo y
+el antebrazo horizontales al frente y el faceplate hacia abajo, con su marca al
+frente; `tool0` queda en (0.3774, 0, 0.100) m de `base_link`. MANUAL §4.4.
+
 **PV / SP**
 *Process value* (posición medida) y *setpoint* (posición objetivo).
 
@@ -592,6 +601,17 @@ en flash. MANUAL §6.1.
 **read() / write()**
 Métodos del plugin que el `controller_manager` llama en cada ciclo: `read()`
 recibe la telemetría y `write()` envía setpoints y heartbeat.
+
+**Referencia**
+Lo que hace que la posición que reporta un eje sea su ángulo real. Un SPARK (o
+la ESP32 del gripper) la pierde al apagarse y avisa con `HAS_RESET`
+(`NOT_REFERENCED`) hasta que el homing se la escribe. Sin homing, la postura de
+encendido es la referencia.
+
+**require_reference**
+Parámetro del plugin: con `true` (el bringup lo pone tras el homing), un eje sin
+referencia es un fallo desde el primer `on_configure`, en vez de tomar su
+postura de encendido. MANUAL §13.7.
 
 **RESET_SAFE_PARAMETERS**
 Trama que devuelve a fábrica casi todos los parámetros del SPARK, excepto CAN
@@ -694,10 +714,15 @@ Ejemplo interactivo para mover un eje sin ROS (`on`, `sp`, `mode`, `slot`,
 `pv`, `off`, `q`). MANUAL §7.2.
 
 **spark_home**
-Herramienta para el homing. Sin `--measure` muestra qué SPARK se reiniciaron,
-sin habilitar motores ni borrar su aviso `HAS_RESET`; con `--measure joint_N
-[+|-]` toma la postura de encendido como referencia, mide los topes mecánicos de
-ese eje y sugiere sus límites. MANUAL §7.3.
+Herramienta para el homing. Sin opciones muestra qué ejes se reiniciaron, sin
+habilitar motores ni borrar su aviso `HAS_RESET`; con `--measure joint_N [+|-]`
+mide los topes mecánicos de ese eje y sugiere sus límites, sin tocar
+referencias; con `--home` referencia los ejes que la perdieron contra su tope
+(`homing.stop`, `stop_rad`) y lleva el brazo a `--pose`. MANUAL §7.3.
+
+**stop / stop_rad**
+Campos del bloque `homing` de `joints.json`: el tope contra el que se referencia
+el eje (`"+"` o `"-"`) y su ángulo DH ahí, que el homing le escribe al SPARK.
 
 **SparkParameters-v0.1.2.md**
 Tabla en `movemaster_hardware/spec/` con todos los parámetros del SPARK: ID,
@@ -818,7 +843,7 @@ eso xacro puede leer `joints.json`.
 
 **zero_offset_rad**
 Campo de `joints.json`: ángulo de la articulación cuando el encoder del motor
-marca cero, es decir, en la postura en que se encendió el SPARK. Si el brazo se
-enciende en Home, es 0, porque Home es q = 0 (MANUAL §4.4). Como el encoder
-es relativo y aún no hay homing automático, los SPARK deben encenderse con el
-brazo en Home; el driver detecta cada reinicio (`HAS_RESET`).
+marca cero, es decir, en la postura en que se encendió el SPARK. Solo cuenta en
+un eje sin homing (la muñeca del gripper, o con `homing:=false`): ese eje se
+enciende donde lee `zero_offset_rad`. Con homing, el homing escribe la posición
+y este campo no cambia nada visible (MANUAL §4.4).
