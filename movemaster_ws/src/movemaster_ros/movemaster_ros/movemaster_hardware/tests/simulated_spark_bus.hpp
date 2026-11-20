@@ -59,6 +59,8 @@ class SimulatedSparkBus : public CANBus {
   int lost_replies = 0;  // the next requests whose reply is lost on the bus
   bool status1 = true, clear_faults = true;       // STATUS_1 is sent; CLEAR_FAULTS clears HAS_RESET
   std::map<int, bool> has_reset;                  // CAN ID -> HAS_RESET sticky; true at power-up
+  std::map<int, double> encoder;                  // CAN ID -> STATUS_2 position, rotations
+  bool set_encoder = true;                        // SET_PRIMARY_ENCODER_POSITION takes effect
   std::map<int, int> types;                       // parameter ID -> REV type code
   std::map<std::pair<int, int>, std::uint32_t> ram;  // (CAN ID, parameter ID) -> raw value
   // Scripted RESULT_CODEs for the flash commands; 255 (pending) is followed by the next one,
@@ -67,7 +69,10 @@ class SimulatedSparkBus : public CANBus {
   std::chrono::steady_clock::time_point last_status{}, last_status1{};
   SimulatedSparkBus(const std::filesystem::path &spec, std::vector<int> device_ids)
       : frames(spec), gripper_frames(spec.parent_path() / kGripperFramesFile), ids(std::move(device_ids)) {
-    for (int id : ids) has_reset[id] = true;
+    for (int id : ids) {
+      has_reset[id] = true;
+      encoder[id] = id * 0.25;
+    }
     types = {{2, 2}, {6, 2}, {9, 2}, {59, 2}, {60, 2}, {74, 2}, {75, 3}, {112, 3}, {113, 3}, {149, 4}, {158, 2},
         {159, 2}, {160, 2}};
     for (int slot = 0; slot < 4; ++slot) {
@@ -165,6 +170,10 @@ class SimulatedSparkBus : public CANBus {
           {"SPECIFIED_MASK", request.at("MASK")}, {"ENABLED_BITFIELD", request.at("ENABLED_BITFIELD")}}));
     } else if (base == frames["CLEAR_FAULTS"].base_arb_id()) {
       if (clear_faults) has_reset[id] = false;
+    } else if (base == frames["SET_PRIMARY_ENCODER_POSITION"].base_arb_id()) {
+      const auto request = frames["SET_PRIMARY_ENCODER_POSITION"].decode_payload(p.data);
+      if (set_encoder && request.at("DATA_TYPE").get<int>() == 3)
+        encoder[id] = request.at("POSITION").get<double>();
     }
     else if (base == frames["RESET_SAFE_PARAMETERS"].base_arb_id())
       flash_reply(reset_codes, "RESET_SAFE_PARAMETERS_RESPONSE");
@@ -177,7 +186,7 @@ class SimulatedSparkBus : public CANBus {
       pending.push_back(frames["STATUS_0"].packet(id, {{"CURRENT", 2}, {"PRIMARY_HEARTBEAT_LOCK", true}}));
       if (status1 && with_status1)
         pending.push_back(frames["STATUS_1"].packet(id, {{"HAS_RESET_STICKY_WARNING", has_reset[id]}}));
-      auto pos = frames["STATUS_2"].packet(id, {{"PRIMARY_ENCODER_POSITION", id * 0.25},
+      auto pos = frames["STATUS_2"].packet(id, {{"PRIMARY_ENCODER_POSITION", encoder[id]},
           {"PRIMARY_ENCODER_VELOCITY", 60.0}});
       if (nonfinite) { pos.data[4] = 0; pos.data[5] = 0; pos.data[6] = 0x80; pos.data[7] = 0x7f; }
       if (malformed) pos.data.resize(1);

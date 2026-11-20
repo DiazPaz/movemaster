@@ -15,6 +15,10 @@ struct HomingConfig {
   double slow_speed_rad_s = std::numeric_limits<double>::quiet_NaN();
   double backoff_rad = std::numeric_limits<double>::quiet_NaN();     // retreat between both approaches
   double max_travel_rad = std::numeric_limits<double>::quiet_NaN();  // no stop within it: abort
+  // The stop spark_home --home references the joint against: its side (+1, -1; 0 = none yet) and
+  // the joint position there, measured with --measure.
+  int stop = 0;
+  double stop_rad = std::numeric_limits<double>::quiet_NaN();
 };
 
 // How far spark_home lets the target run ahead of the joint, as a fraction of the joint's

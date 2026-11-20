@@ -6,31 +6,36 @@ dos archivos, sin listas que mantener a mano:
 
 | Archivo | Qué aporta |
 |---|---|
-| `config/dh.yaml` | La tabla Denavit-Hartenberg del brazo, el desfase de cada θ, la postura Home y los radios de los eslabones. |
+| `config/dh.yaml` | La tabla Denavit-Hartenberg del brazo, la postura Home y los radios de los eslabones. |
 | `movemaster_hardware/config/joints.json` | Qué ejes tienen SPARK MAX, con sus límites y su velocidad máxima. |
 
-Guía completa: [docs/MANUAL.md](../docs/MANUAL.md) (§4.4 calibración del cero,
+Guía completa: [docs/MANUAL.md](../docs/MANUAL.md) (§4.4 pose cero, Home y homing,
 §9.1 vista previa, §13.6 el xacro). Términos:
 [docs/DICCIONARIO.md](../docs/DICCIONARIO.md).
 
 ## La tabla DH
 
-DH estándar, `T(i-1 → i) = Rz(θi) · Tz(di) · Tx(ai) · Rx(αi)`, con
-θi = qi + desfase, donde qi es la posición del eje en ROS:
+DH estándar, `T(i-1 → i) = Rz(θi) · Tz(di) · Tx(ai) · Rx(αi)`, con θi = qi, la
+posición del eje en ROS, sin desfases:
 
-| Eje | `label` | a (mm) | α | d (mm) | Desfase de θ |
+| Eje | `label` | a (mm) | α | d (mm) | Home |
 |---|---|---|---|---|---|
 | `joint_1` | cintura (`waist`) | 0 | −90° | 250 | 0° |
 | `joint_2` | hombro (`shoulder`) | 220 | 0° | 0 | −90° |
-| `joint_3` | codo (`elbow`) | 157.4 | 0° | 0 | 0° |
-| `joint_4` | inclinación de muñeca (`wrist_pitch`) | 0 | −90° | 0 | −90° |
-| `joint_5` | giro del faceplate (`wrist_roll`) | 0 | 0° | 146 | 180° |
+| `joint_3` | codo (`elbow`) | 157.4 | 0° | 0 | 90° |
+| `joint_4` | inclinación de muñeca (`wrist_pitch`) | 0 | −90° | 0 | 0° |
+| `joint_5` | giro del faceplate (`wrist_roll`) | 0 | 0° | 150 | 0° |
 
-Los desfases hacen que Home sea q = 0 en todos los ejes: el brazo vertical, con
-el faceplate hacia arriba y su marca hacia el frente. Ahí `tool0` (el centro de
-la cara del faceplate) está en (0, 0, 0.7734) m de `base_link`, con su eje z
-hacia arriba. Positivos: cintura y faceplate antihorario vistos desde arriba en
-Home; hombro, codo e inclinación de muñeca inclinan el brazo hacia adelante.
+- **Pose cero** (todos los ejes en 0): el brazo y el antebrazo horizontales al
+  frente y el faceplate hacia abajo, con su marca al frente. `tool0` (el centro
+  de la cara del faceplate) está en (0.3774, 0, 0.100) m de `base_link`, con su
+  eje z hacia abajo.
+- **Home** (0, −90°, 90°, 0, 0): el brazo vertical, el antebrazo horizontal al
+  frente y el faceplate hacia abajo; `tool0` en (0.1574, 0, 0.320) m. El homing
+  termina ahí.
+- **Positivos:** cintura antihorario vista desde arriba; hombro, codo e
+  inclinación de muñeca inclinan el brazo hacia adelante; faceplate antihorario
+  visto de frente.
 
 ## Cómo se arma el URDF
 
@@ -39,9 +44,9 @@ base_link ─ joint_1 ─ waist_link ─ joint_1_dh ─ dh_frame_1 ─ joint_2 �
            (θ1, z)               (Tz(d1)·Tx(a1)·Rx(α1))
 ```
 
-- `joint_i` es el giro θi = qi + desfase; el desfase va en el origen del joint.
-  Si el eje está en `joints.json`, es `revolute` con
-  sus límites; si no, es `fixed` en su ángulo Home. Con un solo SPARK conectado
+- `joint_i` es el giro θi = qi alrededor de z. Si el eje está en
+  `joints.json`, es `revolute` con sus límites; si no, es `fixed` en su ángulo
+  Home (con `preview:=true`, `revolute` de −π a π). Con un solo SPARK conectado
   el modelo ya está completo.
 - `joint_i_dh` es la parte fija de la fila, hasta el marco DH `dh_frame_i`; el
   último marco es `tool0`.
@@ -75,11 +80,14 @@ Con el `controller_manager` corriendo, RViz muestra el brazo real (o simulado):
 rviz2 -d $(ros2 pkg prefix --share movemaster_description)/rviz/display.rviz
 ```
 
-## Calibración del cero
+## La referencia de cada eje
 
-Home es q = 0 en todos los ejes. El encoder del NEO marca 0 al encender el
-SPARK, y el eje lee entonces `zero_offset_rad`. Por eso el brazo se enciende en
-Home, con `zero_offset_rad: 0` en todos los ejes. Detalle en MANUAL §4.4.
+El encoder del NEO es relativo: al encender, el SPARK cuenta desde la postura en
+que está. El bringup corre primero `spark_home --home`, que busca un tope
+mecánico de cada eje y le escribe a su SPARK su ángulo DH ahí
+(`homing.stop_rad` en `joints.json`); después el brazo va a Home. Para revisar
+la tabla contra el brazo, lleva los ejes a la pose cero y compara con un nivel;
+el error de cada eje se corrige en su `stop_rad`. Detalle en MANUAL §4.4 y §7.3.
 
 ## Archivos
 
@@ -90,4 +98,4 @@ Home, con `zero_offset_rad: 0` en todos los ejes. Detalle en MANUAL §4.4.
 | `urdf/movemaster_arm.xacro` | Macro que convierte cada fila DH en `joint_i`, `<label>_link` y `joint_i_dh`. |
 | `launch/display.launch.py` | Vista previa con `robot_state_publisher`, `joint_state_publisher(_gui)` y RViz. |
 | `rviz/display.rviz` | Configuración de RViz: modelo, TF de `base_link` y `tool0`. |
-| `test/test_description.py` | Cinemática directa del URDF contra el producto DH, Home, ejes fijos y bloque `<ros2_control>`. |
+| `test/test_description.py` | Cinemática directa del URDF contra el producto DH, pose cero, Home, sentidos positivos, ejes fijos y bloque `<ros2_control>`. |

@@ -142,26 +142,42 @@ persiste: la flash la escribe solo `spark_commission`. No cambia las inversiones
 del controlador; el sentido lo da `direction`.
 
 `configure(policy)` devuelve los ejes cuyo SPARK se reinició (aviso `HAS_RESET`
-de `STATUS_1`). Con `SparkResetPolicy::kAcceptPowerOnPose`, el valor por
-defecto, toma su postura de encendido como referencia y borra el aviso con
-`CLEAR_FAULTS`; con `kFault`, un reinicio es un error; con `kReport`, solo lo
-informa: el aviso queda puesto para quien configure después, `read()` lo deja en
-`JointState::spark_reset` en lugar de fallar y `activate()` se niega. El plugin
-usa `kAcceptPowerOnPose` en su primer `on_configure` y `kFault` en los
-siguientes; `spark_home` usa `kReport` para el estado y `kAcceptPowerOnPose`
-para medir. Después de `kAcceptPowerOnPose` o `kFault`, `read()` enclava un
-fallo si el aviso reaparece.
+de `STATUS_1`; `NOT_REFERENCED` en la muñeca del gripper). Un eje está
+**referenciado** (`referenced(eje)`) mientras su cuenta vale: `read()` enclava
+un fallo si un eje referenciado se reinicia.
+
+| Política | Ejes reiniciados | `activate()` |
+|---|---|---|
+| `kAcceptPowerOnPose` (por defecto) | Toman su postura de encendido como referencia: aviso borrado (`CLEAR_FAULTS`). Todos quedan referenciados. | sí |
+| `kFault` | Error al configurar. | sí |
+| `kHoming` | Quedan sin referencia, con el aviso puesto, y su reinicio no es fallo hasta `shift_reference()`. | sí |
+| `kReport` | Solo se informan; ningún eje queda referenciado y `read()` deja el aviso en `JointState::spark_reset`. | no |
+
+El plugin usa `kFault` si su parámetro `require_reference` es `true` (el
+bringup, tras el homing) y en todo `on_configure` después del primero; si no,
+`kAcceptPowerOnPose`. `spark_home` usa `kReport` para el estado y `kHoming` para
+medir y para el homing.
+
+`shift_reference(eje, offset_rad)` mueve el cero de un eje: desde entonces el
+dispositivo reporta su posición más `offset_rad`, y el eje queda referenciado.
+En un SPARK envía `SET_PRIMARY_ENCODER_POSITION` (en rotaciones del motor, con
+`DATA_TYPE` 3) y `CLEAR_FAULTS`; en la muñeca, `SET_WRIST_POSITION`. Solo con
+el driver configurado (no `kReport`) y sin activar; antes espera
+`disable_settle_s` desde el último heartbeat, para que ningún SPARK siga
+habilitado persiguiendo su último setpoint en la cuenta nueva, y después, a que
+la telemetría muestre la posición nueva y el aviso borrado.
 
 `set_current_limit(eje, amperes)` escribe el Smart Current Limit (IDs 59 y 60)
 en RAM, con ACK, solo con el driver configurado y sin activar. Lo usa
-`spark_home` mientras mide.
+`spark_home` mientras busca un tope.
 
 ## Búsqueda de topes (`homing.hpp`)
 
 Sin E/S, para probarla sin CAN:
 
 - `HomingConfig`: el bloque `homing` de `joints.json`, en `JointConfig::homing`
-  (opcional).
+  (opcional), con `stop` (+1, −1; 0 sin tope de homing) y `stop_rad`.
+  `DriverConfig::homing_order` lista los ejes del homing, en orden.
 - `StopSearch(config, direction, lead)`: busca un tope como el homing de una CNC:
   acercamiento rápido, retroceso y acercamiento lento. En cada ciclo,
   `update(posición, corriente, dt)` devuelve el objetivo para el modo Position;

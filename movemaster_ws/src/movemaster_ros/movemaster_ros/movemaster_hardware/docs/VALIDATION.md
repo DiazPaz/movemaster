@@ -1,5 +1,54 @@
 # Validación realizada — 26 de septiembre de 2026
 
+## Homing, fase 2: referencia en el SPARK y homing al arrancar
+
+20 de noviembre de 2026. Linux x86_64, sin CAN.
+
+| Compilación | Resultado |
+|---|---|
+| g++ 13.3, Release, sin ROS | CTest **6/6**. |
+| g++ 13.3, Debug, con AddressSanitizer y UBSan, sin ROS | CTest **6/6**, sin errores de memoria ni comportamiento indefinido. |
+| ROS 2 Jazzy (RoboStack), `colcon build` y `colcon test` de los cinco paquetes | **31 pruebas, 0 fallos**. `movemaster_teleop` no tiene pruebas (`NO TESTS RAN`, como antes). El único aviso de compilación es el `on_init(HardwareInfo)` obsoleto del plugin, previo. |
+
+Qué cambió y cómo se probó:
+
+- **Driver.** `SparkResetPolicy::kHoming` deja los ejes reiniciados sin
+  referencia y sin fallo; `shift_reference()` escribe la referencia en el SPARK
+  (`SET_PRIMARY_ENCODER_POSITION` y `CLEAR_FAULTS`) o en la muñeca
+  (`SET_WRIST_POSITION`) y espera a verla en la telemetría. `driver_fake_bus`:
+  ejes informados, referencia rechazada con el driver activo, posición del
+  encoder en rotaciones del motor, aviso borrado, reinicio posterior como
+  fallo, SPARK que ignora la trama (timeout y fallo) y `kReport` sin
+  referencias. El simulador lleva ahora una cuenta de encoder por SPARK.
+- **Configuración.** `homing.stop`/`stop_rad` y `homing_order`, con sus reglas
+  (`config_and_commissioning`); el `joints.json` del repositorio las cumple.
+- **`spark_home --home`** (`homing_stop_search`), contra un brazo simulado de
+  tres ejes con topes y la muñeca: orden de `homing_order`, referencias iguales
+  a `stop_rad`, muñeca con su postura de encendido, `--pose` con todos los ejes
+  a la vez, solo los ejes reiniciados, nada si todos tienen referencia, ejes
+  nombrados, búsqueda fallida (ese eje y los siguientes sin referencia) y
+  Ctrl+C. También los argumentos de `--home` y `--pose`.
+- **Bringup** (`test_bringup.py`): `homing` por defecto en `true`; con homing
+  solo arranca `spark_home --home --pose <Home de dh.yaml>`, y el resto
+  (`require_reference:=true`) solo si termina con código 0; sin homing o con
+  hardware simulado, arranca todo con `require_reference:=false`.
+- **Launch de punta a punta** sin `can0`: `spark_home` falla (`if_nametoindex:
+  No such device`), no arranca el `controller_manager` y el launch se cierra.
+  Con `use_mock_hardware:=true` arrancan los tres controladores sin homing.
+
+Por probar en el robot, eje por eje y con el paro a la mano:
+
+1. `spark_home --home joint_2` (y cada eje): sentido de búsqueda, corriente al
+   topar y que la posición después del homing coincida con `stop_rad` menos el
+   retroceso.
+2. Calibrar `stop_rad`: llevar el eje a q = 0 y medir con un nivel.
+3. `--home` completo hasta Home, y el bringup con el servicio. Que el
+   `controller_manager`, al configurar (reescribe sensor, factores de
+   conversión y telemetría en RAM), conserve la posición que dejó el homing:
+   `/joint_states` debe mostrar Home, no 0.
+4. Un paro de emergencia con el nodo activo: el nodo debe enclavar el fallo y,
+   al relanzar, el homing debe referenciar otra vez los ejes.
+
 ## Homing, fase 1: correcciones de la revisión
 
 12 de noviembre de 2026. Linux x86_64, CMake 3.28, sin ROS ni CAN.

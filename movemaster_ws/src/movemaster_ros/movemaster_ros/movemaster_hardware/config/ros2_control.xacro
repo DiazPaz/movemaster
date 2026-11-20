@@ -34,10 +34,12 @@
 
   <!-- use_mock_hardware:=true swaps the plugin for mock_components/GenericSystem, with the
        same interfaces, to run the controllers without CAN or motors. initial_positions maps
-       joint names to the radians the mock starts at. -->
+       joint names to the radians the mock starts at. require_reference:=true (after the
+       homing of spark_home) makes the plugin refuse a joint without reference, instead of
+       taking the pose it powered up in. -->
   <xacro:macro name="movemaster_ros2_control"
                params="name spec_path joint_config_path can_interface:=can0 use_mock_hardware:=false
-                       initial_positions:=${dict()}">
+                       require_reference:=false initial_positions:=${dict()}">
     <xacro:property name="config" value="${xacro.load_yaml(joint_config_path)}"/>
     <xacro:property name="joints" value="${config['joints']}"/>
     <ros2_control name="${name}" type="system">
@@ -50,6 +52,7 @@
           <param name="spec_path">${spec_path}</param>
           <param name="joint_config_path">${joint_config_path}</param>
           <param name="can_interface">${can_interface}</param>
+          <param name="require_reference">${str(require_reference).lower()}</param>
         </xacro:unless>
       </hardware>
       <xacro:movemaster_control_joints joints="${joints}" names="${list(joints)}"

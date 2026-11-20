@@ -198,6 +198,7 @@ classDiagram
     -vector~unique_ptr~SparkMAXMotionProtocol~~ protocols_
     -vector~JointState~ states_
     -vector~JointControl~ controls_
+    -vector~bool~ referenced_
     -vector~optional~time_point~~ status0_at_
     -vector~optional~time_point~~ status1_at_
     -vector~optional~time_point~~ status2_at_
@@ -211,6 +212,8 @@ classDiagram
     -const CANPacket heartbeat_
     +MoveMasterDriver(DriverConfig config, unique_ptr~CANBus~ bus)
     +configure(SparkResetPolicy policy) vector~string~
+    +referenced(size_t joint) bool
+    +shift_reference(size_t joint, double offset_rad) void
     +activate() void
     +deactivate() void
     +read() void
@@ -231,6 +234,7 @@ classDiagram
     -feedback_fresh() bool
     -wait_feedback() void
     -wait_status1(vector~size_t~ joints, bool cleared) void
+    -wait_reference(size_t joint, double target) void
     -check_cycle_gap() void
     -checked_target(double radians, JointConfig joint) double
   }
@@ -246,6 +250,7 @@ classDiagram
     +int status_period_ms
     +Json parameter_layout
     +vector~JointConfig~ joints
+    +vector~string~ homing_order
   }
   class JointConfig {
     <<struct>>
@@ -287,6 +292,7 @@ classDiagram
     <<enumeration>>
     kAcceptPowerOnPose
     kFault
+    kHoming
     kReport
   }
   class HomingConfig {
@@ -298,6 +304,8 @@ classDiagram
     +double slow_speed_rad_s
     +double backoff_rad
     +double max_travel_rad
+    +int stop
+    +double stop_rad
   }
   class StopSearch {
     -HomingConfig config_

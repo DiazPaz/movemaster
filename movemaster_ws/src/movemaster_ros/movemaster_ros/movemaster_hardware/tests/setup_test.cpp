@@ -160,7 +160,13 @@ void homing_block() {
     mutate(copy["joints"]["joint_1"]["homing"]);
     rejects_with([&] { load(copy); }, expected);
   };
-  broken([](Json &h) { h["stop_rad"] = 1.0; }, "homing.stop_rad is not a known key");
+  check(h.stop == 0, "A homing block without stop got one");
+  broken([](Json &h) { h["stop_rad"] = 1.0; }, "homing.stop and stop_rad go together");
+  broken([](Json &h) { h["stop"] = "-"; }, "homing.stop and stop_rad go together");
+  broken([](Json &h) { h["stop"] = "up"; h["stop_rad"] = 1.0; }, "homing.stop must be one of: +, -");
+  broken([](Json &h) { h["stop"] = "+"; h["stop_rad"] = "1"; }, "homing.stop_rad must be a number");
+  // Limits are +-2 in the fixture: backoff_rad (0.05) inside the + stop at 2.1 is still outside.
+  broken([](Json &h) { h["stop"] = "+"; h["stop_rad"] = 2.1; }, "backoff_rad away from stop_rad");
   broken([](Json &h) { h.erase("backoff_rad"); }, "homing.backoff_rad is missing");
   broken([](Json &h) { h["current_limit_a"] = 6.5; }, "homing.current_limit_a must be an integer");
   broken([](Json &h) { h["current_limit_a"] = 41; }, "current_limit_a must be in 1..spark.current_limit_a");
@@ -175,6 +181,27 @@ void homing_block() {
   auto wrong = data;
   wrong["joints"]["joint_1"]["homing"] = 3;
   rejects_with([&] { load(wrong); }, "homing must be an object");
+
+  // The stop spark_home --home references against, and the order of the joints it homes.
+  j["homing"]["stop"] = "-";
+  j["homing"]["stop_rad"] = -1.9;
+  data["homing_order"] = {"joint_1"};
+  const auto homed = load(data);
+  check(homed.joints.at(0).homing->stop == -1 && homed.joints.at(0).homing->stop_rad == -1.9 &&
+      homed.homing_order == std::vector<std::string>{"joint_1"}, "stop, stop_rad or homing_order not loaded");
+  check(load(Json::parse(kFixture)).homing_order.empty(), "homing_order appeared without being written");
+  const auto order = [&](Json names, const std::string &expected) {
+    auto copy = data;
+    copy["homing_order"] = names;
+    rejects_with([&] { load(copy); }, expected);
+  };
+  order("joint_1", "joints.json: homing_order must be a list of joint names");
+  order({"joint_9"}, "homing_order: joint_9 is not a configured joint");
+  order({"joint_1", "joint_1"}, "homing_order: joint_1 appears twice");
+  auto unstopped = data;
+  unstopped["joints"]["joint_1"]["homing"].erase("stop");
+  unstopped["joints"]["joint_1"]["homing"].erase("stop_rad");
+  rejects_with([&] { load(unstopped); }, "homing_order: joint_1 needs homing.stop and homing.stop_rad");
 }
 bool sent_frame(const SimulatedSparkBus &bus, const char *name) {
   for (const auto &p : bus.sent)

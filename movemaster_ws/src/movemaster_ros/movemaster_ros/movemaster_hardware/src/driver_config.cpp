@@ -66,7 +66,7 @@ SlotConfig load_slot(const Json &s) {
 }
 HomingConfig load_homing(const Json &h) {
   only_keys(h, {"current_limit_a", "stall_current_a", "stall_time_s", "fast_speed_rad_s", "slow_speed_rad_s",
-      "backoff_rad", "max_travel_rad"});
+      "backoff_rad", "max_travel_rad", "stop", "stop_rad"});
   HomingConfig homing;
   homing.current_limit_a = integer(h, "current_limit_a");
   homing.stall_current_a = number(h, "stall_current_a");
@@ -75,6 +75,13 @@ HomingConfig load_homing(const Json &h) {
   homing.slow_speed_rad_s = number(h, "slow_speed_rad_s");
   homing.backoff_rad = number(h, "backoff_rad");
   homing.max_travel_rad = number(h, "max_travel_rad");
+  // Optional until the stops are measured, and then both: which stop and where it is.
+  if (h.contains("stop") != h.contains("stop_rad"))
+    throw std::invalid_argument("stop and stop_rad go together");
+  if (h.contains("stop")) {
+    homing.stop = choice<int>(h, "stop", {{"+", 1}, {"-", -1}});
+    homing.stop_rad = number(h, "stop_rad");
+  }
   return homing;
 }
 // The wrist of the gripper's ESP32: positions in degrees, with the reduction in its firmware.
@@ -162,9 +169,16 @@ DriverConfig load_driver_config(const std::filesystem::path &config_path,
   try {
     if (!data.is_object()) throw std::invalid_argument("the file must hold a JSON object");
     only_keys(data, {"period_s", "status_period_ms", "feedback_timeout_s", "response_timeout_s",
-        "disable_settle_s", "max_cycle_gap_s", "parameter_layout", "joints", "gripper"});
+        "disable_settle_s", "max_cycle_gap_s", "parameter_layout", "joints", "gripper", "homing_order"});
   } catch (const std::exception &e) {
     throw std::invalid_argument("joints.json: " + std::string(e.what()));
+  }
+  std::vector<std::string> homing_order;
+  if (data.contains("homing_order")) {
+    const auto &names = data.at("homing_order");
+    if (!names.is_array() || !std::all_of(names.begin(), names.end(), [](const Json &n) { return n.is_string(); }))
+      throw std::invalid_argument("joints.json: homing_order must be a list of joint names");
+    for (const auto &name : names) homing_order.push_back(name.get<std::string>());
   }
   std::optional<GripperConfig> gripper;
   if (data.contains("gripper")) {
@@ -191,6 +205,7 @@ DriverConfig load_driver_config(const std::filesystem::path &config_path,
   config.status_period_ms = data.value("status_period_ms", config.status_period_ms);
   config.parameter_layout = data.value("parameter_layout", Json(nullptr));
   config.gripper = gripper;
+  config.homing_order = homing_order;
   std::vector<std::string> order = joint_order;
   if (order.empty()) for (const auto &entry : joints.items()) order.push_back(entry.key());
   if (order.size() != joints.size() || std::set<std::string>(order.begin(), order.end()).size() != order.size())

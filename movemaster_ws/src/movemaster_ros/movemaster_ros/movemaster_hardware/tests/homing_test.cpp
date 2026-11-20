@@ -147,6 +147,7 @@ struct FakeArm {
   void activate() { enabled = true; }
   void deactivate() noexcept { enabled = false; }
   const std::vector<JointState> &states() const { return state; }
+  bool referenced(std::size_t) const { return true; }
   void set_control(std::size_t index, ControlMode mode, int slot) { control.at(index) = {mode, slot}; }
   void set_current_limit(std::size_t index, int amps) {
     check(index == 0 && !enabled, "Current limit changed on the wrong joint or while active");
@@ -206,18 +207,210 @@ void measurement_failures(const char *spec) {
   rejects([&] { spark_home::measure(faulty, config, 0, {1}, fault); }, "Driver fault swallowed");
   check(faulty.limits == std::vector<int>{6, 40} && !faulty.enabled, "Not restored after a driver fault");
 }
+// Three SPARK joints with a stop each, and the gripper wrist (joint_4), which has none.
+DriverConfig home_config(const char *spec) {
+  auto config = config_with_gripper(spec, 3);  // period_s 0.005, the shortest the driver takes
+  const std::vector<std::pair<int, double>> stops{{-1, -1.0}, {-1, -2.0}, {1, 1.5}};
+  for (std::size_t i = 0; i < stops.size(); ++i) {
+    auto &joint = config.joints[i];
+    joint.min_position_rad = -2.5;
+    joint.max_position_rad = 2.5;
+    joint.max_following_error_rad = 0.1;
+    joint.homing = homing();
+    joint.homing->stop = stops[i].first;
+    joint.homing->stop_rad = stops[i].second;
+  }
+  config.homing_order = {"joint_2", "joint_3", "joint_1"};
+  validate_driver_config(config);
+  return config;
+}
 void arguments(const char *spec) {
   auto config = config_for(spec, 2);
   config.joints[0].homing = homing();
   using Args = std::vector<std::string>;
-  check(!spark_home::parse(config, {}).joint, "Status mode not parsed");
+  check(!spark_home::parse(config, {}).joint && !spark_home::parse(config, {}).home, "Status mode not parsed");
   const auto both = spark_home::parse(config, Args{"--measure", "joint_1"});
   check(both.joint == 0u && both.directions == std::vector<int>{1, -1}, "Both stops not requested");
   check(spark_home::parse(config, Args{"--measure", "joint_1", "-"}).directions == std::vector<int>{-1}, "One side");
   rejects_with([&] { spark_home::parse(config, Args{"--measure", "joint_9"}); }, "Joint desconocido");
   rejects_with([&] { spark_home::parse(config, Args{"--measure", "joint_2"}); }, "no tiene bloque homing");
   rejects_with([&] { spark_home::parse(config, Args{"--measure", "joint_1", "x"}); }, "El sentido es");
-  rejects_with([&] { spark_home::parse(config, Args{"--home"}); }, "Se espera --measure");
+  rejects_with([&] { spark_home::parse(config, Args{"--measur", "joint_1"}); }, "Se espera --measure");
+  rejects_with([&] { spark_home::parse(config, Args{"--home"}); }, "no tiene homing_order");
+
+  const auto homed = home_config(spec);
+  const auto all = spark_home::parse(homed, Args{"--home"});
+  check(all.home && all.named.empty() && all.pose.empty() && !all.joint, "--home not parsed");
+  const auto some = spark_home::parse(homed, Args{"--home", "joint_3", "joint_1", "--pose", "joint_1=0,joint_4=-0.3"});
+  check(some.named == std::vector<std::size_t>{2, 0} &&
+      some.pose == std::map<std::size_t, double>{{0, 0.0}, {3, -0.3}}, "--home with joints and --pose not parsed");
+  const auto broken = [&](const Args &args, const std::string &expected) {
+    rejects_with([&] { spark_home::parse(homed, args); }, expected);
+  };
+  broken({"--home", "joint_4"}, "joint_4 no tiene homing.stop");
+  broken({"--home", "joint_1", "joint_1"}, "joint_1 repetido");
+  broken({"--home", "--pose"}, "Se espera una sola --pose");
+  broken({"--home", "--pose", "joint_1=0", "--pose", "joint_2=0"}, "Se espera una sola --pose");
+  broken({"--home", "--pose", "joint_1"}, "--pose espera joint_N=rad");
+  broken({"--home", "--pose", "joint_1=x"}, "joint_1=x no es un angulo");
+  broken({"--home", "--pose", "joint_1=0.5rad"}, "no es un angulo");
+  broken({"--home", "--pose", "joint_1=nan"}, "no es un angulo");
+  broken({"--home", "--pose", "joint_1=3"}, "joint_1 = 3 rad esta fuera de");
+  broken({"--home", "--pose", "joint_1=0,joint_1=0.1"}, "joint_1 repetido");
+  broken({"--home", "--pose", "joint_7=0"}, "Joint desconocido en JOINTS.json: joint_7");
+}
+
+// Driver-like arm for spark_home::home: each joint follows its target between its stops and
+// counts from where it powered up until shift_reference, which moves its whole scale.
+struct FakeRobot {
+  std::vector<Joint> joints;
+  std::vector<JointState> state;
+  std::vector<JointControl> control;
+  std::vector<bool> reference;
+  std::vector<std::string> calls;  // set_current_limit and shift_reference, in order
+  bool enabled = false;
+  int activations = 0;
+  explicit FakeRobot(std::vector<Joint> powered)
+      : joints(std::move(powered)), state(joints.size()),
+        control(joints.size(), {ControlMode::kMAXMotionPosition, 0}), reference(joints.size(), false) {
+    read();
+  }
+  void read() {
+    for (std::size_t i = 0; i < joints.size(); ++i) {
+      state[i].position = joints[i].position;
+      state[i].current = joints[i].current;
+    }
+  }
+  void activate() {
+    check(!enabled, "Activated twice");
+    enabled = true;
+    ++activations;
+    read();
+  }
+  void deactivate() noexcept { enabled = false; }
+  const std::vector<JointState> &states() const { return state; }
+  bool referenced(std::size_t index) const { return reference.at(index); }
+  void set_control(std::size_t index, ControlMode mode, int slot) {
+    check(index < 3, "Control mode set on the gripper");
+    control.at(index) = {mode, slot};
+  }
+  void set_current_limit(std::size_t index, int amps) {
+    check(index < 3 && !enabled, "Current limit changed on the gripper or while active");
+    joints.at(index).limit = amps;
+    calls.push_back("limit " + std::to_string(index) + " " + std::to_string(amps));
+  }
+  void shift_reference(std::size_t index, double offset) {
+    check(!enabled, "Reference shifted while active");
+    auto &joint = joints.at(index);
+    joint.position += offset;
+    joint.lower += offset;
+    joint.upper += offset;
+    reference.at(index) = true;
+    read();
+    calls.push_back("shift " + std::to_string(index));
+  }
+  void write(const std::vector<double> &targets) {
+    check(enabled, "Write while disabled");
+    for (std::size_t i = 0; i < joints.size(); ++i) {
+      check(control[i].mode != ControlMode::kPosition || std::abs(targets.at(i) - state[i].position) <= 0.1,
+          "Target beyond max_following_error_rad on joint " + std::to_string(i));
+      joints[i].follow(targets[i]);
+    }
+  }
+};
+// Each joint powers up away from Home and counts 0 there: its stops are where they really are
+// minus that power-up pose. The wrist (index 3) has no stops.
+FakeRobot powered_up_robot() {
+  const auto joint = [](double lower, double upper, double powered_at) {
+    Joint j;
+    j.lower = lower - powered_at;
+    j.upper = upper - powered_at;
+    return j;
+  };
+  return FakeRobot({joint(-1.0, 1.0, 0.2), joint(-2.0, 0.5, -1.6), joint(-0.1, 1.5, 1.2), joint(-10, 10, 0)});
+}
+bool near(double value, double expected, double tolerance) { return std::abs(value - expected) <= tolerance; }
+
+// Every joint restarted: the wrist takes its power-up pose, the others find their stop in
+// homing_order, and the arm goes to the pose with all joints at once.
+void homes_an_arm(const char *spec) {
+  const auto config = home_config(spec);
+  auto robot = powered_up_robot();
+  spark_home::Request request;
+  request.home = true;
+  request.pose = {{0, 0.0}, {1, -1.5708}, {2, 1.0}, {3, 0.3}};
+  std::ostringstream out;
+  check(spark_home::home(robot, config, request, out) == 0, "Homing failed: " + out.str());
+  check(robot.calls == std::vector<std::string>{"shift 3", "limit 1 6", "shift 1", "limit 1 40", "limit 2 6",
+      "shift 2", "limit 2 40", "limit 0 6", "shift 0", "limit 0 40"}, "Homing order: " + out.str());
+  // In the true scale now: the stops are where joints.json says.
+  check(near(robot.joints[1].lower, -2.0, 1e-9) && near(robot.joints[2].upper, 1.5, 1e-9) &&
+      near(robot.joints[0].lower, -1.0, 1e-9), "References do not match stop_rad");
+  for (const auto &[index, goal] : request.pose)
+    check(near(robot.joints[index].position, goal, 0.0125), "Joint " + std::to_string(index) + " not at the pose");
+  check(!robot.enabled && robot.activations == 4, "Not disabled at the end, or activated more than once per step");
+  for (std::size_t i = 0; i < 3; ++i)
+    check(robot.control[i].mode == ControlMode::kMAXMotionPosition && robot.joints[i].limit == 40,
+        "Control mode or current limit not restored");
+  check(contains(out.str(), "joint_4: sin tope que buscar") && contains(out.str(), "joint_2: buscando el tope -") &&
+      contains(out.str(), "Homing terminado"), out.str());
+}
+// Only the joints that lost their reference are homed; with every reference kept nothing moves.
+void homes_only_what_restarted(const char *spec) {
+  const auto config = home_config(spec);
+  spark_home::Request request;
+  request.home = true;
+  request.pose = {{0, 0.0}, {2, 1.0}};
+
+  auto kept = powered_up_robot();
+  kept.reference = {true, true, true, true};
+  std::ostringstream quiet;
+  check(spark_home::home(kept, config, request, quiet) == 0 && kept.calls.empty() && kept.activations == 0 &&
+      contains(quiet.str(), "conservan su referencia"), "A referenced arm moved: " + quiet.str());
+
+  auto elbow = powered_up_robot();
+  elbow.reference = {true, true, false, true};
+  std::ostringstream out;
+  check(spark_home::home(elbow, config, request, out) == 0, "Homing failed: " + out.str());
+  check(elbow.calls == std::vector<std::string>{"limit 2 6", "shift 2", "limit 2 40"}, "Searched more than joint_3");
+  check(near(elbow.joints[0].position, 0.0, 0.0125) && near(elbow.joints[2].position, 1.0, 0.0125), "Pose not reached");
+
+  // Named joints are homed even if referenced, and nothing else gets a reference.
+  auto named = powered_up_robot();
+  named.reference = {true, false, true, false};
+  request.named = {0};
+  request.pose = {{0, 0.0}, {1, -1.5708}};
+  std::ostringstream one;
+  rejects_with([&] { spark_home::home(named, config, request, one); },
+      "joint_2 no tiene referencia y no se busca su tope");
+  check(named.calls.empty() && named.activations == 0, "Moved before refusing the pose");
+  request.pose.clear();
+  check(spark_home::home(named, config, request, one) == 0 &&
+      named.calls == std::vector<std::string>{"limit 0 6", "shift 0", "limit 0 40"} && !named.reference[3],
+      "Named homing: " + one.str());
+}
+// A failed search leaves that joint and the next ones without reference, and the arm disabled.
+void homing_failures(const char *spec) {
+  const auto config = home_config(spec);
+  spark_home::Request request;
+  request.home = true;
+  request.pose = {{0, 0.0}};
+
+  auto loose = powered_up_robot();
+  loose.joints[1].lower = -10;  // no stop within max_travel_rad
+  std::ostringstream out;
+  check(spark_home::home(loose, config, request, out) == 1 && contains(out.str(), "max_travel_rad") &&
+      contains(out.str(), "joint_2 queda sin referencia"), out.str());
+  check(loose.calls == std::vector<std::string>{"shift 3", "limit 1 6", "limit 1 40"} && !loose.enabled &&
+      !loose.reference[1] && !loose.reference[2] && !loose.reference[0], "Went on after a failed search");
+
+  auto stopped = powered_up_robot();
+  std::ostringstream interrupted;
+  spark_home::stop_requested = 1;
+  const int code = spark_home::home(stopped, config, request, interrupted);
+  spark_home::stop_requested = 0;
+  check(code == 130 && !stopped.enabled && stopped.joints[1].limit == 40 && !stopped.reference[1],
+      "Interruption not handled: " + interrupted.str());
 }
 // The status names the SPARKs that restarted, against the same driver the node uses, and leaves
 // their HAS_RESET set: the controller_manager still takes (and logs) the power-up pose.
@@ -246,7 +439,7 @@ void status(const char *spec) {
   check(kept.configure(SparkResetPolicy::kReport).empty(), "A SPARK that kept its reference was reported");
   std::ostringstream out;
   spark_home::status(kept, config, out);
-  check(contains(out.str(), "Ningun SPARK se reinicio"), "Status: " + out.str());
+  check(contains(out.str(), "Ningun eje se reinicio"), "Status: " + out.str());
 }
 }  // namespace
 int main(int argc, char **argv) {
@@ -264,9 +457,13 @@ int main(int argc, char **argv) {
     measurement_failures(argv[1]);
     arguments(argv[1]);
     status(argv[1]);
+    homes_an_arm(argv[1]);
+    homes_only_what_restarted(argv[1]);
+    homing_failures(argv[1]);
     std::cout << "PASS: stop search (both stops, moving current, false stop, travel limit, held back without "
         "stall), "
-        "spark_home measurement and restore, arguments, status.\n";
+        "spark_home measurement and restore, arguments, status, and homing (order, references, pose, only "
+        "what restarted, failures).\n";
     return 0;
   } catch (const std::exception &e) { std::cerr << "FAIL: " << e.what() << '\n'; return 1; }
 }

@@ -1,6 +1,7 @@
 """Nodo controller_manager de MoveMaster (ros2_control, ROS 2 Jazzy).
 
     ros2 launch movemaster_control movemaster_control.launch.py [use_mock_hardware:=true]
+        [require_reference:=true]
 
 Arranca:
   robot_state_publisher  publica /robot_description (movemaster_description), de donde
@@ -48,6 +49,11 @@ def generate_launch_description():
             'can_interface', default_value='can0',
             description='Interfaz SocketCAN de los SPARK MAX.'),
         DeclareLaunchArgument(
+            'require_reference', default_value='false', choices=['true', 'false'],
+            description='true: un eje sin referencia (sin homing) es una falla; false: toma '
+                        'como referencia la postura en que se encendió. El bringup pone true '
+                        'después de su homing.'),
+        DeclareLaunchArgument(
             'controllers_file',
             default_value=PathJoinSubstitution([share, 'config', 'movemaster_controllers.yaml']),
             description='Parámetros del controller_manager y de los controladores.'),
@@ -55,8 +61,8 @@ def generate_launch_description():
             'description_file',
             default_value=PathJoinSubstitution(
                 [FindPackageShare('movemaster_description'), 'urdf', 'movemaster.urdf.xacro']),
-            description='Xacro del robot; recibe joint_config, can_interface y '
-                        'use_mock_hardware.'),
+            description='Xacro del robot; recibe joint_config, can_interface, '
+                        'use_mock_hardware y require_reference.'),
         OpaqueFunction(function=_launch_setup),
     ])
 
@@ -75,6 +81,7 @@ def _launch_setup(context):
         'joint_config': str(joint_config),
         'can_interface': arg('can_interface'),
         'use_mock_hardware': arg('use_mock_hardware'),
+        'require_reference': arg('require_reference'),
     }).toxml()
     derived_parameters = _write_parameters({
         'controller_manager': {'ros__parameters': {'update_rate': update_rate}},

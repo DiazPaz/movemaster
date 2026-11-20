@@ -264,6 +264,65 @@ void current_limit(const char *spec) {
   rejects_with([&] { driver.set_current_limit(1, 40); }, "only while configured and not active");
   check(driver.active() && driver.fault().empty(), "A refused current limit tripped the driver");
 }
+// spark_home --home: a restarted joint stays unreferenced, and its restart is no fault, until
+// shift_reference writes its new count into the SPARK encoder (or the gripper's step count).
+void homing_reference(const char *spec) {
+  const auto config = config_with_gripper(spec, 2);  // joint_3 is the wrist
+  auto bus = std::make_unique<SimulatedSparkBus>(config);
+  auto *spy = bus.get();
+  spy->has_reset[1] = false;  // joint_1 kept its reference
+  spy->gripper.degrees = 12.5;
+  MoveMasterDriver driver(config, std::move(bus));
+  check(driver.configure(SparkResetPolicy::kHoming) == std::vector<std::string>{"joint_2", "joint_3"},
+      "Restarts not reported");
+  check(driver.referenced(0) && !driver.referenced(1) && !driver.referenced(2), "Wrong joints referenced");
+  check(spy->has_reset[2] && !spy->gripper.referenced, "kHoming cleared a restart");
+  driver.activate();
+  pause_cycle(); driver.read();
+  check(driver.states()[1].spark_reset && driver.states()[2].spark_reset, "Unreferenced restarts not kept in the states");
+  rejects_with([&] { driver.shift_reference(1, 0.5); }, "not active");
+  check(driver.fault().empty(), "A refused shift tripped the driver");
+
+  driver.deactivate();
+  const auto &shoulder = config.joints[1];
+  const double before = driver.states()[1].position;
+  spy->sent.clear();
+  driver.shift_reference(1, 0.5);
+  check(spy->names_sent_to(2) == std::vector<std::string>{"SET_PRIMARY_ENCODER_POSITION", "CLEAR_FAULTS"} &&
+      spy->names_sent_to(1).empty(), "Reference frames");
+  check(std::abs(spy->encoder[2] - MoveMasterDriver::radians_to_rotations(before + 0.5, shoulder)) < 1e-5,
+      "Encoder not set to the shifted position in motor rotations");
+  check(driver.referenced(1) && !spy->has_reset[2] && !driver.states()[1].spark_reset &&
+      std::abs(driver.states()[1].position - (before + 0.5)) < 1e-5, "Shifted reference not reported");
+
+  const auto &wrist = config.joints[2];
+  const double wrist_before = driver.states()[2].position;
+  driver.shift_reference(2, -0.2);
+  check(spy->gripper.referenced && driver.referenced(2) &&
+      std::abs(spy->gripper.degrees - MoveMasterDriver::radians_to_wrist_degrees(wrist_before - 0.2, wrist)) < 1e-4 &&
+      std::abs(driver.states()[2].position - (wrist_before - 0.2)) < 1e-6, "Wrist reference not shifted");
+
+  // Referenced now: a restart is a fault again.
+  driver.activate();
+  spy->has_reset[2] = true;
+  std::this_thread::sleep_for(std::chrono::milliseconds(110));  // its next STATUS_1
+  rejects_with([&] { driver.read(); }, "joint_2: the SPARK restarted");
+
+  // A SPARK that ignores the new position: timeout and fault, nothing referenced.
+  auto deaf = std::make_unique<SimulatedSparkBus>(config);
+  deaf->set_encoder = false;
+  MoveMasterDriver ignored(config, std::move(deaf));
+  ignored.configure(SparkResetPolicy::kHoming);
+  rejects_with([&] { ignored.shift_reference(0, 0.5); },
+      "SET_PRIMARY_ENCODER_POSITION and CLEAR_FAULTS did not take effect on CAN 1");
+  check(!ignored.referenced(0) && !ignored.fault().empty(), "An ignored reference was accepted");
+  // kReport never references anything.
+  auto report = std::make_unique<SimulatedSparkBus>(config);
+  MoveMasterDriver reporter(config, std::move(report));
+  reporter.configure(SparkResetPolicy::kReport);
+  check(!reporter.referenced(0), "kReport referenced a joint");
+  rejects_with([&] { reporter.shift_reference(0, 0.5); }, "not with kReport");
+}
 // The gripper wrist next to two SPARKs: profile and reference at setup, both heartbeats,
 // degrees on the bus and radians in the states, limits, deactivation.
 void gripper_session(const char *spec) {
@@ -540,6 +599,7 @@ int main(int argc, char **argv) {
     control_modes(argv[1]);
     position_at_activation(argv[1]);
     spark_restarts(argv[1]);
+    homing_reference(argv[1]);
     current_limit(argv[1]);
     lost_replies(argv[1]);
     gripper_session(argv[1]);
@@ -588,7 +648,8 @@ int main(int argc, char **argv) {
     }
     std::cout << "PASS: 1/3/6 axes, conversions, ACK checks, activation order, limits, paced writes, "
         "baseline and slots in RAM, Position/MAXMotion per joint, following error, "
-        "stale/malformed feedback, TX failure, loop gap, SPARK restarts, current limit, lost replies, "
+        "stale/malformed feedback, TX failure, loop gap, SPARK restarts, homing references, current limit, "
+        "lost replies, "
         "and the gripper wrist: profile, reference, heartbeats, units, limits, restarts and watchdog; "
         "and the gripper servo: opening to angle, only on change, retried, state, limits and validation; "
         "and a full TX queue: cycles dropped, then tripped after max_cycle_gap_s.\n";

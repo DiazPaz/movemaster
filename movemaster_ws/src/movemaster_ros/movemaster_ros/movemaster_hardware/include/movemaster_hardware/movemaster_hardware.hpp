@@ -28,8 +28,11 @@ class MovemasterHardware final : public hardware_interface::SystemInterface {
   bool has_gripper_ = false;
   double gripper_opening_ = std::numeric_limits<double>::quiet_NaN();
   double gripper_command_ = std::numeric_limits<double>::quiet_NaN();
-  // The first configure takes each SPARK's power-up pose as its reference (Home, by convention);
-  // a SPARK restart found by a later one means the position was lost.
+  // require_reference (the bringup sets it after spark_home --home): a joint without reference is
+  // a fault, from the first configure on. Without it, the first configure takes the pose each
+  // joint powered up in as its reference (zero_offset_rad there); a restart found by a later one
+  // means the position was lost.
+  bool require_reference_ = false;
   bool reference_taken_ = false;
   // Cycles the driver cut short because the CAN TX queue was full, as last warned about.
   long tx_queue_full_warned_ = 0;

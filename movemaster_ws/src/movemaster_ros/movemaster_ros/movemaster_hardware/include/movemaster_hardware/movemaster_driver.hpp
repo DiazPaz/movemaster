@@ -59,6 +59,8 @@ struct DriverConfig {
   Json parameter_layout = nullptr;
   std::vector<JointConfig> joints;
   std::optional<GripperConfig> gripper;
+  // spark_home --home searches the stops of these joints, in this order (homing.stop of each).
+  std::vector<std::string> homing_order;
 };
 struct JointState {
   double position = std::numeric_limits<double>::quiet_NaN();  // rad
@@ -81,11 +83,16 @@ DriverConfig load_driver_config(const std::filesystem::path &config_path,
 void validate_driver_config(const DriverConfig &config);
 
 // A SPARK keeps its encoder count while powered. After a restart (power-up, emergency stop) it
-// counts from where it powered up, and the joint is at zero_offset_rad only if that was Home.
-// The gripper's ESP32 does the same with its step count. The policies apply to both.
+// counts from where it powered up, which reads as zero_offset_rad, until spark_home --home writes
+// it the position of a measured stop (shift_reference). The gripper's ESP32 does the same with its
+// step count. The policies apply to both. A joint is referenced while its count is trusted: a
+// restart of a referenced joint is a fault in read().
 enum class SparkResetPolicy {
-  kAcceptPowerOnPose,  // the pose at power-up is the reference, as when starting in Home
-  kFault,              // a restart is a fault: the position was lost mid-session
+  kAcceptPowerOnPose,  // the pose at power-up is the reference: every joint is referenced
+  kFault,              // a restart is a fault: the position was lost, or never homed
+  // spark_home --home: a restarted joint stays unreferenced, with its flag set, until
+  // shift_reference(); activate() is allowed, to search its stop.
+  kHoming,
   // Only report restarts (spark_home's status): HAS_RESET stays set for whoever configures next,
   // read() leaves it in the states instead of failing, and activate() is refused.
   kReport,
@@ -98,8 +105,14 @@ class MoveMasterDriver {
   explicit MoveMasterDriver(DriverConfig config, std::unique_ptr<CANBus> bus = nullptr);
   ~MoveMasterDriver() = default;
   // Returns the joints whose SPARK restarted; with kAcceptPowerOnPose their restart is cleared,
-  // so a later one shows up in read() as a fault. kFault throws instead; kReport keeps it.
+  // so a later one shows up in read() as a fault. kFault throws instead; kHoming and kReport keep it.
   std::vector<std::string> configure(SparkResetPolicy policy = SparkResetPolicy::kAcceptPowerOnPose);
+  bool referenced(std::size_t joint) const { return referenced_.at(joint); }
+  // The device (SPARK encoder, gripper step count) reports from now on the joint's position plus
+  // offset_rad, and the joint is referenced: its restart flag is cleared. Only while configured
+  // (not kReport) and not active; it first waits disable_settle_s after the last heartbeat, so
+  // that no SPARK is still enabled to chase its last setpoint in the shifted count.
+  void shift_reference(std::size_t joint, double offset_rad);
   void activate();
   void deactivate() noexcept;
   void read();
@@ -146,6 +159,7 @@ class MoveMasterDriver {
   bool has_spark_ = false;
   std::vector<JointState> states_;
   std::vector<JointControl> controls_;
+  std::vector<bool> referenced_;
   // A gripper joint has only STATUS_0: position, restart and heartbeat in one frame.
   std::vector<std::optional<Clock::time_point>> status0_at_, status1_at_, status2_at_;
   // Each joint's STATUS_0/1/2 arbitration IDs, resolved once: receive() checks every frame.
@@ -169,6 +183,8 @@ class MoveMasterDriver {
   // Waits for the frame with each joint's restart flag (a SPARK's STATUS_1, the gripper's
   // STATUS_0) received after the call; with cleared, also for the flag to be off.
   void wait_status1(const std::vector<std::size_t> &joints, bool cleared);
+  // Waits for the joint to report position near target and its restart flag off.
+  void wait_reference(std::size_t joint, double target);
   void check_cycle_gap() const;
   double checked_target(double radians, const JointConfig &joint) const;
   double checked_wrist_target(double radians, const JointConfig &joint) const;
