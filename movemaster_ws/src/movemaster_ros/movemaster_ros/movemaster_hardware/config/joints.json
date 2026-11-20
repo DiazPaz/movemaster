@@ -8,12 +8,12 @@
   "joints": {  
      "joint_1": {
       "can_id": 1,
-      "gear_ratio": 224.0,
+      "gear_ratio": 85.49,
       "direction": 1,
       "zero_offset_rad": 0,
       "min_position_rad": -5.0,
       "max_position_rad": 5.0,
-      "max_velocity_rad_s": 100,
+      "max_velocity_rad_s": 1,
       "spark": {
         "motor_type": "brushless",
         "idle_mode": "brake",
@@ -22,30 +22,30 @@
       "control": {
         "mode": "maxmotion",
         "slot": 0,
-        "max_following_error_rad": 0.5
+        "max_following_error_rad": 0.1
       },
       "slots": {
         "0": {
           "pidf": {
-            "p": 0.25,
-            "i": 0.001,
-            "d": 0,
+            "p": 0.2,
+            "i": 0.000002,
+            "d": 0.001,
             "f": 0
           },
           "maxmotion": {
             "cruise_velocity": 500,
             "max_acceleration":1000,
-            "allowed_profile_error": 0.3
+            "allowed_profile_error": 0.15
           }
         }
       },
       "homing": {
-        "current_limit_a": 2,
-        "stall_current_a": 1,
-        "stall_time_s": 0.2,
-        "fast_speed_rad_s": 0.1,
-        "slow_speed_rad_s": 0.02,
-        "backoff_rad": 0.125,
+        "current_limit_a": 1,
+        "stall_current_a": 0.05,
+        "stall_time_s": 0.1,
+        "fast_speed_rad_s": 0.4,
+        "slow_speed_rad_s": 0.2,
+        "backoff_rad": 0.03,
         "max_travel_rad": 6.3
       }
     },   
@@ -71,7 +71,7 @@
         "0": {
           "pidf": {
             "p": 0.18,
-            "i": 0.002,
+            "i": 0.001,
             "d": 0,
             "f": 0
           },
@@ -83,10 +83,10 @@
         }
       },
       "homing": {
-        "current_limit_a": 1,
-        "stall_current_a": 0.9,
+        "current_limit_a": 2,
+        "stall_current_a": 1.9,
         "stall_time_s": 0.1,
-        "fast_speed_rad_s": 0.3,
+        "fast_speed_rad_s": 0.15,
         "slow_speed_rad_s": 0.1,
         "backoff_rad": 0.05,
         "max_travel_rad": 6.3
@@ -127,18 +127,18 @@
       },
       "homing": {
         "current_limit_a": 1,
-        "stall_current_a": 0.9,
+        "stall_current_a": 0.05,
         "stall_time_s": 0.1,
-        "fast_speed_rad_s": 0.4,
-        "slow_speed_rad_s": 0.1,
+        "fast_speed_rad_s": 0.1,
+        "slow_speed_rad_s": 0.05,
         "backoff_rad": 0.05,
         "max_travel_rad": 6.3
       }
     },     
     "joint_4": {
       "can_id": 4,
-      "gear_ratio": 216.0,
-      "direction": -1,
+      "gear_ratio": 135.0,
+      "direction": 1,
       "zero_offset_rad": 0,
       "min_position_rad": -5.0,
       "max_position_rad": 5.0,
@@ -169,11 +169,11 @@
         }
       },
       "homing": {
-        "current_limit_a": 6,
-        "stall_current_a": 4,
-        "stall_time_s": 0.2,
+        "current_limit_a": 1,
+        "stall_current_a": 0.05,
+        "stall_time_s": 0.1,
         "fast_speed_rad_s": 0.1,
-        "slow_speed_rad_s": 0.02,
+        "slow_speed_rad_s": 0.05,
         "backoff_rad": 0.05,
         "max_travel_rad": 6.3
       }
@@ -185,7 +185,7 @@
       "zero_offset_rad": 0,
       "min_position_rad": -6.280001,
       "max_position_rad": 6.280001,
-      "max_velocity_rad_s": 1.57,
+      "max_velocity_rad_s": 3.14,
       "max_acceleration_rad_s2": 3.14
     }
   },
