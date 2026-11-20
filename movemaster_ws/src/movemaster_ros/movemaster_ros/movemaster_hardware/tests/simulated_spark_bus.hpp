@@ -37,6 +37,8 @@ struct SimulatedGripper {
   int setpoints = 0;             // accepted WRIST_POSITION_SETPOINTs
   int servo_angle = 90;          // SERVO_ANGLE: last commanded angle (90 at power-up)
   bool servo_active = false;     // the servo has a signal: since its first accepted command
+  bool drop_servo = false;       // SERVO_SETPOINT is lost on the way
+  int servo_setpoints = 0;       // SERVO_SETPOINT frames accepted
   std::optional<std::chrono::steady_clock::time_point> last_heartbeat;
   bool heartbeat(std::chrono::steady_clock::time_point now) const {
     return foreign_heartbeat || (last_heartbeat && now - *last_heartbeat < std::chrono::milliseconds(100));
@@ -52,6 +54,7 @@ class SimulatedSparkBus : public CANBus {
   std::vector<int> ids;
   bool telemetry = true, bad_ack = false, drop_ack = false, bad_value = false, reject_ack = false;
   bool malformed = false, nonfinite = false, fail_tx = false, foreign_heartbeat = false, silent_flash = false;
+  bool tx_queue_full = false;  // the adapter still holds earlier frames: every send fails with ENOBUFS
   int muted_id = -1;
   int lost_replies = 0;  // the next requests whose reply is lost on the bus
   bool status1 = true, clear_faults = true;       // STATUS_1 is sent; CLEAR_FAULTS clears HAS_RESET
@@ -109,9 +112,10 @@ class SimulatedSparkBus : public CANBus {
     } else if (name == "WRIST_POSITION_SETPOINT" && gripper.heartbeat(now)) {
       gripper.degrees = gripper_frames[name].decode_payload(p.data).at("SETPOINT").get<double>();
       ++gripper.setpoints;
-    } else if (name == "SERVO_SETPOINT" && gripper.heartbeat(now)) {
+    } else if (name == "SERVO_SETPOINT" && gripper.heartbeat(now) && !gripper.drop_servo) {
       gripper.servo_angle = gripper_frames[name].decode_payload(p.data).at("ANGLE").get<int>();
       gripper.servo_active = true;
+      ++gripper.servo_setpoints;
     }
   }
   std::uint32_t value(int id, int parameter) const { return ram.at({id, parameter}); }
@@ -127,6 +131,7 @@ class SimulatedSparkBus : public CANBus {
   }
   void send(const CANPacket &p, double) override {
     if (fail_tx) throw std::runtime_error("Injected TX failure");
+    if (tx_queue_full) throw TxQueueFull("write(SocketCAN): TX queue full");
     sent.push_back(p);
     if (!gripper_frame_name(p).empty()) return gripper_receives(p);
     const int id = p.arbitration_id & 63;
