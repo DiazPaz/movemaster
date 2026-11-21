@@ -9,7 +9,7 @@
   "joints": {  
      "joint_1": {
       "can_id": 1,
-      "gear_ratio": 89,
+      "gear_ratio": 88,
       "direction": 1,
       "zero_offset_rad": 0,
       "min_position_rad": -5.0,
@@ -49,7 +49,7 @@
         "backoff_rad": 0.03,
         "max_travel_rad": 6.3,
         "stop": "-",
-        "stop_rad": -2.751
+        "stop_rad": -2.669
       }
     },   
     "joint_2": {
