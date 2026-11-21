@@ -195,8 +195,9 @@ Se publica en `/dynamic_joint_states`. No es par (`effort`).
 Convención que describe un brazo serial con cuatro números por articulación.
 En la forma estándar, la fila *i* lleva del marco *i-1* al *i* con
 `Rz(θi) · Tz(di) · Tx(ai) · Rx(αi)`: θ es la variable del eje; d, a y α son
-fijos. En el MoveMaster θi = qi, la posición del eje en ROS, sin desfases: con
-todo en 0 queda la pose cero. La tabla está en `dh.yaml`; el URDF crea un marco
+fijos. En el MoveMaster θi = qi + `theta_offset_deg`, donde qi es la posición
+del eje en ROS: los desfases hacen que q = 0 sea Home. La tabla está en
+`dh.yaml`; el URDF crea un marco
 `dh_frame_i` por fila, y el último es `tool0`. MANUAL §13.6.
 
 **depend / exec_depend / test_depend / buildtool_depend**
@@ -206,7 +207,7 @@ solo pruebas; herramienta de compilación. MANUAL §13.2.
 **dh.yaml**
 Tabla DH del brazo, en `movemaster_description/config/`: por eje, su nombre en
 ROS (`joint`), su nombre en el brazo (`label`), `a_mm`, `alpha_deg`, `d_mm`, la
-postura Home (`home_deg`) y un radio para dibujarlo. También el tamaño de la
+desfase de θ (`theta_offset_deg`, θ con q = 0) y un radio para dibujarlo. También el tamaño de la
 base. De ella sale la geometría del URDF.
 
 **direction**
@@ -328,10 +329,10 @@ El gripper no lo escucha: tiene su propio `HEARTBEAT` (`0x0A080C05`, en
 `gripper-frames-1.0.0`), para que probarlo no habilite a los SPARK.
 
 **Home**
-Postura de reposo del brazo, (0, −90°, 90°, 0, 0): el brazo vertical, el
-antebrazo horizontal al frente y el faceplate hacia abajo; `tool0` queda en
-(0.1574, 0, 0.320) m de `base_link`. No es la pose cero. La define `home_deg`
-en `dh.yaml`: el homing termina ahí, el hardware simulado y la vista previa
+Postura de reposo del brazo y cero de todos los ejes (q = 0): el brazo
+vertical, el antebrazo horizontal al frente y el faceplate hacia abajo; `tool0`
+queda en (0.1574, 0, 0.320) m de `base_link`. La definen los desfases de θ en
+`dh.yaml` (−90° en el hombro, +90° en el codo): el homing termina ahí, el hardware simulado y la vista previa
 arrancan ahí, y los ejes sin SPARK quedan fijos en ella (MANUAL §4.4).
 
 **Homing**
@@ -588,10 +589,11 @@ Paso que se hace una vez por SPARK: restablece sus parámetros a fábrica
 (conserva CAN ID, tipo de motor e idle mode), escribe el baseline y lo guarda
 en flash. MANUAL §6.1.
 
-**Pose cero**
-La postura con todos los ejes en 0, que es la de la tabla DH (θ = q): el brazo y
-el antebrazo horizontales al frente y el faceplate hacia abajo, con su marca al
-frente; `tool0` queda en (0.3774, 0, 0.100) m de `base_link`. MANUAL §4.4.
+**Pose cero DH**
+La postura con todos los θ de la tabla DH en 0, q = (0, 90°, −90°, 0, 0): el
+brazo y el antebrazo horizontales al frente y el faceplate hacia abajo, con su
+marca al frente; `tool0` queda en (0.3774, 0, 0.100) m de `base_link`. No es
+q = 0: esa es Home. MANUAL §4.4.
 
 **PV / SP**
 *Process value* (posición medida) y *setpoint* (posición objetivo).
@@ -722,7 +724,8 @@ referencias; con `--home` referencia los ejes que la perdieron contra su tope
 
 **stop / stop_rad**
 Campos del bloque `homing` de `joints.json`: el tope contra el que se referencia
-el eje (`"+"` o `"-"`) y su ángulo DH ahí, que el homing le escribe al SPARK.
+el eje (`"+"` o `"-"`) y su posición ahí (q, en ROS), que el homing le escribe
+al SPARK.
 
 **SparkParameters-v0.1.2.md**
 Tabla en `movemaster_hardware/spec/` con todos los parámetros del SPARK: ID,

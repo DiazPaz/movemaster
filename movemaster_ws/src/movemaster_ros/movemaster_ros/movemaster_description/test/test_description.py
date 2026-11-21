@@ -14,7 +14,9 @@ import yaml
 PACKAGE = Path(__file__).resolve().parents[1]
 DH_CONFIG = PACKAGE / 'config' / 'dh.yaml'
 CHAIN = yaml.safe_load(DH_CONFIG.read_text())['chain']
-HOME = {row['joint']: math.radians(row['home_deg']) for row in CHAIN}
+OFFSET = {row['joint']: math.radians(row['theta_offset_deg']) for row in CHAIN}
+HOME = {name: 0.0 for name in OFFSET}  # q = 0 is Home
+DH_ZERO = {name: -offset for name, offset in OFFSET.items()}  # every θ = 0
 JOINT_CONFIG = Path(get_package_share_directory('movemaster_hardware'), 'config', 'joints.json')
 CONFIG = json.loads(JOINT_CONFIG.read_text())
 
@@ -73,9 +75,11 @@ def rot_z(angle):
 
 
 def dh_tool0(q):
-    """base_link → tool0 straight from the table: Rz(θ) · Tz(d) · Tx(a) · Rx(α) per row, θ = q."""
+    """base_link → tool0 straight from the table: Rz(θ) · Tz(d) · Tx(a) · Rx(α) per row, with
+    θ = q + theta_offset_deg."""
     return multiply(*(multiply(
-        rot_z(q[row['joint']]), translation(row['a_mm'] / 1000, 0, row['d_mm'] / 1000),
+        rot_z(q[row['joint']] + OFFSET[row['joint']]),
+        translation(row['a_mm'] / 1000, 0, row['d_mm'] / 1000),
         rot_x(math.radians(row['alpha_deg']))) for row in CHAIN))
 
 
@@ -112,27 +116,31 @@ def axis(pose, column):
     return [pose[i][column] for i in range(3)]
 
 
-def test_zero_pose_has_the_arm_level():
-    pose = urdf_tool0(robot(preview=True), {name: 0.0 for name in HOME})
-    # Arm and forearm level toward the front, 250 mm up; the faceplate 150 mm below the wrist,
-    # facing down, with its mark (x of tool0) toward the front.
-    assert position(pose) == pytest.approx([0.3774, 0, 0.100], abs=1e-9)
-    assert axis(pose, 2) == pytest.approx([0, 0, -1], abs=1e-9)
-    assert axis(pose, 0) == pytest.approx([1, 0, 0], abs=1e-9)
-
-
-def test_home_has_the_arm_upright_and_the_forearm_level():
-    assert HOME == pytest.approx(
+def test_home_is_q_zero_with_the_arm_upright_and_the_forearm_level():
+    # θ2 = q2 - 90°, θ3 = q3 + 90°: with q = 0 the arm is upright and the forearm level.
+    assert OFFSET == pytest.approx(
         {'joint_1': 0, 'joint_2': -math.pi / 2, 'joint_3': math.pi / 2, 'joint_4': 0, 'joint_5': 0})
     pose = urdf_tool0(robot(preview=True), HOME)
     assert position(pose) == pytest.approx([0.1574, 0, 0.320], abs=1e-9)
     assert axis(pose, 2) == pytest.approx([0, 0, -1], abs=1e-9)
 
 
+def test_dh_zero_pose_has_the_arm_level():
+    pose = urdf_tool0(robot(preview=True), DH_ZERO)
+    # Every θ = 0: arm and forearm level toward the front, 250 mm up; the faceplate 150 mm below
+    # the wrist, facing down, with its mark (x of tool0) toward the front.
+    assert position(pose) == pytest.approx([0.3774, 0, 0.100], abs=1e-9)
+    assert axis(pose, 2) == pytest.approx([0, 0, -1], abs=1e-9)
+    assert axis(pose, 0) == pytest.approx([1, 0, 0], abs=1e-9)
+
+
 def test_positive_joint_motion_matches_the_agreed_senses():
     root = robot(preview=True)
-    # Every link vertical, the faceplate facing up: any forward tilt moves it to +x.
-    upright = {**HOME, 'joint_2': -math.pi / 2, 'joint_3': 0.0, 'joint_4': -math.pi / 2}
+    # Every link vertical, the faceplate facing up (θ = 0, -90°, 0, -90°, 0): any forward tilt
+    # moves it to +x.
+    theta = {'joint_1': 0.0, 'joint_2': -math.pi / 2, 'joint_3': 0.0, 'joint_4': -math.pi / 2,
+             'joint_5': 0.0}
+    upright = {name: theta[name] - OFFSET[name] for name in OFFSET}
 
     def pose(**moved):
         return urdf_tool0(root, {**upright, **moved})
@@ -141,18 +149,18 @@ def test_positive_joint_motion_matches_the_agreed_senses():
     assert position(start) == pytest.approx([0, 0, 0.7774], abs=1e-9)
     # Shoulder, elbow and wrist pitch tilt the arm forward (+x of base_link).
     for name in ('joint_2', 'joint_3', 'joint_4'):
-        assert position(pose(**{name: 0.1}))[0] > 1e-3
+        assert position(pose(**{name: upright[name] + 0.1}))[0] > 1e-3
     # Waist: counterclockwise seen from above, so an arm leaning forward swings to +y.
-    assert position(pose(joint_2=0.5, joint_1=0.1))[1] > 1e-3
+    assert position(pose(joint_2=upright['joint_2'] + 0.5, joint_1=0.1))[1] > 1e-3
     # Faceplate: counterclockwise seen from its front, from above here: its mark turns that way.
-    before, after = axis(start, 0), axis(pose(joint_5=0.1), 0)
+    before, after = axis(start, 0), axis(pose(joint_5=upright['joint_5'] + 0.1), 0)
     assert before[0] * after[1] - before[1] * after[0] > 1e-3
 
 
 def test_urdf_chain_matches_the_dh_product():
     root = robot(preview=True)
     rng = random.Random(7)
-    poses = [HOME, {name: 0.0 for name in HOME}] + [
+    poses = [HOME, DH_ZERO] + [
         {name: rng.uniform(-math.pi, math.pi) for name in HOME} for _ in range(20)]
     for q in poses:
         assert_same_pose(urdf_tool0(root, q), dh_tool0(q))
@@ -241,6 +249,6 @@ def test_mock_hardware_starts_at_home_inside_the_limits(three_axes):
         initial = root.find(
             f"ros2_control/joint[@name='{name}']/state_interface[@name='position']/param")
         assert initial.get('name') == 'initial_value'
-        # joint_2's Home (-90°) is below its range, so it starts at its lower limit.
+        # Home is q = 0; joint_3's range excludes it, so it starts at its lower limit.
         expected = min(max(HOME[name], joint['min_position_rad']), joint['max_position_rad'])
         assert float(initial.text) == pytest.approx(expected)

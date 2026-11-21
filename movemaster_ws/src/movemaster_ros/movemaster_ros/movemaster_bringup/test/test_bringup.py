@@ -1,15 +1,11 @@
 """The bringup launch, its homing step, what it includes and the systemd service."""
 
 import importlib.util
-import math
 from pathlib import Path
-
-import pytest
 
 PACKAGE = Path(__file__).resolve().parents[1]
 PACKAGES = PACKAGE.parent
 JOINT_CONFIG = PACKAGES / 'movemaster_hardware' / 'config' / 'joints.json'
-DH_CONFIG = PACKAGES / 'movemaster_description' / 'config' / 'dh.yaml'
 
 
 def load_module():
@@ -69,20 +65,13 @@ def test_arguments_and_defaults():
     assert default('can_interface') == 'can0'
 
 
-def test_home_pose_comes_from_dh_yaml():
-    # Home: arm upright, forearm level (theta_2 = -90 deg, theta_3 = +90 deg).
-    pose = dict(item.split('=') for item in load_module().home_pose(JOINT_CONFIG, DH_CONFIG).split(','))
-    assert list(pose) == ['joint_1', 'joint_2', 'joint_3', 'joint_4', 'joint_5']
-    assert float(pose['joint_2']) == pytest.approx(-math.pi / 2, abs=1e-6)
-    assert float(pose['joint_3']) == pytest.approx(math.pi / 2, abs=1e-6)
-    assert all(float(pose[name]) == 0 for name in ('joint_1', 'joint_4', 'joint_5'))
-
-
-def test_home_pose_needs_every_joint_in_dh_yaml(tmp_path):
+def test_home_pose_is_zero_for_every_joint(tmp_path):
+    # Home is q = 0: dh.yaml's theta offsets put the arm upright and the forearm level there.
+    assert load_module().home_pose(JOINT_CONFIG) == (
+        'joint_1=0,joint_2=0,joint_3=0,joint_4=0,joint_5=0')
     joints = tmp_path / 'joints.json'
-    joints.write_text('{"joints": {"joint_1": {}, "joint_6": {}}}')
-    with pytest.raises(RuntimeError, match='joint_6'):
-        load_module().home_pose(joints, DH_CONFIG)
+    joints.write_text('{"joints": {"joint_2": {}, "joint_1": {}}}')
+    assert load_module().home_pose(joints) == 'joint_2=0,joint_1=0'
 
 
 def test_homing_runs_before_the_controller_manager():
@@ -102,7 +91,7 @@ def test_homing_runs_before_the_controller_manager():
     assert arguments[0].endswith('spec/spark-frames-2.1.0')
     assert arguments[1:3] == [str(JOINT_CONFIG), 'can0']
     assert arguments[3:5] == ['--home', '--pose']
-    assert arguments[5] == load_module().home_pose(JOINT_CONFIG, DH_CONFIG)
+    assert arguments[5] == load_module().home_pose(JOINT_CONFIG)
 
 
 def test_after_homing_starts_the_robot_only_if_it_succeeded():
@@ -136,7 +125,6 @@ def test_included_files_exist():
     for path in ('movemaster_control/launch/movemaster_control.launch.py',
                  'movemaster_teleop/launch/jog.launch.py',
                  'movemaster_description/rviz/display.rviz',
-                 'movemaster_description/config/dh.yaml',
                  'movemaster_hardware/config/joints.json',
                  'movemaster_hardware/spec/spark-frames-2.1.0'):
         assert (PACKAGES / path).is_file(), path

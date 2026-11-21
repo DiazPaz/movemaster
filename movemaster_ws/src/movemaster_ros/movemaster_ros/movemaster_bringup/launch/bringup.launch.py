@@ -6,7 +6,7 @@
 Primero el homing (homing:=true, el valor por defecto, y solo con el brazo real):
   spark_home --home   busca el tope de cada eje que perdió su referencia (homing_order de
                       joints.json), le escribe a su SPARK la posición que le corresponde y lleva
-                      el brazo a Home (home_deg de dh.yaml). Si todos los ejes conservan su
+                      el brazo a Home (q = 0 en todos los ejes). Si todos los ejes conservan su
                       referencia, no mueve nada. El brazo se mueve solo: ten el paro a la mano.
 Si el homing termina bien, arrancan:
   movemaster_control  controller_manager con MovemasterHardware, joint_state_broadcaster,
@@ -21,7 +21,6 @@ El servicio systemd/movemaster.service lo arranca al encender la Raspberry Pi.
 """
 
 import json
-import math
 from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
@@ -33,7 +32,6 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import ExecutableInPackage, FindPackageShare
-import yaml
 
 # Catálogo de tramas que usa el plugin (spec_path en movemaster.urdf.xacro).
 SPARK_FRAMES = 'spark-frames-2.1.0'
@@ -68,15 +66,10 @@ def generate_launch_description():
     ])
 
 
-def home_pose(joint_config, dh_config):
-    """--pose de spark_home: el home_deg de dh.yaml de cada eje de joints.json, en rad."""
+def home_pose(joint_config):
+    """--pose de spark_home: Home, q = 0 en cada eje de joints.json."""
     joints = json.loads(Path(joint_config).read_text())['joints']
-    chain = yaml.safe_load(Path(dh_config).read_text())['chain']
-    home = {row['joint']: row['home_deg'] for row in chain}
-    missing = [name for name in joints if name not in home]
-    if missing:
-        raise RuntimeError(f'{", ".join(missing)}: no están en {dh_config}, sin Home.')
-    return ','.join(f'{name}={math.radians(home[name]):.6f}' for name in joints)
+    return ','.join(f'{name}=0' for name in joints)
 
 
 def after_homing(returncode, robot):
@@ -128,12 +121,11 @@ def _launch_setup(context):
 
     joint_config = arguments['joint_config']
     hardware = Path(get_package_share_directory('movemaster_hardware'))
-    dh_config = Path(get_package_share_directory('movemaster_description'), 'config', 'dh.yaml')
     spark_home = ExecuteProcess(
         name='spark_home', output='screen',
         cmd=[ExecutableInPackage('spark_home', 'movemaster_hardware'),
              str(hardware / 'spec' / SPARK_FRAMES), joint_config, arguments['can_interface'],
-             '--home', '--pose', home_pose(joint_config, dh_config)])
+             '--home', '--pose', home_pose(joint_config)])
     return [
         LogInfo(msg='Homing: el brazo se mueve solo hasta Home; ten el paro de emergencia a '
                     'la mano.'),

@@ -4,15 +4,13 @@
 
 Arranca:
   robot_state_publisher      publica /robot_description y el TF de la cadena DH.
-  joint_state_publisher_gui  un slider por eje; arranca en la postura Home de dh.yaml.
+  joint_state_publisher_gui  un slider por eje; arranca en q = 0, Home.
                              Con gui:=false, joint_state_publisher deja el brazo en Home.
   rviz2                      el modelo, el TF y tool0.
 
 El URDF se genera con preview:=true: mueve los cinco ejes aunque joints.json todavía no
 los tenga a todos, y no incluye el bloque ros2_control.
 """
-
-import math
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
@@ -21,7 +19,6 @@ from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 import xacro
-import yaml
 
 
 def generate_launch_description():
@@ -55,19 +52,15 @@ def _launch_setup(context):
     def arg(name):
         return LaunchConfiguration(name).perform(context)
 
-    dh_config = arg('dh_config')
     description_file = PathJoinSubstitution(
         [FindPackageShare('movemaster_description'), 'urdf', 'movemaster.urdf.xacro']
     ).perform(context)
     robot_description = xacro.process_file(description_file, mappings={
         'joint_config': arg('joint_config'),
-        'dh_config': dh_config,
+        'dh_config': arg('dh_config'),
         'preview': 'true',
     }).toxml()
-    with open(dh_config) as file:
-        chain = yaml.safe_load(file)['chain']
-    # joint_state_publisher toma la posición inicial de cada eje de zeros.<joint>.
-    home = {row['joint']: math.radians(row['home_deg']) for row in chain}
+    # joint_state_publisher arranca cada eje en 0 (Home) si está dentro de sus límites.
     publisher = 'joint_state_publisher_gui' if arg('gui') == 'true' else 'joint_state_publisher'
 
     return [
@@ -77,6 +70,5 @@ def _launch_setup(context):
         ),
         Node(
             package=publisher, executable=publisher, output='both',
-            parameters=[{'zeros': home}],
         ),
     ]

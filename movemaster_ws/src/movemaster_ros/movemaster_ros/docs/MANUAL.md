@@ -395,7 +395,7 @@ ESP32 del gripper lleva otros ([4.6](#46-la-muñeca-en-la-esp32-del-gripper-join
 | `backoff_rad` | ≥ `control.max_following_error_rad` / 4 | Retroceso entre los dos acercamientos; también el margen de los límites sugeridos. Más corto, el eje podría seguir en el tope al empezar el acercamiento lento. |
 | `max_travel_rad` | > `2·backoff_rad` | Recorrido máximo sin encontrar tope; más allá, aborta. |
 | `stop` | `"+"` o `"-"`; opcional, junto con `stop_rad` | Tope contra el que `spark_home --home` referencia el eje. Elige el que se alcanza sin chocar desde cualquier postura de encendido. |
-| `stop_rad` | con `stop`; a `backoff_rad` de él el eje queda dentro de `min_position_rad`..`max_position_rad` | Ángulo DH del eje en ese tope: lo que el homing le escribe al SPARK. Se calibra como en [7.3](#73-spark_home-reinicios-topes-mecánicos-y-homing). |
+| `stop_rad` | con `stop`; a `backoff_rad` de él el eje queda dentro de `min_position_rad`..`max_position_rad` | Posición del eje (q, en ROS) en ese tope: lo que el homing le escribe al SPARK. Se calibra como en [7.3](#73-spark_home-reinicios-topes-mecánicos-y-homing). |
 
 ### 4.3 Ejemplo de un eje
 
@@ -440,18 +440,19 @@ del formato anterior están en
   ([11.4](#114-arrancar-todo-con-un-comando)) corre primero
   `spark_home --home`: busca un tope mecánico de cada eje (`homing.stop`) y le
   escribe a su SPARK la posición que tiene ahí (`homing.stop_rad`). Desde
-  entonces el SPARK reporta el ángulo DH real, hasta que se vuelva a apagar
+  entonces el SPARK reporta la posición real del eje, hasta que se vuelva a apagar
   ([7.3](#73-spark_home-reinicios-topes-mecánicos-y-homing)).
-- **q = θ: la pose cero es la de la tabla DH.** La posición de cada eje en ROS
-  es su θ de `dh.yaml`, sin desfases. Con todos en 0, el brazo y el antebrazo
-  quedan horizontales al frente y el faceplate hacia abajo, con su marca al
-  frente. Los positivos: cintura antihorario vista desde arriba; hombro, codo e
+- **Home es q = 0.** Con todos los ejes en 0, el brazo queda vertical, el
+  antebrazo horizontal al frente y el faceplate hacia abajo, con su marca al
+  frente. El homing termina ahí y el hardware simulado arranca ahí. Lo logran
+  los desfases de `dh.yaml`: θi = qi + `theta_offset_deg`, con −90° en el
+  hombro y +90° en el codo. Todo lo de ROS (`joints.json`, `/joint_states`, el
+  JTC, MoveIt) está en q.
+- **La pose cero DH** (todos los θ en 0) es q = (0, 90°, −90°, 0, 0): el brazo y
+  el antebrazo horizontales al frente. Es la postura desde la que se arma la
+  tabla. Los positivos: cintura antihorario vista desde arriba; hombro, codo e
   inclinación de muñeca inclinan el brazo hacia adelante; faceplate antihorario
   visto de frente. Si un motor gira al revés, `direction: -1`.
-- **Home no es la pose cero.** Home es (0, −90°, 90°, 0, 0): el brazo vertical,
-  el antebrazo horizontal al frente y el faceplate hacia abajo. La define
-  `home_deg` en `dh.yaml`; el homing termina ahí y el hardware simulado arranca
-  ahí.
 - **Sin homing, `zero_offset_rad`.** Un eje que no busca tope (la muñeca del
   gripper, o todos con `homing:=false`) lee `zero_offset_rad` en la postura en
   que se encendió: con `zero_offset_rad: 0`, enciéndelo en su posición 0. En un
@@ -828,7 +829,7 @@ cuenta desde la postura en que está (ahí lee `zero_offset_rad`) y lo avisa con
 | Ver qué ejes se reiniciaron | ninguno | no | no cambia nada |
 | Medir los dos topes de un eje | `--measure joint_N` | sí; solo se mueve ese eje | no cambia nada |
 | Medir un solo tope | `--measure joint_N +` o `--measure joint_N -` | sí | no cambia nada |
-| Homing | `--home [--pose joint_1=0,joint_2=-1.5708,...]` | sí | referencia los ejes de `homing_order` que no la tienen; los demás ejes sin referencia toman la postura de encendido |
+| Homing | `--home [--pose joint_1=0,joint_2=0,...]` | sí | referencia los ejes de `homing_order` que no la tienen; los demás ejes sin referencia toman la postura de encendido |
 | Homing de ejes elegidos | `--home joint_N ... [--pose ...]` | sí | solo esos ejes, aunque ya la tengan |
 
 **Antes de empezar**
@@ -973,10 +974,10 @@ busca ni mueve nada.
 
    ```bash
    ros2 run movemaster_hardware spark_home $SPEC $JOINTS can0 --home \
-       --pose joint_1=0,joint_2=-1.5708,joint_3=1.5708,joint_4=0,joint_5=0
+       --pose joint_1=0,joint_2=0,joint_3=0,joint_4=0,joint_5=0
    ```
 
-   En un brazo simulado (tres ejes con topes y la muñeca):
+   En un brazo simulado (tres ejes con topes y la muñeca), con otra `--pose`:
 
    ```text
    joint_4: sin tope que buscar; su referencia es la postura en que se encendio, 0.000 rad (0.0 grados).
@@ -1003,11 +1004,12 @@ busca ni mueve nada.
    Cada eje SPARK termina a menos de `max_following_error_rad` / 8 de `--pose`
    (0.0125 rad con 0.1); ahí deja de enviar heartbeat.
 
-3. **Calibrar `stop_rad`.** Después del homing, lleva el eje a una postura que
-   puedas medir (la pose cero con un nivel, por ejemplo) y compara: si con
-   q = 0 el eje queda girado e radianes en su sentido positivo, súmale e a su
-   `stop_rad`. Repite hasta que coincida. `--measure joint_N` con el eje
-   referenciado da además el otro tope en la convención DH.
+3. **Calibrar `stop_rad`.** Después del homing el brazo queda en Home (q = 0),
+   que se mide con un nivel: el brazo vertical, el antebrazo horizontal y la
+   cara del faceplate horizontal, y la cintura al frente. Si un eje quedó
+   girado e radianes en su sentido positivo, súmale e a su `stop_rad`; repite
+   hasta que coincida. `--measure joint_N` con el eje referenciado da además el
+   otro tope en las mismas unidades (q).
 
 Si una búsqueda falla, ese eje y los que siguen quedan sin referencia y
 `spark_home` termina con código 1; el bringup no arranca el `controller_manager`.
@@ -1128,9 +1130,9 @@ tenga a todos. Arranca en Home.
 ros2 launch movemaster_description display.launch.py
 ```
 
-En Home (0, −90°, 90°, 0, 0), `tool0` (el centro de la cara del faceplate) está
-en (0.1574, 0, 0.320) m de `base_link`, apuntando hacia abajo; en la pose cero
-(todos los ejes en 0), en (0.3774, 0, 0.100) m:
+En Home (q = 0), `tool0` (el centro de la cara del faceplate) está en
+(0.1574, 0, 0.320) m de `base_link`, apuntando hacia abajo; en la pose cero DH,
+q = (0, 90°, −90°, 0, 0), en (0.3774, 0, 0.100) m:
 
 ```bash
 ros2 run tf2_ros tf2_echo base_link tool0
@@ -1301,8 +1303,8 @@ ros2 launch movemaster_bringup bringup.launch.py pendant:=/dev/ttyUSB0 rviz:=tru
 ```
 
 Primero corre el **homing**: `spark_home --home` referencia los ejes que
-perdieron su referencia y lleva el brazo a Home, con los `home_deg` de
-`dh.yaml` ([7.3](#73-spark_home-reinicios-topes-mecánicos-y-homing)). **El
+perdieron su referencia y lleva el brazo a Home, q = 0 en todos los ejes
+([7.3](#73-spark_home-reinicios-topes-mecánicos-y-homing)). **El
 brazo se mueve solo**: ten el paro de emergencia a la mano. Si todos los ejes
 conservan su referencia (relanzaste sin apagar los SPARK), no mueve nada. Solo
 si el homing termina bien arrancan el `controller_manager`, el jog y RViz, y el
@@ -1560,17 +1562,17 @@ MoveIt. Junta dos archivos:
 
 | Archivo | Qué aporta |
 |---|---|
-| `movemaster_description/config/dh.yaml` | La tabla Denavit-Hartenberg (a, α, d en mm y grados), la postura Home y los radios de los eslabones. |
+| `movemaster_description/config/dh.yaml` | La tabla Denavit-Hartenberg (a, α, d en mm y grados), el desfase de cada θ, que hace de q = 0 la postura Home, y los radios de los eslabones. |
 | `movemaster_hardware/config/joints.json` | Qué ejes tienen SPARK MAX y sus límites. |
 
 Cada fila *i* de la tabla, `T(i-1 → i) = Rz(θi) · Tz(di) · Tx(ai) · Rx(αi)`,
 se convierte en (`urdf/movemaster_arm.xacro`):
 
-1. `joint_i`: el giro θi alrededor de z; θi es la posición de la articulación
-   en ROS, sin desfase. Si el eje está en `joints.json` es `revolute`, con
-   `lower`/`upper` = límites de `joints.json` y `velocity` =
-   `max_velocity_rad_s`; si no, es `fixed` en su ángulo Home (con
-   `preview:=true`, `revolute` de −π a π).
+1. `joint_i`: el giro θi = qi + `theta_offset_deg` alrededor de z, donde qi es
+   la posición de la articulación en ROS; el desfase va en el origen del joint.
+   Si el eje está en `joints.json` es `revolute`, con `lower`/`upper` = límites
+   de `joints.json` y `velocity` = `max_velocity_rad_s`; si no, es `fixed` en
+   q = 0, Home (con `preview:=true`, `revolute` de −π a π).
 2. `<label>_link` (`waist_link`, `shoulder_link`, …): el eslabón que mueve, con
    cilindros a lo largo de di y ai para verlo y para las colisiones.
 3. `joint_i_dh`: la parte fija `Tz(di) · Tx(ai) · Rx(αi)`, hasta el marco DH
@@ -1695,7 +1697,7 @@ Los dos archivos de REV no se modifican.
 | `tests/console_test.cpp` | prueba | no | Bucle de la consola con driver falso. |
 | `tests/homing_test.cpp` | prueba | no | Búsqueda de topes contra un eje simulado, y `spark_home`: medición, argumentos, estado y homing (orden, referencias, `--pose`, solo lo reiniciado, fallos). |
 | `tests/protocol_oracle.cpp` + `tests/differential_test.py` | prueba | no | Paridad byte a byte con la librería Python. |
-| `movemaster_description/test/test_description.py` | prueba | no | El URDF sigue la tabla DH (cinemática directa contra el producto DH; pose cero con brazo y antebrazo horizontales, `tool0` en (0.3774, 0, 0.100) m; Home con `tool0` en (0.1574, 0, 0.320) m; sentidos positivos) y cumple lo que exigen el plugin y `ros2_control`. |
+| `movemaster_description/test/test_description.py` | prueba | no | El URDF sigue la tabla DH (cinemática directa contra el producto DH; Home en q = 0, con `tool0` en (0.1574, 0, 0.320) m; pose cero DH con brazo y antebrazo horizontales, `tool0` en (0.3774, 0, 0.100) m; sentidos positivos) y cumple lo que exigen el plugin y `ros2_control`. |
 | `movemaster_control/test/test_controllers.py` | prueba | no | Los controladores usan las interfaces que exporta el plugin. |
 | `movemaster_teleop/test/` | prueba | no | Jog, selector MANUAL/AUTO y trama del pendant, sin ROS. |
 | `movemaster_bringup/test/test_bringup.py` | prueba | no | Argumentos del launch de arranque, archivos que incluye y el servicio de `systemd`. |

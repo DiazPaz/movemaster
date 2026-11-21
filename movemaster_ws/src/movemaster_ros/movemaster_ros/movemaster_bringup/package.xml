@@ -15,7 +15,6 @@
   <exec_depend>movemaster_description</exec_depend>
   <exec_depend>movemaster_hardware</exec_depend>
   <exec_depend>movemaster_teleop</exec_depend>
-  <exec_depend>python3-yaml</exec_depend>
   <exec_depend>ros2launch</exec_depend>
   <exec_depend>rviz2</exec_depend>
 

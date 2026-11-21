@@ -1,5 +1,22 @@
 # Validación realizada — 26 de septiembre de 2026
 
+## Home en q = 0
+
+21 de noviembre de 2026. `dh.yaml` vuelve a llevar un desfase de θ por eje
+(`theta_offset_deg`: −90° en el hombro, +90° en el codo), así que q = 0 es Home
+y `home_deg` desaparece. El bringup manda el homing a `--pose` con todos los
+ejes en 0. En `joints.json`, `stop_rad` de `joint_2` (−2.075 → −0.5042) y de
+`joint_3` (−0.06 → −1.6308) pasan a q; los límites siguen en ±5.
+
+| Prueba | Resultado |
+|---|---|
+| CTest sin ROS (g++ 13.3, Release) | **6/6**; el `joints.json` del repositorio pasa la validación. |
+| `colcon test`, ROS 2 Jazzy (RoboStack) | **30 pruebas, 0 fallos**: q = 0 da `tool0` en (0.1574, 0, 0.320) m, la pose cero DH (q = (0, 90°, −90°, 0, 0)) en (0.3774, 0, 0.100) m, y el `--pose` del bringup es todo 0. |
+| URDF con hardware simulado | Arranca en 0 en los cinco ejes; los desfases van en el origen de `joint_2` y `joint_3`. |
+
+Por probar en el robot: repetir el homing de `joint_2` y `joint_3` (los SPARK
+guardan la referencia anterior hasta entonces) y medir Home con un nivel.
+
 ## Homing, fase 2: referencia en el SPARK y homing al arrancar
 
 20 de noviembre de 2026. Linux x86_64, sin CAN.

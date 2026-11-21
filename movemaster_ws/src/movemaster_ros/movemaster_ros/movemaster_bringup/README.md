@@ -9,7 +9,7 @@ ros2 launch movemaster_bringup bringup.launch.py pendant:=/dev/ttyUSB0 rviz:=tru
 
 | Incluye | Cuándo |
 |---|---|
-| `spark_home --home`: referencia los ejes que la perdieron contra su tope mecánico y lleva el brazo a Home (`home_deg` de `dh.yaml`). **El brazo se mueve solo.** | Primero, con `homing:=true` (por defecto) y el brazo real |
+| `spark_home --home`: referencia los ejes que la perdieron contra su tope mecánico y lleva el brazo a Home (q = 0 en todos los ejes). **El brazo se mueve solo.** | Primero, con `homing:=true` (por defecto) y el brazo real |
 | `movemaster_control`: `controller_manager`, `joint_state_broadcaster`, `joint_trajectory_controller` y `jog_controller` inactivo | Siempre; con homing, solo si terminó bien, y entonces un eje sin referencia es un fallo (`require_reference:=true`) |
 | `movemaster_teleop`: `jog_node`; el switch MANUAL/AUTO del pendant elige el controlador | Con `pendant:=<puerto>`, junto con `movemaster_control` |
 | RViz con el modelo del brazo | Con `rviz:=true` (necesita pantalla), junto con `movemaster_control` |

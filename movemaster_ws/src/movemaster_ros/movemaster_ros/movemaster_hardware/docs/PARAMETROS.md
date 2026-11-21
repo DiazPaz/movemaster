@@ -263,7 +263,7 @@ en el [MANUAL §4.6](../../docs/MANUAL.md#46-la-muñeca-en-la-esp32-del-gripper-
 | `homing.stall_current_a`, `homing.stall_time_s` | 0 < corriente < `current_limit_a`; 3·`period_s` ≤ tiempo ≤ 5 s | Contacto: el eje deja de seguir su objetivo con al menos esa corriente durante ese tiempo. |
 | `homing.fast_speed_rad_s`, `homing.slow_speed_rad_s` | 0 < lenta ≤ rápida ≤ `max_velocity_rad_s` | Velocidades del primer acercamiento y del segundo, que fija el tope. |
 | `homing.backoff_rad`, `homing.max_travel_rad` | Retroceso ≥ `control.max_following_error_rad`/4; recorrido > 2·retroceso | Retroceso entre los dos acercamientos (y margen de los límites sugeridos) y recorrido máximo sin tope. |
-| `homing.stop`, `homing.stop_rad` | Opcionales y juntos: `"+"` o `"-"`, y un ángulo a `backoff_rad` del cual el eje queda dentro de sus límites | Tope contra el que `spark_home --home` referencia el eje y su ángulo DH ahí. |
+| `homing.stop`, `homing.stop_rad` | Opcionales y juntos: `"+"` o `"-"`, y un ángulo a `backoff_rad` del cual el eje queda dentro de sus límites | Tope contra el que `spark_home --home` referencia el eje y su posición ahí (q, en ROS). |
 | `homing_order` (global) | Lista de ejes, cada uno una vez y con `homing.stop` | Ejes cuyo tope busca `spark_home --home`, en ese orden. |
 
 ### Pasar del formato anterior
