@@ -41,18 +41,27 @@ def configure_qt_platform():
 # La plataforma gráfica DEBE configurarse antes de importar PySide6.
 configure_qt_platform()
 
+import argparse
 import sys
 import time
 import math
 import random
 import re
 from pathlib import Path
-import serial
 import cv2
 import numpy as np
 from PySide6.QtCore import Qt, QEvent, QTimer, QThread, Signal, QPointF, QLocale, QElapsedTimer, QRect
 from PySide6.QtGui import QDoubleValidator, QImage, QPixmap, QPainter, QPen, QColor, QFont, QFontMetrics
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QTabWidget, QLineEdit, QPushButton, QLabel, QListWidget, QDialog, QDialogButtonBox, QGroupBox, QMessageBox, QSlider, QStackedLayout, QStackedWidget, QSizePolicy, QFrame
+
+from movemaster_hmi import robot_client
+from movemaster_hmi.robot_client import RobotError
+from movemaster_hmi.robot_model import check_target, load_jog_axes, load_joints
+
+# Speed of a move when MOVEMENT SPEED is left empty, in percent.
+DEFAULT_SPEED_PERCENT = 25.0
+# Every joint this close to 0 degrees: the arm is at Home.
+HOME_TOLERANCE_DEG = 0.5
 
 def numeric_validator(minimum, maximum, decimals, parent):
     """Accept decimals, but never scientific notation or thousands separators."""
@@ -222,202 +231,6 @@ class CRTDisplay(QLabel):
         self.setPixmap(output_pixmap)
 
 
-def find_esp32_serial_port():
-    """Detecta el USB de la ESP32; HMI_SERIAL_PORT tiene prioridad."""
-    override = os.environ.get('HMI_SERIAL_PORT', '').strip()
-    if override:
-        print(f'[SERIAL] Puerto configurado: {override}')
-        return override
-
-    # Primero buscar por descriptores USB conocidos del ESP32 o bridges
-    # CH340/CP210x/FTDI. Si hay varios, se puede especificar el puerto.
-    from serial.tools import list_ports
-    ports = list(list_ports.comports())
-    keywords = ('esp32', 'silicon labs', 'cp210', 'ch340', 'ch341',
-                'wch', 'usb serial', 'usb-serial', 'ftdi')
-    for port in ports:
-        descriptor = ' '.join(str(part or '') for part in
-                              (port.description, port.manufacturer, port.product)).lower()
-        if any(word in descriptor for word in keywords):
-            print(f'[SERIAL] Detectado: {port.device} ({port.description})')
-            return port.device
-
-    # Alternativa para dispositivos USB sin descriptor identificable.
-    candidates = [port.device for port in ports
-                  if port.device.startswith(('/dev/ttyUSB', '/dev/ttyACM'))]
-    if len(candidates) == 1:
-        print(f'[SERIAL] Puerto USB único: {candidates[0]}')
-        return candidates[0]
-    if len(candidates) > 1:
-        print(f'[SERIAL] Varios puertos disponibles: {candidates}. '
-              'Define HMI_SERIAL_PORT para elegir la ESP32.')
-    else:
-        print('[SERIAL] No se detectó ESP32 USB. '
-              'Puedes definir HMI_SERIAL_PORT para elegir el puerto.')
-    return None
-
-class PendantFrameDecoder:
-    """Framing 0xA5 + 8 payload bytes; CRC8 over first seven bytes."""
-    SYNC = 0xA5
-
-    def __init__(self):
-        self.buffer = bytearray()
-
-    @staticmethod
-    def crc8(data):
-        crc = 0
-        for byte in data:
-            crc ^= byte
-            for _ in range(8):
-                crc = (((crc << 1) ^ 0x07) if (crc & 0x80) else (crc << 1)) & 0xFF
-        return crc
-
-    def feed(self, data):
-        self.buffer.extend(data)
-        frames = []
-        while len(self.buffer) >= 9:
-            sync_at = self.buffer.find(self.SYNC)
-            if sync_at < 0:
-                self.buffer.clear()
-                break
-            if sync_at:
-                del self.buffer[:sync_at]
-            if len(self.buffer) < 9:
-                break
-            payload = self.buffer[1:9]
-            if self.crc8(payload[:7]) != payload[7]:
-                del self.buffer[0]  # Resync even if payload contains 0xA5.
-                continue
-            del self.buffer[:9]
-            x = int.from_bytes(payload[3:5], 'little', signed=True)
-            y = int.from_bytes(payload[5:7], 'little', signed=True)
-            joint_x = payload[2] >> 4
-            joint_y = payload[2] & 0x0F
-            if not (-1000 <= x <= 1000 and -1000 <= y <= 1000):
-                continue
-            if joint_x not in (0, 4, 5) or joint_y not in (0, 1, 2, 3):
-                continue
-            frames.append((payload[0], bool(payload[1] & 1),
-                           bool(payload[1] & 2), joint_x, joint_y, x, y))
-        if len(self.buffer) > 128:
-            self.buffer = self.buffer[-8:]
-        return frames
-
-
-class SerialReceiver(QThread):
-    freedrive_received = Signal(bool)
-    joint_selected = Signal(int)
-    joystick_received = Signal(int, int, int, int, bool)
-    connection_status = Signal(str)
-    gripper_received = Signal(bool)
-    button_received = Signal(int)
-    konami_ack = Signal(bool)
-    konami_input = Signal(str)
-
-    def __init__(self, port=None, baudrate=115200, parent=None):
-        super().__init__(parent)
-        self.port = port
-        self.baudrate = baudrate
-        self.running = True
-        self.serial_port = None
-        self._command_lock = __import__('threading').Lock()
-        self._commands = []
-
-    def send_command(self, command):
-        with self._command_lock:
-            self._commands.append(command)
-
-    def run(self):
-        if not self.port:
-            self.connection_status.emit('ESP32 no detectada: HMI sin conexion Serial')
-            return
-        try:
-            self.serial_port = serial.Serial(self.port, self.baudrate, timeout=0.1)
-            self.connection_status.emit(f'ESP32 connected: {self.port}')
-        except serial.SerialException as error:
-            self.connection_status.emit(f'ESP32 serial error: {error}')
-            return
-        decoder = PendantFrameDecoder()
-        last_manual = last_gripper = last_x = last_y = None
-        last_seq = None
-        konami_requested = False
-        konami_confirmed = False
-        text_buffer = bytearray()
-        while self.running:
-            try:
-                with self._command_lock:
-                    commands, self._commands = self._commands, []
-                for command in commands:
-                    if command == 'KONAMI,1':
-                        konami_requested = True
-                        konami_confirmed = False
-                        text_buffer.clear()
-                    elif command == 'KONAMI,0':
-                        konami_requested = False
-                        konami_confirmed = False
-                        text_buffer.clear()
-                        decoder = PendantFrameDecoder()
-                        last_seq = None
-                    self.serial_port.write((command + '\n').encode('ascii'))
-                data = self.serial_port.read(128)
-                if not data:
-                    continue
-                if konami_requested:
-                    # Se descarta cualquier residuo de la trama binaria al cambiar de modo.
-                    # Las respuestas de Konami son texto ASCII delimitado por newline.
-                    for byte in data:
-                        if byte == 10:
-                            line = bytes(text_buffer).decode('ascii', errors='ignore').strip()
-                            text_buffer.clear()
-                            if line == 'KONAMI,1':
-                                konami_confirmed = True
-                                self.konami_ack.emit(True)
-                            elif line == 'KONAMI,DENIED':
-                                self.konami_ack.emit(False)
-                            elif line.startswith('K,') and konami_confirmed:
-                                token = line[2:]
-                                if token in ('LEFT', 'RIGHT', 'UP', 'DOWN', 'CENTER', 'JUMP'):
-                                    self.konami_input.emit(token)
-                        elif 32 <= byte <= 126:
-                            if len(text_buffer) < 64:
-                                text_buffer.append(byte)
-                            else:
-                                text_buffer.clear()
-                    continue
-                for seq, manual, gripper, jx, jy, x, y in decoder.feed(data):
-                    # Ignore repeated sequence numbers, but tolerate wraparound.
-                    if seq == last_seq:
-                        continue
-                    last_seq = seq
-                    if manual != last_manual:
-                        self.freedrive_received.emit(manual)
-                        last_manual = manual
-                    if gripper != last_gripper:
-                        self.gripper_received.emit(gripper)
-                        last_gripper = gripper
-                    if jx != last_x and jx:
-                        self.joint_selected.emit(jx)
-                    if jy != last_y and jy:
-                        self.joint_selected.emit(jy)
-                        # Binary format does not include button events.
-                        # Infer J1/J2 from selection changes only.
-                        if jy in (1, 2) and last_y is not None:
-                            self.button_received.emit(jy)
-                    last_x, last_y = jx, jy
-                    self.joystick_received.emit(jx, jy, x, y, manual)
-            except (serial.SerialException, OSError) as error:
-                self.connection_status.emit(f'ESP32 serial error: {error}')
-                break
-        if self.serial_port is not None:
-            try:
-                self.serial_port.close()
-            except serial.SerialException:
-                pass
-
-    def stop(self):
-        self.running = False
-        self.wait(1000)
-
 class GripperIndicator(QWidget):
     """Small animated, non-interactive two-finger gripper diagram."""
 
@@ -462,17 +275,21 @@ class GripperIndicator(QWidget):
 class JointControl(QWidget):
     """Synchronised robot feedback and waypoint input, 800x480 friendly."""
 
-    def __init__(self, parent=None):
+    def __init__(self, joints, jog_axes, parent=None):
         super().__init__(parent)
+        self.joints = list(joints)  # robot_model.Joint: limits in degrees, Home at 0
+        # Joint numbers the pendant's joystick X and Y jog, among the joints that exist.
+        self.x_joints, self.y_joints = (
+            tuple(number for number in axis if number <= len(self.joints)) for axis in jog_axes)
         self.freedrive_enabled = False
         self.gripper_enabled = False
-        self.selected_joint_y = 1
-        self.selected_joint_x = 4
+        self.selected_joint_y = 0  # 0: none selected on the pendant
+        self.selected_joint_x = 0
         self.joint_inputs = []
         self.joint_sliders = []
         self.joint_value_labels = []
         self.joint_selector_labels = {}
-        self.current_positions = [180.0] * 5
+        self.current_positions = [0.0] * len(self.joints)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(2, 0, 2, 0)
@@ -488,10 +305,10 @@ class JointControl(QWidget):
         entry_layout = QFormLayout(entry_group)
         entry_layout.setContentsMargins(7, 18, 7, 5)
         entry_layout.setVerticalSpacing(5)
-        for i in range(5):
+        for i, joint in enumerate(self.joints):
             field = HMIInput()
-            field.setText('180.0')
-            field.setValidator(numeric_validator(0.0, 360.0, 2, field))
+            field.setText('0.0')
+            field.setValidator(numeric_validator(joint.lower_deg, joint.upper_deg, 2, field))
             field.setFixedHeight(34)
             self.joint_inputs.append(field)
             entry_layout.addRow(f'J{i + 1}:', field)
@@ -512,7 +329,7 @@ class JointControl(QWidget):
 
         joint_columns = QHBoxLayout()
         joint_columns.setSpacing(16)
-        for title, ids in (('Y', (1, 2, 3)), ('X', (4, 5))):
+        for title, ids in (('Y', self.y_joints), ('X', self.x_joints)):
             col = QVBoxLayout()
             col.setSpacing(3)
             col.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
@@ -569,19 +386,19 @@ class JointControl(QWidget):
         col.setSpacing(4)
         sliders = []
         labels = []
-        for i in range(5):
+        for i, joint in enumerate(self.joints):
             row = QHBoxLayout()
             row.setSpacing(3)
             name = QLabel(f'J{i + 1}')
             name.setFixedWidth(22)
             slider = QSlider(Qt.Orientation.Horizontal)
-            slider.setRange(0, 360)
-            slider.setValue(180)
+            slider.setRange(math.floor(joint.lower_deg), math.ceil(joint.upper_deg))
+            slider.setValue(0)
             slider.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             slider.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
             slider.setFixedHeight(24)
-            value = QLabel('180.0°')
-            value.setFixedWidth(55)
+            value = QLabel('0.0°')
+            value.setFixedWidth(62)
             value.setStyleSheet('font-size: 12px;')
             row.addWidget(name)
             row.addWidget(slider, 1)
@@ -609,13 +426,10 @@ class JointControl(QWidget):
     def toggle_freedrive(self):
         self.set_freedrive(not self.freedrive_enabled)
 
-    def set_selected_joint(self, joint_id):
-        if 1 <= joint_id <= 3:
-            self.selected_joint_y = joint_id
-        elif 4 <= joint_id <= 5:
-            self.selected_joint_x = joint_id
-        else:
-            return
+    def set_selection(self, joint_x, joint_y):
+        """Joints the pendant has selected for its joystick X and Y; 0: none."""
+        self.selected_joint_x = joint_x
+        self.selected_joint_y = joint_y
         self.update_joint_selector()
 
     def update_joint_selector(self):
@@ -640,8 +454,9 @@ class JointControl(QWidget):
             if not field.editing:
                 field.setText(f'{angle:.1f}')
 
-    def update_joint_positions(self, values):
-        self.current_positions = list(values[:5])
+    def update_joint_positions(self, values, sync_inputs=True):
+        """Shows the positions; sync_inputs also copies them to the target fields."""
+        self.current_positions = list(values[:len(self.joints)])
         for i, angle in enumerate(self.current_positions):
             for slider, label in (
                 (self.joint_sliders[i], self.joint_value_labels[i]),
@@ -649,7 +464,8 @@ class JointControl(QWidget):
             ):
                 slider.setValue(int(round(angle)))
                 label.setText(f'{angle:.1f}°')
-        self.sync_input_fields(self.current_positions)
+        if sync_inputs:
+            self.sync_input_fields(self.current_positions)
 
     def get_joint_values(self):
         values = []
@@ -660,131 +476,15 @@ class JointControl(QWidget):
             values.append(float(value))
         return values
 
-class WaypointDialog(QDialog):
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.values = None
-        self.setWindowTitle('Add Waypoint')
-        self.resize(800, 480)
-        self.canvas = QWidget(self)
-        self.canvas.setFixedSize(800, 480)
-        self.screen = QWidget(self.canvas)
-        layout = QVBoxLayout(self.screen)
-        layout.setContentsMargins(8, 5, 8, 5)
-        layout.setSpacing(3)
-        title = QLabel('WAYPOINT POSITION')
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setObjectName('dialogTitle')
-        layout.addWidget(title)
-        self.joint_control = JointControl()
-        layout.addWidget(self.joint_control)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self.save_waypoint)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-        # Same CRT overlay used by the main window, capturing the dialog content.
-        dialog_outer = QVBoxLayout(self)
-        dialog_outer.setContentsMargins(0, 0, 0, 0)
-        dialog_outer.addWidget(self.canvas, 0, Qt.AlignmentFlag.AlignCenter)
-        overlay = QStackedLayout(self.canvas)
-        overlay.setContentsMargins(0, 0, 0, 0)
-        overlay.setStackingMode(QStackedLayout.StackingMode.StackAll)
-        self.crt_display = CRTDisplay(self.screen)
-        overlay.addWidget(self.screen)
-        overlay.addWidget(self.crt_display)
-        overlay.setCurrentWidget(self.crt_display)
-        self.crt_display.raise_()
-        self.joint_control.joint_inputs[0].setFocus()
-
-    def save_waypoint(self):
-        # In Freedrive, capture the canonical robot state, not a local copy.
-        if self.joint_control.freedrive_enabled:
-            robot_hmi = self.parent()
-            if robot_hmi is None:
-                QMessageBox.warning(self, 'Robot State', 'Global joint state unavailable.')
-                return
-            self.values = list(robot_hmi.joint_values)
-            self.accept()
-            return
-        try:
-            self.values = self.joint_control.get_joint_values()
-        except ValueError as error:
-            QMessageBox.warning(self, 'Invalid Input', str(error))
-            return
-        self.accept()
-
-    def get_values(self):
-        return self.values
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        self.crt_display.raise_()
-        QTimer.singleShot(80, self.crt_display.update_crt)
-        if not getattr(self, '_checked_initial_screen', False):
-            self._checked_initial_screen = True
-            # El diálogo también ocupa toda la pantalla sin decoraciones.
-            QTimer.singleShot(0, self.showFullScreen)
-
-    def _fullscreen_if_small_screen(self):
-        screen = self.screen()
-        if screen is not None and screen.geometry().size().width() == 800 and screen.geometry().size().height() == 480:
-            self.showFullScreen()
-
-    def changeEvent(self, event):
-        super().changeEvent(event)
-        if event.type() == QEvent.Type.WindowStateChange and self.isMaximized():
-            screen = self.screen()
-            if screen is not None and screen.geometry().width() == 800 and screen.geometry().height() == 480:
-                QTimer.singleShot(0, self.showFullScreen)
-
-    def keyPressEvent(self, event):
-        key = event.key()
-        if key == Qt.Key.Key_F11:
-            self.showNormal() if self.isFullScreen() else self.showFullScreen()
-            return
-        focused = QApplication.focusWidget()
-        if isinstance(focused, HMIInput):
-            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-                focused.toggle_editing()
-                return
-            if key == Qt.Key.Key_Escape and focused.editing:
-                focused.stop_editing()
-                return
-            if focused.editing:
-                super().keyPressEvent(event)
-                return
-        if key == Qt.Key.Key_Down:
-            self.focusNextChild()
-            return
-        if key == Qt.Key.Key_Up:
-            self.focusPreviousChild()
-            return
-        if key == Qt.Key.Key_Escape:
-            self.reject()
-            return
-        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            if isinstance(focused, QPushButton):
-                focused.click()
-                return
-        super().keyPressEvent(event)
-
-
-# =========================================================
-# HIDDEN PONG MINI-GAME (RENDERED THROUGH THE EXISTING CRT)
-# =========================================================
-# =========================================================
-# JUEGO OCULTO: GOAT RUN (DINO RUN CON CABRA PIXEL ART)
-# =========================================================
 class CreditsExplorer(QWidget):
     """Escena 2D desplazable dentro del CRT principal, sin motores ni comandos robot."""
 
     # Cambia estos cuatro nombres para personalizar las etiquetas bajo los retratos.
     CREATOR_NAMES = [
-        "Nombre 1",
-        "Nombre 2",
-        "Nombre 3",
-        "Nombre 4",
+        "DiazPaz",
+        "LivingCheerios",
+        "kaeeruu",
+        "Eugenio Nava",
     ]
 
     SCREEN_W = 800
@@ -1359,8 +1059,11 @@ class CRTPowerOnTransition(QWidget):
 
 class RobotHMI(QMainWindow):
 
-    def __init__(self):
+    def __init__(self, robot):
         super().__init__()
+        # The robot API (movemaster_hmi.robot_client): the only way this window reaches the arm.
+        self.robot = robot
+        self.stop_requested = False
         self.setWindowTitle('Robot HMI')
         self.resize(800, 480)
         self._auto_fullscreen_pending = False
@@ -1384,13 +1087,9 @@ class RobotHMI(QMainWindow):
         self.editing_step_index = None  # None means ADD; integer means EDIT
         self.gripper_enabled = False
         self.active_waypoint_dialog = None
-        self.joint_values = [180.0, 180.0, 180.0, 180.0, 180.0]
-        # Estimacion visual: la trama de pendant NO transporta angulos reales.
-        self._jog_last_x = time.monotonic()
-        self._jog_last_y = time.monotonic()
-        self._jog_last_frame = time.monotonic()
-        self._jog_x = 4
-        self._jog_y = 1
+        # Measured joint angles in degrees (Home at 0), from the robot; zeros until it reports.
+        self.joint_values = [0.0] * len(self.robot.joints)
+        self.positions_received = False
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -1406,10 +1105,12 @@ class RobotHMI(QMainWindow):
         main_layout = QVBoxLayout(self.hmi_widget)
         main_layout.setContentsMargins(8, 6, 8, 5)
         main_layout.setSpacing(3)
-        header = QLabel('MOVEMASTER II CONTROL SYSTEM')
+        header = QLabel()
         header.setAlignment(Qt.AlignmentFlag.AlignCenter)
         header.setObjectName('header')
         main_layout.addWidget(header)
+        self.header = header
+        self.program_step = None  # (step, steps) of the program that is running
         self.tabs = QTabWidget()
         self.tabs.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.tabs.tabBar().setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -1483,19 +1184,18 @@ class RobotHMI(QMainWindow):
         self.crt_display.raise_()
         QApplication.instance().installEventFilter(self)
         self.speed_input.setFocus()
-        self.serial_receiver = SerialReceiver(port=find_esp32_serial_port(), baudrate=115200, parent=self)
-        self.serial_receiver.freedrive_received.connect(self.on_freedrive_received)
-        self.serial_receiver.joint_selected.connect(self.on_joint_selected)
-        self.serial_receiver.joystick_received.connect(self.on_joystick_received)
-        self.serial_receiver.gripper_received.connect(self.on_gripper_received)
-        self.serial_receiver.button_received.connect(self.on_button_received)
-        self.serial_receiver.konami_ack.connect(self.on_konami_ack)
-        self.serial_receiver.konami_input.connect(self.on_konami_input)
         self.konami_watchdog = QTimer(self)
         self.konami_watchdog.setInterval(80)
         self.konami_watchdog.timeout.connect(self.check_konami_input)
-        self.serial_receiver.connection_status.connect(print)
-        self.serial_receiver.start()
+        self.robot.positions_changed.connect(self.on_positions_received)
+        self.robot.gripper_changed.connect(self.on_gripper_received)
+        self.robot.selection_changed.connect(self.on_selection_received)
+        self.robot.mode_changed.connect(self.on_mode_changed)
+        self.robot.busy_changed.connect(self.on_busy_changed)
+        self.robot.step_started.connect(self.on_step_started)
+        self.robot.finished.connect(self.on_robot_finished)
+        self.update_robot_status()
+        self.robot.start()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -1583,16 +1283,18 @@ class RobotHMI(QMainWindow):
         speed_group = QGroupBox('MOVEMENT SPEED')
         speed_layout = QFormLayout()
         self.speed_input = HMIInput()
-        self.speed_input.setPlaceholderText('0 - 100 %')
+        self.speed_input.setPlaceholderText('1 - 100 %')
+        self.speed_input.setText(f'{DEFAULT_SPEED_PERCENT:g}')
         self.speed_input.setValidator(numeric_validator(0, 100, 1, self.speed_input))
         speed_layout.addRow('Robot Speed:', self.speed_input)
         speed_group.setLayout(speed_layout)
         layout.addWidget(speed_group)
-        home_group = QGroupBox('HOME CALIBRATION')
+        # The arm is referenced by the homing of the bringup; here it only goes back to Home.
+        home_group = QGroupBox('HOME')
         home_layout = QVBoxLayout()
-        self.home_status = QLabel('Home: NOT CALIBRATED')
-        self.home_button = QPushButton('CALIBRATE HOME')
-        self.home_button.clicked.connect(self.calibrate_home)
+        self.home_status = QLabel('Home: WAITING FOR THE ROBOT')
+        self.home_button = QPushButton('GO HOME')
+        self.home_button.clicked.connect(self.go_home)
         home_layout.addWidget(self.home_status)
         home_layout.addWidget(self.home_button)
         home_group.setLayout(home_layout)
@@ -1681,7 +1383,7 @@ class RobotHMI(QMainWindow):
         title.setObjectName('dialogTitle')
         title.setFixedHeight(26)
         editor_layout.addWidget(title)
-        self.waypoint_joint_control = JointControl()
+        self.waypoint_joint_control = JointControl(self.robot.joints, self.robot.jog_axes)
         editor_layout.addWidget(self.waypoint_joint_control, 1)
         actions = QHBoxLayout()
         self.save_waypoint_button = QPushButton('SAVE WAYPOINT')
@@ -1881,7 +1583,7 @@ class RobotHMI(QMainWindow):
         group_layout = QVBoxLayout()
         group_layout.setContentsMargins(4, 6, 4, 6)
         group_layout.setSpacing(3)
-        self.movement_joint_control = JointControl()
+        self.movement_joint_control = JointControl(self.robot.joints, self.robot.jog_axes)
         group_layout.addWidget(self.movement_joint_control)
         self.move_robot_button = QPushButton('MOVE ROBOT')
         self.move_robot_button.setFixedHeight(34)
@@ -1893,9 +1595,30 @@ class RobotHMI(QMainWindow):
         layout.addStretch()
         return tab
 
-    def calibrate_home(self):
-        self.home_status.setText('Home: CALIBRATED')
-        print('HOME CALIBRATED')
+    def speed_percent(self):
+        """MOVEMENT SPEED of the configuration tab; the default if it is empty."""
+        text = self.speed_input.text().strip()
+        return float(text) if text else DEFAULT_SPEED_PERCENT
+
+    def command_robot(self, command):
+        """Runs a robot API call; a refusal is shown to the operator. True if it was taken."""
+        try:
+            command()
+        except (RobotError, ValueError) as error:
+            QMessageBox.warning(self, 'Robot', str(error))
+            return False
+        self.stop_requested = False
+        return True
+
+    def stop_robot(self):
+        self.stop_requested = True
+        self.robot.stop()
+
+    def go_home(self):
+        if self.robot.busy:
+            self.stop_robot()
+            return
+        self.command_robot(lambda: self.robot.go_home(self.speed_percent()))
 
     def apply_tcp(self):
         text = self.tcp_distance_input.text().strip()
@@ -1909,22 +1632,21 @@ class RobotHMI(QMainWindow):
         # In Freedrive, physical controls produce the position changes.
         if self.movement_joint_control.freedrive_enabled:
             return
+        if self.robot.busy:
+            self.stop_robot()
+            return
         try:
             values = self.movement_joint_control.get_joint_values()
-            if any(not (0.0 <= value <= 360.0) for value in values):
-                raise ValueError('Joint angles must be between 0 and 360 degrees.')
         except ValueError as error:
             QMessageBox.warning(self, 'Invalid Input', str(error))
             return
 
-        # Exit text editing before synchronizing the freshly applied values.
+        # Leave text editing: the fields keep the target while the arm moves to it.
         for field in self.movement_joint_control.joint_inputs:
             if field.editing:
                 field.stop_editing()
 
-        # Text control uses the same canonical state update as Freedrive.
-        self.set_robot_positions(values)
-        print('MOVE ROBOT (HMI position update):', self.joint_values)
+        self.command_robot(lambda: self.robot.move_to(values, self.speed_percent()))
 
     def add_waypoint(self):
         self.editing_step_index = None
@@ -1936,8 +1658,8 @@ class RobotHMI(QMainWindow):
             if field.editing:
                 field.stop_editing()
         control.update_joint_positions(self.joint_values)
-        control.set_selected_joint(self.movement_joint_control.selected_joint_y)
-        control.set_selected_joint(self.movement_joint_control.selected_joint_x)
+        control.set_selection(self.movement_joint_control.selected_joint_x,
+                              self.movement_joint_control.selected_joint_y)
         control.set_gripper(self.gripper_enabled)
         control.set_freedrive(self.movement_joint_control.freedrive_enabled)
         self.program_stack.setCurrentIndex(1)
@@ -1949,16 +1671,14 @@ class RobotHMI(QMainWindow):
     def save_waypoint_inline(self):
         control = self.waypoint_joint_control
         if control.freedrive_enabled and self.editing_step_index is None:
-            # Freedrive always snapshots the latest CAN/Serial robot positions.
+            # Freedrive always snapshots the latest measured robot positions.
             values = list(self.joint_values)
         else:
             try:
                 values = control.get_joint_values()
+                check_target(self.robot.joints, values)
             except ValueError as error:
                 QMessageBox.warning(self, 'Invalid Input', str(error))
-                return
-            if any(not 0 <= value <= 360 for value in values):
-                QMessageBox.warning(self, 'Invalid Input', 'Joint angles must be 0–360 degrees.')
                 return
         step = {'type': 'waypoint', 'joints': list(values)}
         if self.editing_step_index is None:
@@ -2014,18 +1734,17 @@ class RobotHMI(QMainWindow):
         self.sequence_list.setCurrentRow(previous_row)
 
     def run_program(self):
+        if self.robot.busy:
+            self.stop_robot()
+            return
         if not self.waypoints:
             QMessageBox.warning(self, 'Empty Program', 'Add at least one waypoint.')
             return
-        print('PROGRAM START')
-        for i, step in enumerate(self.waypoints, 1):
-            if step['type'] == 'waypoint':
-                print(f'STEP {i} | WAYPOINT:', step['joints'])
-            elif step['type'] == 'gripper':
-                print(f'STEP {i} | GRIPPER:', 'CLOSED' if step['closed'] else 'OPEN')
-            elif step['type'] == 'wait':
-                print(f"STEP {i} | WAIT: {step['seconds']:g} seconds")
-        print('PROGRAM FINISH')
+        steps = len(self.waypoints)
+        if self.command_robot(
+                lambda: self.robot.run_program(self.waypoints, self.speed_percent())):
+            self.program_step = (0, steps)
+            self.update_robot_status()
 
     def on_gripper_received(self, enabled):
         self.gripper_enabled = bool(enabled)
@@ -2039,11 +1758,12 @@ class RobotHMI(QMainWindow):
             self.record_secret_input(f'J{joint_id}')
 
     def esp32_connected(self):
-        """Comprueba que el receptor Serial este funcionando con un puerto abierto."""
-        receiver = getattr(self, 'serial_receiver', None)
-        port = getattr(receiver, 'serial_port', None)
-        return bool(receiver is not None and receiver.isRunning()
-                    and port is not None and getattr(port, 'is_open', False))
+        """El modo Konami de la ESP32 no esta disponible desde el HMI.
+
+        El puerto serie del pendant es de jog_node (movemaster_teleop), que no reenvia
+        comandos a la ESP32: la escena se abre y se juega con el teclado.
+        """
+        return False
 
     def record_secret_input(self, token):
         """Detecta la combinacion sin consumir las teclas de navegacion.
@@ -2103,7 +1823,6 @@ class RobotHMI(QMainWindow):
         self.konami_pending = True
         self.konami_request_started = time.monotonic()
         self.konami_watchdog.start()
-        self.serial_receiver.send_command('KONAMI,1')
 
     def on_konami_ack(self, enabled):
         if not self.konami_pending:
@@ -2141,7 +1860,6 @@ class RobotHMI(QMainWindow):
         if self.konami_pending and time.monotonic() - self.konami_request_started > 2.0:
             self.konami_pending = False
             self.konami_watchdog.stop()
-            self.serial_receiver.send_command('KONAMI,0')
             print('[KONAMI] No se recibio confirmacion de la ESP32')
         if self.arcade_active and time.monotonic() - self.konami_input_last > 0.18:
             if self.konami_direction is not None:
@@ -2176,8 +1894,6 @@ class RobotHMI(QMainWindow):
         self.konami_pending = False
         self.konami_direction = None
         self.goat_game.looking_up = False
-        if self.esp32_connected():
-            self.serial_receiver.send_command('KONAMI,0')
         self.goat_game.end()
         self.arcade_active = False
         self.pong_active = False
@@ -2210,81 +1926,75 @@ class RobotHMI(QMainWindow):
         if self.tabs.currentIndex() == 1 and self.waypoint_editor_active() and self.editing_step_index is None:
             (self.save_waypoint_button if enabled else self.waypoint_joint_control.joint_inputs[0]).setFocus()
 
-    def on_joint_selected(self, joint_id):
-        if 1 <= joint_id <= 5:
-            self.movement_joint_control.set_selected_joint(joint_id)
-            self.waypoint_joint_control.set_selected_joint(joint_id)
+    def on_selection_received(self, joint_x, joint_y):
+        self.movement_joint_control.set_selection(joint_x, joint_y)
+        self.waypoint_joint_control.set_selection(joint_x, joint_y)
 
-    def on_joystick_received(self, joint_x, joint_y, x, y, manual):
-        """Mantiene la estimacion angular antigua SOLO para el HMI.
+    def on_positions_received(self, positions):
+        """Measured joint angles from the robot: the single source of the positions shown.
 
-        Las tramas no incluyen angulos ni encoder feedback. El backend de
-        motores debe ser la fuente de posicion real cuando se integre.
+        They move the sliders. The target fields are copied from them only once, when the
+        robot first reports, so a target being typed is never overwritten.
         """
-        now = time.monotonic()
-        self._jog_last_frame = now
-        if joint_x:
-            self._jog_x = joint_x
-        if joint_y:
-            self._jog_y = joint_y
-        if not manual:
-            self._jog_last_x = self._jog_last_y = now
-            return
-
-        def step(joint, normalized, previous):
-            # Se conserva el esquema de la version anterior:
-            # zona muerta ADC=300; incrementos de 1 grado y retardo 20..250ms.
-            # El valor de joystick serializado esta cuantizado a -1000..1000.
-            if joint == 0 or not 1 <= joint <= 5:
-                return previous
-            magnitude = abs(normalized) * 2048.0 / 1000.0
-            if magnitude <= 300:
-                return previous
-            delay_ms = 250 - (min(magnitude, 2048) - 300) * 230 / (2048 - 300)
-            if (now - previous) * 1000.0 < delay_ms:
-                return previous
-            current = list(self.joint_values)
-            index = joint - 1
-            angle = max(0.0, min(360.0, current[index] + (1 if normalized > 0 else -1)))
-            if angle != current[index]:
-                current[index] = angle
-                self.set_robot_positions(current)
-            return now
-
-        self._jog_last_x = step(self._jog_x, x, self._jog_last_x)
-        self._jog_last_y = step(self._jog_y, y, self._jog_last_y)
-
-    def on_joint_received(self, joint_id, angle):
-        index = joint_id - 1
-        if not 0 <= index < 5:
-            return
-        # Update the one shared state rather than any JointControl copy.
-        new_positions = list(self.joint_values)
-        new_positions[index] = float(angle)
-        self.set_robot_positions(new_positions)
-        self.movement_joint_control.set_selected_joint(joint_id)
-        self.waypoint_joint_control.set_selected_joint(joint_id)
-
-    def set_robot_positions(self, positions):
-        """Single source of truth for all five joint positions.
-
-        Every update from CAN/Serial and text control must pass through here.
-        The two JointControl widgets only display this state.
-        """
-        if len(positions) != 5:
-            raise ValueError('Expected exactly five joint positions.')
-        new_values = [float(value) for value in positions]
-        if any(not (0.0 <= value <= 360.0) for value in new_values):
-            raise ValueError('Joint angles must be between 0 and 360 degrees.')
-
-        self.joint_values = new_values
-        self.movement_joint_control.update_joint_positions(self.joint_values)
+        self.joint_values = [float(value) for value in positions]
+        sync_inputs = not self.positions_received
+        self.positions_received = True
+        self.movement_joint_control.update_joint_positions(self.joint_values, sync_inputs)
         if not (self.waypoint_editor_active() and self.editing_step_index is not None):
-            self.waypoint_joint_control.update_joint_positions(self.joint_values)
+            self.waypoint_joint_control.update_joint_positions(self.joint_values, sync_inputs)
+        at_home = all(abs(value) <= HOME_TOLERANCE_DEG for value in self.joint_values)
+        self.home_status.setText('Home: AT HOME' if at_home else 'Home: AWAY FROM HOME')
 
     def update_robot_position(self, joint_values):
-        """Backward-compatible entry point; uses the shared state."""
-        self.set_robot_positions(joint_values)
+        """Shows the positions and copies them to the target fields."""
+        self.movement_joint_control.update_joint_positions(joint_values)
+        if not (self.waypoint_editor_active() and self.editing_step_index is not None):
+            self.waypoint_joint_control.update_joint_positions(joint_values)
+
+    def on_mode_changed(self, mode):
+        """Who commands the arm: in MANUAL the pendant jogs it (the HMI's Freedrive)."""
+        manual = mode == robot_client.MANUAL
+        if manual != self.movement_joint_control.freedrive_enabled:
+            self.on_freedrive_received(manual)
+        if mode == robot_client.OFFLINE:
+            self.positions_received = False
+            self.home_status.setText('Home: WAITING FOR THE ROBOT')
+        self.update_robot_status()
+
+    def on_busy_changed(self, busy):
+        self.move_robot_button.setText('STOP' if busy else 'MOVE ROBOT')
+        self.home_button.setText('STOP' if busy else 'GO HOME')
+        self.run_program_button.setText('STOP PROGRAM' if busy else 'RUN PROGRAM')
+        if not busy:
+            self.program_step = None
+        self.update_robot_status()
+
+    def on_step_started(self, index):
+        self.program_step = (index + 1, self.program_step[1] if self.program_step else index + 1)
+        self.sequence_list.setCurrentRow(index + 1)  # row 0 is START
+        self.update_robot_status()
+
+    def on_robot_finished(self, ok, message):
+        print(f'[ROBOT] {message}')
+        if not ok and not self.stop_requested:
+            QMessageBox.warning(self, 'Robot', message)
+        self.stop_requested = False
+
+    def update_robot_status(self):
+        mode = self.robot.mode
+        if mode == robot_client.OFFLINE:
+            status = 'OFFLINE'
+        elif mode == robot_client.STOPPED:
+            status = 'FAULT'
+        elif mode == robot_client.MANUAL:
+            status = 'MANUAL'
+        elif self.program_step:
+            status = 'STEP %d/%d' % self.program_step
+        elif self.robot.busy:
+            status = 'MOVING'
+        else:
+            status = 'READY'
+        self.header.setText(f'MOVEMASTER II CONTROL SYSTEM  [{status}]')
 
     def next_tab(self):
         index = (self.tabs.currentIndex() + 1) % self.tabs.count()
@@ -2526,12 +2236,9 @@ class RobotHMI(QMainWindow):
         return super().eventFilter(obj, event)
 
     def closeEvent(self, event):
-        if hasattr(self, 'serial_receiver') and (getattr(self, 'arcade_active', False) or getattr(self, 'konami_pending', False)):
-            self.serial_receiver.send_command('KONAMI,0')
         if getattr(self, 'arcade_active', False):
             self.goat_game.end()
-        if hasattr(self, 'serial_receiver'):
-            self.serial_receiver.stop()
+        self.robot.shutdown()
         super().closeEvent(event)
 RETRO_STYLE = '\nQMainWindow {\n    background-color: #000000;\n}\nQWidget {\n    background-color: #020502;\n    color: #65ff72;\n    font-family: "Courier New";\n    font-size: 16px;\n}\nQLabel#header {\n    font-size: 26px;\n    font-weight: bold;\n    color: #90ff99;\n    padding: 3px;\n}\nQLabel#dialogTitle {\n    font-size: 20px;\n    font-weight: bold;\n}\nQLabel#keyboardHelp {\n    font-size: 13px;\n    color: #4fc95c;\n    padding: 4px;\n}\nQGroupBox {\n    border: 2px solid #47d85a;\n    margin-top: 10px;\n    padding: 5px;\n    font-weight: bold;\n}\nQGroupBox::title {\n    subcontrol-origin: margin;\n    left: 10px;\n    padding: 0px 5px;\n}\n/* ======================================================\n   INPUTS\n   ====================================================== */\nQLineEdit {\n    background-color: #000200;\n    color: #75ff82;\n    border: 2px solid #47d85a;\n    padding: 3px 7px;\n    font-size: 15px;\n}\n/* Selected but locked */\nQLineEdit:focus {\n    background-color: #071007;\n    color: #75ff82;\n    border: 3px solid #d0ffd5;\n}\n/* Edit mode */\nQLineEdit[editing="true"] {\n    background-color: #123518;\n    color: #ffffff;\n    border: 3px solid #65ff72;\n}\n/* ======================================================\n   BUTTONS\n   ====================================================== */\nQPushButton {\n    background-color: #061006;\n    color: #65ff72;\n    border: 2px solid #47d85a;\n    padding: 3px 7px;\n    font-size: 15px;\n}\nQPushButton:focus {\n    background-color: #102615;\n    border: 3px solid #d0ffd5;\n}\nQPushButton:hover {\n    background-color: #102615;\n}\nQPushButton:checked {\n    background-color: #65ff72;\n    color: #000000;\n    border: 3px solid #d0ffd5;\n}\nQPushButton:pressed {\n    background-color: #65ff72;\n    color: #000000;\n}\n/* ======================================================\n   TABS\n   ====================================================== */\nQTabWidget::pane {\n    border: 2px solid #47d85a;\n}\nQTabBar::tab {\n    background-color: #061006;\n    color: #65ff72;\n    border: 2px solid #47d85a;\n    padding: 10px 24px;\n}\nQTabBar::tab:selected {\n    background-color: #47d85a;\n    color: #000000;\n}\n/* ======================================================\n   LIST\n   ====================================================== */\nQListWidget {\n    background-color: #000200;\n    color: #65ff72;\n    border: 2px solid #47d85a;\n    padding: 5px;\n}\nQListWidget:focus {\n    border: 3px solid #d0ffd5;\n}\nQListWidget::item {\n    padding: 8px;\n}\nQListWidget::item:selected {\n    background-color: #47d85a;\n    color: #000000;\n}\n/* ======================================================\n   SLIDERS\n   ====================================================== */\nQSlider::groove:horizontal {\n    height: 8px;\n    background: #061006;\n    border: 1px solid #47d85a;\n}\nQSlider::handle:horizontal {\n    width: 16px;\n    background: #65ff72;\n    margin: -5px 0px;\n}\n'
 def find_hmi_screen(app):
@@ -2543,14 +2250,39 @@ def find_hmi_screen(app):
     return app.primaryScreen() or (app.screens()[0] if app.screens() else None)
 
 
-if __name__ == '__main__':
-    app = QApplication(sys.argv)
+def default_joint_config():
+    """joints.json of the installed movemaster_hardware; without ROS, the one of this repo."""
+    try:
+        from ament_index_python.packages import get_package_share_directory
+        return Path(get_package_share_directory('movemaster_hardware')) / 'config' / 'joints.json'
+    except Exception:  # No ROS, or the package is not installed.
+        return (Path(__file__).resolve().parents[2] / 'movemaster_hardware' / 'config'
+                / 'joints.json')
+
+
+def default_jog_config():
+    try:
+        from ament_index_python.packages import get_package_share_directory
+        return Path(get_package_share_directory('movemaster_teleop')) / 'config' / 'jog.yaml'
+    except Exception:
+        return Path(__file__).resolve().parents[2] / 'movemaster_teleop' / 'config' / 'jog.yaml'
+
+
+def main():
+    parser = argparse.ArgumentParser(description='MoveMaster HMI.')
+    parser.add_argument('--joint-config', type=Path, default=None,
+                        help='joints.json: the joints, their limits and speeds.')
+    arguments, qt_arguments = parser.parse_known_args()
+    joints = load_joints(arguments.joint_config or default_joint_config())
+    robot = robot_client.connect(joints, load_jog_axes(default_jog_config()))
+
+    app = QApplication(sys.argv[:1] + qt_arguments)
     app.setStyleSheet(RETRO_STYLE)
     # Oculta el puntero en todas las ventanas y diálogos Qt del HMI.
     app.setOverrideCursor(Qt.CursorShape.BlankCursor)
 
     target_screen = find_hmi_screen(app)
-    window = RobotHMI()
+    window = RobotHMI(robot)
 
     if target_screen is not None:
         geometry = target_screen.geometry()
@@ -2566,3 +2298,7 @@ if __name__ == '__main__':
 
     window.showFullScreen()
     sys.exit(app.exec())
+
+
+if __name__ == '__main__':
+    main()

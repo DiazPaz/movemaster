@@ -6,10 +6,13 @@ switch picks the controller in command (movemaster_teleop.mode): MANUAL activate
 jog_controller, AUTO gives the joints back to joint_trajectory_controller. With
 select_controllers false, the controllers are switched by hand with ros2 control.
 The joystick button opens and closes the gripper (movemaster_teleop.gripper), in MANUAL and
-in AUTO.
+in AUTO. jog_node is the only reader of the pendant's port: it publishes every fresh frame on
+/pendant/joy (movemaster_teleop.pendant_joy) for the HMI. With the text protocol it also sends
+the pendant the measured angles, which the ESP32 shows (movemaster_teleop.pendant_text).
 """
 
 import json
+import math
 from pathlib import Path
 import time
 
@@ -20,9 +23,10 @@ import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import qos_profile_action_status_default
-from sensor_msgs.msg import JointState
+from sensor_msgs.msg import JointState, Joy
 from std_msgs.msg import Float64MultiArray
 
+from movemaster_teleop import pendant_joy, pendant_text
 from movemaster_teleop.gripper import CLOSED, GripperButton
 from movemaster_teleop.jog import Jogger, JointLimits
 from movemaster_teleop.mode import ControllerSelector, JOG
@@ -61,10 +65,12 @@ class JogNode(Node):
         p = {name: self.declare_parameter(name, value).value for name, value in {
             'port': '/dev/ttyUSB0',
             'baudrate': 115200,
+            'protocol': 'text',
+            'angles_rate_hz': 10.0,
             'joint_config': default_config,
             'rate_hz': 50.0,
-            'x_joints': [1, 5],
-            'y_joints': [2, 3, 4],
+            'x_joints': [4, 5],
+            'y_joints': [1, 2, 3],
             'max_speed_rad_s': [0.25, 0.25, 0.25, 0.25, 0.25],
             'deadband': 0.12,
             'max_lead_rad': 0.05,
@@ -76,7 +82,12 @@ class JogNode(Node):
         joints, limits = load_limits(p['joint_config'], p['max_speed_rad_s'])
         self.jogger = Jogger(joints, limits, p['x_joints'], p['y_joints'], p['deadband'],
                              p['max_lead_rad'], p['idle_timeout_s'])
-        self.link = SerialLink(p['port'], p['baudrate'])
+        self.joints = joints
+        self.link = SerialLink(p['port'], p['baudrate'], protocol=p['protocol'])
+        # Only the text firmware reads the angles; a rate of 0 sends none.
+        self.angles_period = (1.0 / p['angles_rate_hz']
+                              if p['protocol'] == 'text' and p['angles_rate_hz'] > 0 else None)
+        self.angles_at = 0.0
         self.link_timeout = p['link_timeout_s']
         self.measured = {}
         self.frame = None
@@ -87,6 +98,7 @@ class JogNode(Node):
         self.gripper = GripperButton()
         self.gripper_publisher = self.create_publisher(
             Float64MultiArray, '/gripper_controller/commands', 10)
+        self.joy_publisher = self.create_publisher(Joy, pendant_joy.TOPIC, 10)
         self.create_subscription(JointState, '/joint_states', self.on_joint_states, 10)
         self.selector = None
         if p['select_controllers']:
@@ -102,7 +114,7 @@ class JogNode(Node):
             self.create_timer(1.0, self.refresh_controllers)
         self.create_timer(1.0 / p['rate_hz'], self.tick)
         self.get_logger().info(
-            f'Pendant on {p["port"]}; joints {", ".join(joints)}; '
+            f'Pendant on {p["port"]} ({p["protocol"]}); joints {", ".join(joints)}; '
             f'X jogs {p["x_joints"]}, Y jogs {p["y_joints"]}.')
 
     def on_joint_states(self, msg):
@@ -114,12 +126,16 @@ class JogNode(Node):
         was_connected = self.link.connected
         for frame in self.link.poll():
             self.frame, self.frame_at = frame, now
+            joy = Joy(axes=pendant_joy.axes(frame), buttons=pendant_joy.buttons(frame))
+            joy.header.stamp = self.get_clock().now().to_msg()
+            self.joy_publisher.publish(joy)
         if self.link.connected != was_connected:
             state = 'connected' if self.link.connected else 'disconnected'
             self.get_logger().info(f'Pendant {state}.')
         fresh = self.frame_at is not None and now - self.frame_at <= self.link_timeout
         frame = self.frame if fresh else None
         self.report_selection(frame)
+        self.send_angles(now)
         opening = self.gripper.update(frame)
         if opening is not None:
             self.gripper_publisher.publish(Float64MultiArray(data=[opening]))
@@ -132,6 +148,16 @@ class JogNode(Node):
         targets = self.jogger.update(frame, self.measured, dt)
         if targets is not None:
             self.publisher.publish(Float64MultiArray(data=targets))
+
+    def send_angles(self, now):
+        """The measured angles to the pendant, in degrees with Home at 0, for it to show."""
+        if self.angles_period is None or now - self.angles_at < self.angles_period:
+            return
+        if not self.link.connected or not all(name in self.measured for name in self.joints):
+            return
+        self.angles_at = now
+        self.link.send(pendant_text.format_angles(
+            [math.degrees(self.measured[name]) for name in self.joints]))
 
     def on_trajectory_status(self, msg):
         self.trajectory_running = any(goal.status in RUNNING for goal in msg.status_list)

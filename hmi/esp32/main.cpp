@@ -1,3 +1,25 @@
+// Teach pendant de MoveMaster (ESP32), protocolo de texto.
+//
+// Cada 20 ms imprime por USB un bloque legible en el monitor serie, que la Raspberry Pi
+// (jog_node, movemaster_teleop/pendant_text.py) lee y convierte en comandos de ROS:
+//
+//   Freedrive: ON
+//   Joint Y: J1 | Angulo: 12.3 grados | Joystick Y: -450
+//   Joint X: J4 | Angulo: -5.0 grados | Joystick X: 0
+//   Gripper: OFF
+//   -------------------------
+//
+// Freedrive es el switch MANUAL/AUTO. Joystick va de -1000 a 1000 alrededor del centro
+// calibrado al encender, y es 0 en AUTO. Gripper es el estado que alterna el botón del
+// joystick: ON cierra el gripper. El ESP32 no mueve nada ni calcula ángulos: los ángulos son
+// los medidos en el robot (/joint_states), que la Raspberry Pi le manda en grados con Home
+// en 0, una línea por envío:
+//
+//   ANGLES,12.3,-20.5,33.3,0.0,45.0
+//
+// Antes de recibir la primera, el ángulo se imprime como "--". El formato de las líneas
+// debe coincidir con pendant_text.py: si cambia uno, cambia el otro.
+
 #include <Arduino.h>
 
 // Joystick
@@ -19,43 +41,26 @@ const int pinJ3 = 23;
 const int pinJ4 = 25;
 const int pinJ5 = 26;
 
-// Rango angular
-float deg_min = 0.0;
-float deg_max = 360.0;
-
-// Posiciones iniciales
-float jointAngles[5] = {
-  180.0,   // J1
-  180.0,   // J2
-  180.0,   // J3
-  180.0,   // J4
-  180.0    // J5
-};
+// Ángulos medidos que manda la Raspberry Pi
+const int numJoints = 5;
+float jointAngles[numJoints] = {0.0, 0.0, 0.0, 0.0, 0.0};
+bool angulosRecibidos = false;
+char lineaRx[96];
+int largoRx = 0;
 
 // Joint seleccionado
 int jointY = 1;
 int jointX = 4;
 
-// Joystick
-const int adc_min = 0;
+// Joystick: centro calibrado al encender y escala de salida
 const int adc_max = 4095;
-const int adc_center = 2048;
+int centroX = 2048;
+int centroY = 2048;
+const int escala = 1000;
 
-// Zona muerta alrededor del centro
-const int zonaMuerta = 300;
-
-// Velocidad
-
-// Tiempo mínimo entre pasos cuando
-// el joystick está al máximo
-const unsigned long delayMin = 20;
-
-// Tiempo máximo cuando apenas sale
-// de la zona muerta
-const unsigned long delayMax = 250;
-
-unsigned long ultimoMovimientoX = 0;
-unsigned long ultimoMovimientoY = 0;
+// Envío
+const unsigned long periodoMs = 20;
+unsigned long ultimoEnvio = 0;
 
 // Gripper
 bool gripperActivo = false;
@@ -65,48 +70,102 @@ bool estadoAnteriorJoystickBtn = HIGH;
 unsigned long ultimoDebounce = 0;
 const unsigned long debounceDelay = 50;
 
-// Función para limitar ángulo
-float limitarAngulo(float angulo) {
+// Promedio con el joystick en reposo: el centro real del ADC no es 2048.
+int calibrarCentro(int pin) {
 
-  if (angulo > deg_max) {
-    return deg_max;
+  long suma = 0;
+
+  for (int i = 0; i < 64; ++i) {
+    suma += analogRead(pin);
+    delay(2);
   }
 
-  if (angulo < deg_min) {
-    return deg_min;
-  }
-
-  return angulo;
+  return suma / 64;
 }
 
-// Calcular intervalo de movimiento
-unsigned long calcularDelay(int valorJoystick) {
+// Lectura del ADC a -1000..1000, cada mitad escalada desde el centro calibrado.
+int normalizar(int raw, int centro) {
 
-  int magnitud = abs(valorJoystick - adc_center);
+  long valor;
 
-  if (magnitud < zonaMuerta) {
-    return delayMax;
+  if (raw >= centro) {
+    valor = (long)(raw - centro) * escala / max(1, adc_max - centro);
+  } else {
+    valor = (long)(raw - centro) * escala / max(1, centro);
   }
 
-  magnitud = constrain(
-    magnitud,
-    zonaMuerta,
-    adc_center
-  );
+  return constrain(valor, -escala, escala);
+}
 
-  return map(
-    magnitud,
-    zonaMuerta,
-    adc_center,
-    delayMax,
-    delayMin
-  );
+// "ANGLES,a1,a2,..." de la Raspberry Pi: guarda los ángulos que trae.
+void procesarLinea(char *linea) {
+
+  if (strncmp(linea, "ANGLES,", 7) != 0) {
+    return;
+  }
+
+  char *resto = linea + 7;
+
+  for (int i = 0; i < numJoints && resto != NULL && *resto != '\0'; ++i) {
+    jointAngles[i] = atof(resto);
+    resto = strchr(resto, ',');
+    if (resto != NULL) {
+      resto++;
+    }
+  }
+
+  angulosRecibidos = true;
+}
+
+// Lee sin esperar lo que haya llegado por USB, línea por línea.
+void leerSerial() {
+
+  while (Serial.available() > 0) {
+
+    char c = Serial.read();
+
+    if (c == '\n' || c == '\r') {
+      if (largoRx > 0) {
+        lineaRx[largoRx] = '\0';
+        procesarLinea(lineaRx);
+        largoRx = 0;
+      }
+    } else if (largoRx < (int)sizeof(lineaRx) - 1) {
+      lineaRx[largoRx++] = c;
+    } else {
+      largoRx = 0;  // línea demasiado larga: se descarta
+    }
+  }
+}
+
+void imprimirJoint(char eje, int joint, int joystick) {
+
+  Serial.print("Joint ");
+  Serial.print(eje);
+  Serial.print(": J");
+  Serial.print(joint);
+
+  Serial.print(" | Angulo: ");
+
+  if (angulosRecibidos && joint >= 1 && joint <= numJoints) {
+    Serial.print(jointAngles[joint - 1], 1);
+  } else {
+    Serial.print("--");
+  }
+
+  Serial.print(" grados");
+
+  Serial.print(" | Joystick ");
+  Serial.print(eje);
+  Serial.print(": ");
+  Serial.println(joystick);
 }
 
 
 void setup() {
 
   Serial.begin(115200);
+  analogReadResolution(12);
 
   pinMode(pinFreeDrive, INPUT_PULLUP);
 
@@ -118,26 +177,28 @@ void setup() {
 
   pinMode(pinJ4, INPUT_PULLUP);
   pinMode(pinJ5, INPUT_PULLUP);
+
+  // No tocar el joystick al encender.
+  centroX = calibrarCentro(pinX);
+  centroY = calibrarCentro(pinY);
+
+  ultimoEnvio = millis();
 }
 
 
 void loop() {
 
+  leerSerial();
+
+  if (millis() - ultimoEnvio < periodoMs) {
+    return;
+  }
+  ultimoEnvio += periodoMs;
+
   // Freedrive
   bool freedrive = (
     digitalRead(pinFreeDrive) == LOW
   );
-
-  if (!freedrive) {
-
-    Serial.println("Freedrive: OFF");
-
-    delay(100);
-    return;
-  }
-
-  // Freedrive ON
-  Serial.println("Freedrive: ON");
 
   // Selección grupo Y
   if (digitalRead(pinJ1) == LOW) {
@@ -161,63 +222,7 @@ void loop() {
     jointX = 5;
   }
 
-  // Lectura joystick
-  int rawX = analogRead(pinX);
-  int rawY = analogRead(pinY);
-
-  // Movimiento eje Y
-  unsigned long delayY =
-    calcularDelay(rawY);
-
-  if (
-    abs(rawY - adc_center) > zonaMuerta &&
-    millis() - ultimoMovimientoY >= delayY
-  ) {
-
-    if (rawY > adc_center) {
-
-      jointAngles[jointY - 1] += 1.0;
-
-    } else {
-
-      jointAngles[jointY - 1] -= 1.0;
-    }
-
-    jointAngles[jointY - 1] =
-      limitarAngulo(
-        jointAngles[jointY - 1]
-      );
-
-    ultimoMovimientoY = millis();
-  }
-
-  // Movimiento eje X
-  unsigned long delayX =
-    calcularDelay(rawX);
-
-  if (
-    abs(rawX - adc_center) > zonaMuerta &&
-    millis() - ultimoMovimientoX >= delayX
-  ) {
-
-    if (rawX > adc_center) {
-
-      jointAngles[jointX - 1] += 1.0;
-
-    } else {
-
-      jointAngles[jointX - 1] -= 1.0;
-    }
-
-    jointAngles[jointX - 1] =
-      limitarAngulo(
-        jointAngles[jointX - 1]
-      );
-
-    ultimoMovimientoX = millis();
-  }
-
-  // Botón joystick / Gripper
+  // Botón joystick / Gripper: funciona en MANUAL y en AUTO
   bool estadoActualJoystickBtn =
     digitalRead(pinJoyBot);
 
@@ -234,50 +239,19 @@ void loop() {
 
   estadoAnteriorJoystickBtn = estadoActualJoystickBtn;
 
-  // Mostrar información
-  Serial.print("Joint Y: J");
-  Serial.print(jointY);
+  // Fuera de Freedrive el joystick no mueve nada.
+  int joyX = freedrive ? normalizar(analogRead(pinX), centroX) : 0;
+  int joyY = freedrive ? normalizar(analogRead(pinY), centroY) : 0;
 
-  Serial.print(" | Angulo: ");
-  Serial.print(
-    jointAngles[jointY - 1],
-    1
-  );
+  // Bloque completo, siempre igual: la Raspberry Pi lo lee entero o lo descarta.
+  Serial.print("Freedrive: ");
+  Serial.println(freedrive ? "ON" : "OFF");
 
-  Serial.print(" grados");
-
-  Serial.print(" | Velocidad Y: ");
-  Serial.println(
-    abs(rawY - adc_center)
-  );
-
-
-  Serial.print("Joint X: J");
-  Serial.print(jointX);
-
-  Serial.print(" | Angulo: ");
-  Serial.print(
-    jointAngles[jointX - 1],
-    1
-  );
-
-  Serial.print(" grados");
-
-  Serial.print(" | Velocidad X: ");
-  Serial.println(
-    abs(rawX - adc_center)
-  );
-
+  imprimirJoint('Y', jointY, joyY);
+  imprimirJoint('X', jointX, joyX);
 
   Serial.print("Gripper: ");
-
-  if (gripperActivo) {
-    Serial.println("ON");
-  } else {
-    Serial.println("OFF");
-  }
+  Serial.println(gripperActivo ? "ON" : "OFF");
 
   Serial.println("-------------------------");
-
-  delay(20);
 }

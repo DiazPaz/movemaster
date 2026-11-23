@@ -328,6 +328,11 @@ si deja de llegar, su watchdog los deshabilita. Solo debe haber un emisor.
 El gripper no lo escucha: tiene su propio `HEARTBEAT` (`0x0A080C05`, en
 `gripper-frames-1.0.0`), para que probarlo no habilite a los SPARK.
 
+**HMI (movemaster_hmi)**
+Interfaz de la pantalla táctil de 800x480 (PySide6). Habla con el robot solo
+por su API, `RobotClient`: posiciones medidas, movimientos, programas y gripper
+sobre ROS 2. MANUAL §11.6.
+
 **Home**
 Postura de reposo del brazo y cero de todos los ejes (q = 0): el brazo
 vertical, el antebrazo horizontal al frente y el faceplate hacia abajo; `tool0`

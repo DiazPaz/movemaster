@@ -16,7 +16,8 @@ flowchart LR
     end
     spark[("SPARK MAX")]
 
-    esp -- "trama de 8 bytes · 50 Hz · USB" --> jog
+    esp -- "bloque de texto · 50 Hz · USB" --> jog
+    jog -- "ángulos medidos · 10 Hz" --> esp
     jog -- "switch MANUAL / AUTO: switch_controller" --> cm
     jog -- "/jog_controller/commands" --> jc
     jc -- "position (rad)" --> hw
@@ -44,9 +45,9 @@ Cada sesión de jog parte de las posiciones medidas (`/joint_states`), así que
 nunca vuelve a objetivos viejos aunque el `joint_trajectory_controller` haya
 movido el brazo entre tanto.
 
-El joystick X mueve la cintura y la muñeca (J1, J5); el Y, el hombro, el codo y
-el pitch de la muñeca (J2, J3, J4). Puede haber una articulación X y una Y
-seleccionadas a la vez. Las articulaciones que no están en `joints.json` se
+El joystick Y mueve la articulación elegida con los botones J1, J2 o J3; el X,
+la elegida con J4 o J5, como los grupos del panel del pendant. Puede haber una
+articulación X y una Y seleccionadas a la vez. Las articulaciones que no están en `joints.json` se
 ignoran.
 
 ## Compilar
@@ -89,6 +90,11 @@ Si un fallo del hardware desactiva los dos controladores, el switch no hace nada
 hasta que se recupera el brazo (MANUAL §12). Con `select_controllers: false` los
 controladores se cambian a mano con `ros2 control switch_controllers`.
 
+`jog_node` es el único que lee el puerto del pendant. Publica cada trama en
+`/pendant/joy` (`sensor_msgs/Joy`: `axes` = joystick X e Y, de -1 a 1; `buttons` =
+MANUAL, gripper, articulación X y articulación Y) para quien necesite mostrarla,
+como el HMI.
+
 `ros2 control list_controllers` muestra cuál está activo. El log de `jog_node`
 dice cuándo se conecta el pendant, qué articulaciones están seleccionadas y qué
 controlador manda.
@@ -108,15 +114,20 @@ ros2 run movemaster_teleop pendant_sim          # imprime el puerto, por ejemplo
 ros2 launch movemaster_teleop jog.launch.py port:=/dev/pts/3
 ```
 
-Comandos: `manual` y `auto` (el switch; arranca en AUTO), `sel 1 2` (articulación X, articulación Y), `x 300`, `y -500`
-(-1000…1000), `0` (soltar), `q`. Con `use_mock_hardware:=true` se prueba toda la
+Habla texto, como el firmware de `hmi/esp32/`; con `--binary`, tramas como el de
+`firmware/` (entonces `protocol: binary` en `jog.yaml`). Comandos: `manual` y
+`auto` (el switch; arranca en AUTO), `sel 4 1` (articulación X, articulación Y),
+`x 300`, `y -500` (-1000…1000), `0` (soltar), `grip` (el botón del joystick),
+`angles` (los últimos ángulos que mandó `jog_node`), `q`. Con `use_mock_hardware:=true` se prueba toda la
 cadena sin motores.
 
 ## Parámetros (`config/jog.yaml`)
 
 | Parámetro | Defecto | Significado |
 |---|---|---|
-| `x_joints`, `y_joints` | `[1, 5]`, `[2, 3, 4]` | Qué articulaciones mueve cada eje del joystick |
+| `protocol` | `text` | Lo que manda el ESP32: `text` (`hmi/esp32/main.cpp`) o `binary` (`firmware/`) |
+| `angles_rate_hz` | `10.0` | Solo `text`: cada cuánto se le mandan al ESP32 los ángulos medidos; `0`, nunca |
+| `x_joints`, `y_joints` | `[4, 5]`, `[1, 2, 3]` | Qué articulaciones mueve cada eje del joystick: los grupos de botones del panel. El HMI los muestra igual |
 | `max_speed_rad_s` | `0.25` cada una | Velocidad a fondo, J1…J5; nunca más que `max_velocity_rad_s` de `joints.json` |
 | `deadband` | `0.12` | Fracción del recorrido del joystick que no mueve nada |
 | `max_lead_rad` | `0.05` | Cuánto puede adelantarse el objetivo a la articulación |
@@ -128,7 +139,39 @@ cadena sin motores.
 La curva es cuadrática: a media inclinación, un cuarto de la velocidad, para
 tener precisión cerca del centro.
 
-## La trama del pendant
+## Lo que manda el pendant
+
+Hay dos protocolos; `jog_node` convierte los dos en la misma `PendantFrame`, así
+que el resto (jog, cambio de modo, gripper, `/pendant/joy`) no distingue cuál es.
+
+### Texto (`protocol: text`, el firmware de `hmi/esp32/main.cpp`)
+
+Legible en un monitor serie. Cada 20 ms un bloque:
+
+```text
+Freedrive: ON
+Joint Y: J1 | Angulo: 12.3 grados | Joystick Y: -450
+Joint X: J4 | Angulo: -5.0 grados | Joystick X: 0
+Gripper: OFF
+-------------------------
+```
+
+`Freedrive` es el switch MANUAL/AUTO; `Joystick`, de −1000 a 1000 alrededor del
+centro calibrado al encender (0 en AUTO); `Gripper`, el estado que alterna el
+botón del joystick (ON cierra). Como el texto no lleva CRC, `jog_node` solo
+acepta un bloque completo y en orden: una línea rara descarta el bloque entero.
+
+En sentido contrario, `jog_node` le manda al ESP32 los ángulos medidos
+(`/joint_states`) en grados con Home en 0, y el ESP32 los muestra en `Angulo`:
+
+```text
+ANGLES,12.3,-20.5,33.3,0.0,45.0
+```
+
+El formato está en `movemaster_teleop/pendant_text.py` y en `hmi/esp32/main.cpp`:
+si cambia uno, cambia el otro.
+
+### Binario (`protocol: binary`, el firmware de `firmware/`)
 
 8 bytes, el payload de una trama CAN clásica. Por USB/UART va precedida de `0xA5`.
 
@@ -142,22 +185,24 @@ tener precisión cerca del centro.
 | 7 | CRC-8 (polinomio 0x07, inicio 0) de los bytes 0–6 |
 
 Está definida en `movemaster_teleop/pendant_frame.py` y en `firmware/src/main.cpp`.
+Es la que convendrá al pasar el pendant al bus CAN.
 Para pasar a CAN solo cambia el transporte: en la Pi, un `CanLink` junto a
 `SerialLink` en `pendant_link.py`; en el ESP32, `enviarTrama()` con el
 controlador TWAI integrado y un transceptor de 3.3 V (SN65HVD230 o MCP2562).
 
-## Firmware del ESP32 (`firmware/`)
+## Firmware del ESP32
 
-Proyecto PlatformIO. Con el ESP32 conectado: `cd firmware && pio run -t upload`.
+El vigente es el de texto, `hmi/esp32/main.cpp` (en la raíz del repositorio).
+El de `firmware/` es el binario, un proyecto PlatformIO: con el ESP32 conectado,
+`cd firmware && pio run -t upload`. Los dos:
 
 - Al encender calibra el centro del joystick: no lo toques durante el primer
   cuarto de segundo.
-- Ninguna articulación está seleccionada al encender: el joystick no mueve nada
+- Fuera de MANUAL envían el joystick en 0.
+- El de texto arranca con J1 (Y) y J4 (X) seleccionadas; el binario, sin ninguna
   hasta pulsar un botón.
-- Fuera de MANUAL envía el joystick en 0.
-- `#define PENDANT_DEBUG 1` imprime texto legible en lugar de tramas, para
-  revisar botones y joystick con el monitor serie (`pio device monitor`).
-- `invertirX` / `invertirY` corrigen un joystick montado al revés.
+- En el binario, `#define PENDANT_DEBUG 1` imprime texto legible en lugar de
+  tramas, e `invertirX` / `invertirY` corrigen un joystick montado al revés.
 
 ## Seguridad
 

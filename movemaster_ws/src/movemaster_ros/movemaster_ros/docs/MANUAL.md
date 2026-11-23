@@ -69,14 +69,18 @@ movemaster_ws/                                  workspace de colcon (desde aquí
             │   ├── launch/jog.launch.py
             │   ├── firmware/                   proyecto PlatformIO del ESP32
             │   └── test/
-            └── movemaster_bringup/             ARRANQUE con un comando (launch + servicio systemd)
-                ├── CMakeLists.txt, package.xml
-                ├── launch/bringup.launch.py
-                ├── systemd/movemaster.service  arranque al encender la Pi  ← lo ajustas tú
-                └── test/test_bringup.py
+            ├── movemaster_bringup/             ARRANQUE con un comando (launch + servicio systemd)
+            │   ├── CMakeLists.txt, package.xml
+            │   ├── launch/bringup.launch.py
+            │   ├── systemd/movemaster.service  arranque al encender la Pi  ← lo ajustas tú
+            │   └── test/test_bringup.py
+            └── movemaster_hmi/                 HMI de la pantalla táctil (PySide6) y su API al robot
+                ├── package.xml, setup.py, requirements.txt
+                ├── movemaster_hmi/             hmi_movemaster.py, robot_client.py (la API), assets/
+                └── test/
 ```
 
-Hay cinco paquetes de ROS que importan:
+Hay seis paquetes de ROS que importan:
 
 | Paquete | Qué es | Lenguaje |
 |---|---|---|
@@ -84,7 +88,8 @@ Hay cinco paquetes de ROS que importan:
 | `movemaster_description` | El modelo del brazo: genera el URDF desde la tabla DH (`dh.yaml`) y los ejes de `joints.json`. Lo usan el `controller_manager` y, después, MoveIt. | XML (xacro), YAML |
 | `movemaster_control` | No tiene código compilado: configura y arranca el nodo `controller_manager` de `ros2_control` con el plugin y sus controladores. | Python (launch), XML, YAML |
 | `movemaster_teleop` | Jog de articulaciones desde el teach pendant (ESP32): `jog_node` y el firmware. | Python, C++ (Arduino) |
-| `movemaster_bringup` | Arranca todo con un comando: `movemaster_control`, el jog si hay pendant y RViz si se pide; trae el servicio de `systemd` para arrancar al encender. | Python (launch), systemd |
+| `movemaster_bringup` | Arranca todo con un comando: `movemaster_control`, el jog si hay pendant, RViz y el HMI si se piden; trae el servicio de `systemd` para arrancar al encender. | Python (launch), systemd |
+| `movemaster_hmi` | La pantalla táctil y su API al robot (`RobotClient`): posiciones, movimientos, programas y gripper sobre ROS 2. | Python (PySide6) |
 
 ---
 
@@ -1082,7 +1087,7 @@ source install/setup.bash
   (`ros2_control`, `ros2_controllers`, `xacro`, `nlohmann-json`…). Necesita las
   dos rutas porque rosdep, como colcon, no entra en el paquete Python
   `movemaster_ros`.
-- `--packages-up-to movemaster_bringup` compila los cinco paquetes:
+- `--packages-up-to movemaster_bringup` compila los seis paquetes:
   `movemaster_bringup` depende de todos los demás.
 - `--symlink-install` instala enlaces a los archivos de configuración en lugar
   de copias: los cambios en `joints.json`, `dh.yaml`, el YAML o el launch se
@@ -1315,6 +1320,7 @@ si falla, el launch se cierra y su salida dice por qué.
 |---|---|---|
 | `pendant` | vacío | Puerto serie del pendant; vacío, sin jog. Conviene la ruta fija de `/dev/serial/by-id/`: `/dev/ttyUSB0` puede cambiar al reconectar el cable. |
 | `rviz` | `false` | `true` abre RViz; necesita pantalla. |
+| `hmi`, `hmi_python` | `false`, `python3` | `hmi:=true` abre el HMI de la pantalla táctil con el Python que tiene PySide6, el de su entorno virtual ([11.6](#116-el-hmi-de-la-pantalla-táctil)). |
 | `homing` | `true` | `false`: sin homing; cada eje toma como referencia la postura en que se encendió ([4.4](#44-cuidados)). Con `use_mock_hardware:=true` no hay homing. |
 | `use_mock_hardware`, `joint_config`, `can_interface` | los de [10](#10-paso-7--arrancar-el-nodo-con-los-spark-max) | Pasan a `movemaster_control`; `joint_config` también al jog. |
 
@@ -1357,6 +1363,26 @@ sudo systemctl enable --now movemaster
 - **RViz** no corre en el servicio. Ábrelo desde una laptop con este workspace
   compilado, en la misma red y con el mismo `ROS_DOMAIN_ID`:
   `rviz2 -d $(ros2 pkg prefix --share movemaster_description)/rviz/display.rviz`.
+  El HMI tampoco: el servicio no tiene sesión gráfica.
+
+### 11.6 El HMI de la pantalla táctil
+
+`movemaster_hmi` muestra las posiciones medidas en grados (Home en 0) y mueve el
+brazo con **MOVE ROBOT**, **GO HOME** y **RUN PROGRAM**; mientras se mueve, el
+mismo botón dice **STOP**. Usa el mismo camino que una trayectoria de
+[11.2](#112-mover): la acción del `joint_trajectory_controller`.
+
+```bash
+ros2 launch movemaster_bringup bringup.launch.py pendant:=/dev/ttyUSB0 hmi:=true hmi_python:=~/movemaster/hmi_venv/bin/python
+```
+
+- **El switch del pendant manda.** En MANUAL el HMI pasa a FREEDRIVE y no mueve
+  el brazo; para moverlo desde el HMI, el switch va en AUTO.
+- **El puerto del pendant es de `jog_node`.** El HMI sabe qué ejes están
+  seleccionados por `/pendant/joy`, que publica `jog_node`.
+- **Instalación (una vez):** PySide6 va en un entorno virtual creado con
+  `--system-site-packages`, para que vea `rclpy`. La API, la instalación y lo que
+  cambió en el HMI están en [movemaster_hmi/README.md](../movemaster_hmi/README.md).
 
 ### 11.6 Abrir y cerrar el gripper
 

@@ -3,9 +3,13 @@
 jog_node:
   ros__parameters:
     baudrate: 115200
+    # What the ESP32 sends: text (hmi/esp32/main.cpp) or binary (firmware/, 8-byte frames).
+    protocol: text
+    angles_rate_hz: 10.0        # text only: measured angles sent back for the ESP32 to show
     rate_hz: 50.0               # same rate the ESP32 sends at
-    x_joints: [1, 5]            # joystick X: waist and wrist roll
-    y_joints: [2, 3, 4]         # joystick Y: shoulder, elbow, wrist pitch
+    # The pendant's button groups, as on its panel and in its firmware: the HMI shows them too.
+    x_joints: [4, 5]            # joystick X: J4 and J5 buttons
+    y_joints: [1, 2, 3]         # joystick Y: J1, J2 and J3 buttons
     # Speed at full joystick, joint_1..joint_5 (rad/s, with decimals). Capped at
     # max_velocity_rad_s of joints.json.
     max_speed_rad_s: [0.25, 0.25, 0.25, 0.25, 0.25]

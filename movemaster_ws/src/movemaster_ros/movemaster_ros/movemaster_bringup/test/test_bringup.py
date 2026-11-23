@@ -52,14 +52,16 @@ def test_arguments_and_defaults():
     from launch.actions import DeclareLaunchArgument
     arguments = {entity.name: entity for entity in load_module().generate_launch_description().entities
                  if isinstance(entity, DeclareLaunchArgument)}
-    assert set(arguments) == {'pendant', 'rviz', 'homing', 'use_mock_hardware', 'joint_config',
-                              'can_interface'}
+    assert set(arguments) == {'pendant', 'rviz', 'hmi', 'hmi_python', 'homing',
+                              'use_mock_hardware', 'joint_config', 'can_interface'}
 
     def default(name):
         return ''.join(s.text for s in arguments[name].default_value)
     # By default: the real arm, homed, without pendant or RViz, as the service on the Pi runs it.
     assert default('pendant') == ''
     assert default('rviz') == 'false'
+    assert default('hmi') == 'false'
+    assert default('hmi_python') == 'python3'
     assert default('homing') == 'true'
     assert default('use_mock_hardware') == 'false'
     assert default('can_interface') == 'can0'
@@ -118,6 +120,23 @@ def test_the_plugin_requires_the_reference_only_after_homing():
     assert control_arguments(robot)['require_reference'] == 'true'
     assert len([a for a in robot if isinstance(a, IncludeLaunchDescription)]) == 2  # with jog
     assert any(isinstance(a, Node) for a in robot)  # RViz
+
+
+def test_the_hmi_runs_with_its_python_and_the_same_joints():
+    from launch import LaunchContext
+    from launch.actions import ExecuteProcess
+    from launch.utilities import perform_substitutions
+    arguments = {'pendant': '', 'rviz': 'false', 'use_mock_hardware': 'false',
+                 'joint_config': str(JOINT_CONFIG), 'can_interface': 'can0'}
+    robot = load_module().robot_actions(arguments, require_reference=True)
+    assert not any(isinstance(a, ExecuteProcess) for a in robot)
+    arguments.update(hmi='true', hmi_python='/opt/hmi_venv/bin/python')
+    hmi = [a for a in load_module().robot_actions(arguments, require_reference=True)
+           if isinstance(a, ExecuteProcess)]
+    assert len(hmi) == 1
+    context = LaunchContext()
+    assert [perform_substitutions(context, part) for part in hmi[0].cmd] == [
+        '/opt/hmi_venv/bin/python', '-m', 'movemaster_hmi', '--joint-config', str(JOINT_CONFIG)]
 
 
 def test_included_files_exist():

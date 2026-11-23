@@ -1,0 +1,6 @@
+# Only what ROS 2 Jazzy does not bring. Install in a virtual environment that sees the system
+# packages (rclpy, numpy, PyYAML):
+#   python3 -m venv --system-site-packages ~/movemaster/hmi_venv
+#   ~/movemaster/hmi_venv/bin/pip install -r requirements.txt
+PySide6
+opencv-python

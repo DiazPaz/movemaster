@@ -25,9 +25,9 @@ const int pinFreeDrive = 19;
 
 // Un botón por articulación, J1..J5
 const int pinJoint[5] = {21, 22, 23, 25, 26};
-// Eje del joystick que mueve cada articulación: X la cintura (J1) y la muñeca (J5),
-// Y las demás. Debe coincidir con x_joints / y_joints de config/jog.yaml.
-const char ejeJoint[5] = {'X', 'Y', 'Y', 'Y', 'X'};
+// Eje del joystick que mueve cada articulación, como los grupos del panel: Y los botones
+// J1 a J3, X los botones J4 y J5. Debe coincidir con x_joints / y_joints de config/jog.yaml.
+const char ejeJoint[5] = {'Y', 'Y', 'Y', 'X', 'X'};
 
 // Invertir si el joystick está montado al revés
 const bool invertirX = false;

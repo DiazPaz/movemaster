@@ -1,7 +1,8 @@
 """MoveMaster con un solo comando.
 
     ros2 launch movemaster_bringup bringup.launch.py [pendant:=/dev/ttyUSB0] [rviz:=true]
-        [homing:=false] [use_mock_hardware:=true] [joint_config:=...] [can_interface:=can0]
+        [hmi:=true] [hmi_python:=~/movemaster/hmi_venv/bin/python] [homing:=false]
+        [use_mock_hardware:=true] [joint_config:=...] [can_interface:=can0]
 
 Primero el homing (homing:=true, el valor por defecto, y solo con el brazo real):
   spark_home --home   busca el tope de cada eje que perdió su referencia (homing_order de
@@ -15,6 +16,8 @@ Si el homing termina bien, arrancan:
   movemaster_teleop   jog_node, solo con pendant:=<puerto>. El switch MANUAL del pendant
                       elige el controlador: MANUAL, jog; AUTO, trayectorias.
   rviz2               solo con rviz:=true; necesita pantalla.
+  movemaster_hmi      solo con hmi:=true; necesita pantalla. Lo corre hmi_python, el Python que
+                      tiene PySide6 (el del entorno virtual del HMI).
 Si falla, no arranca nada más y el launch se cierra.
 
 El servicio systemd/movemaster.service lo arranca al encender la Raspberry Pi.
@@ -46,6 +49,13 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'rviz', default_value='false', choices=['true', 'false'],
             description='Abrir RViz con el modelo del brazo; necesita pantalla.'),
+        DeclareLaunchArgument(
+            'hmi', default_value='false', choices=['true', 'false'],
+            description='Abrir el HMI de la pantalla táctil (movemaster_hmi); necesita pantalla.'),
+        DeclareLaunchArgument(
+            'hmi_python', default_value='python3',
+            description='Python con PySide6 que corre el HMI, por ejemplo el de su entorno '
+                        'virtual: ~/movemaster/hmi_venv/bin/python.'),
         DeclareLaunchArgument(
             'homing', default_value='true', choices=['true', 'false'],
             description='true: antes del controller_manager, spark_home --home referencia los '
@@ -84,7 +94,7 @@ def after_homing(returncode, robot):
 
 
 def robot_actions(arguments, require_reference):
-    """controller_manager, jog del pendant y RViz, según los argumentos del launch."""
+    """controller_manager, jog del pendant, RViz y HMI, según los argumentos del launch."""
     joint_config = arguments['joint_config']
     robot = [
         IncludeLaunchDescription(
@@ -108,12 +118,19 @@ def robot_actions(arguments, require_reference):
             package='rviz2', executable='rviz2', output='log',
             arguments=['-d', PathJoinSubstitution(
                 [FindPackageShare('movemaster_description'), 'rviz', 'display.rviz'])]))
+    if arguments.get('hmi') == 'true':
+        robot.append(ExecuteProcess(
+            name='hmi', output='screen',
+            cmd=[str(Path(arguments.get('hmi_python', 'python3')).expanduser()), '-m',
+                 'movemaster_hmi',
+                 '--joint-config', joint_config]))
     return robot
 
 
 def _launch_setup(context):
     arguments = {name: LaunchConfiguration(name).perform(context) for name in (
-        'pendant', 'rviz', 'homing', 'use_mock_hardware', 'joint_config', 'can_interface')}
+        'pendant', 'rviz', 'hmi', 'hmi_python', 'homing', 'use_mock_hardware', 'joint_config',
+        'can_interface')}
     homing = arguments['homing'] == 'true' and arguments['use_mock_hardware'] == 'false'
     robot = robot_actions(arguments, require_reference=homing)
     if not homing:
