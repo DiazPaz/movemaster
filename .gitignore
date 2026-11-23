@@ -5,11 +5,14 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyc
+*.pyo
 
 # Virtual environments
 .venv/
 venv/
 env/
+.env/
 
 
 # =========================
