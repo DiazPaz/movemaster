@@ -183,8 +183,8 @@
         "slow_speed_rad_s": 0.05,
         "backoff_rad": 0.05,
         "max_travel_rad": 6.3,
-        "stop": "-",
-        "stop_rad": -2.1
+        "stop": "+",
+        "stop_rad": 0.785
       }
     },
     "joint_5": {
