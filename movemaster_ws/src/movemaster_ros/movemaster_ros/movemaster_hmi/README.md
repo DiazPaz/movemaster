@@ -62,7 +62,8 @@ pantallas.
 ## Instalar (una vez, en la Raspberry Pi)
 
 PySide6 no viene con ROS. El entorno virtual debe ver los paquetes del sistema
-(rclpy, numpy, PyYAML):
+(rclpy, numpy, OpenCV, PyYAML); `rosdep install` instala OpenCV con apt
+(`python3-opencv`):
 
 ```bash
 python3 -m venv --system-site-packages ~/movemaster/hmi_venv
@@ -71,6 +72,11 @@ python3 -m venv --system-site-packages ~/movemaster/hmi_venv
 
 Si ya tienen un entorno creado sin `--system-site-packages`, no verá `rclpy` y
 el HMI abrirá fuera de línea: vuelvan a crearlo con esa opción.
+
+OpenCV no se instala con pip: `opencv-python` trae numpy 2, que tapa al numpy
+1.26 del sistema, y los mensajes de ROS, compilados con numpy 1, dejan de
+importarse. Si ya lo instalaron en el entorno:
+`~/movemaster/hmi_venv/bin/pip uninstall -y opencv-python numpy`.
 
 ## Correr
 

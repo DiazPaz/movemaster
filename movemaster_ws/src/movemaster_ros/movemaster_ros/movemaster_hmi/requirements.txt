@@ -1,6 +1,8 @@
 # Only what ROS 2 Jazzy does not bring. Install in a virtual environment that sees the system
-# packages (rclpy, numpy, PyYAML):
+# packages (rclpy, numpy, OpenCV, PyYAML):
 #   python3 -m venv --system-site-packages ~/movemaster/hmi_venv
 #   ~/movemaster/hmi_venv/bin/pip install -r requirements.txt
+# OpenCV comes from apt (python3-opencv, through rosdep), not from pip: opencv-python from pip
+# pulls numpy 2 into the environment, and the ROS message modules, built against the system
+# numpy 1.x, then fail to import.
 PySide6
-opencv-python

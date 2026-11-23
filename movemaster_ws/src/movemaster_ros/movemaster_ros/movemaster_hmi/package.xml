@@ -7,13 +7,16 @@
   <license>Proprietary</license>
 
   <!-- PySide6 has no rosdep key: it comes from requirements.txt, in a virtual environment
-       created with system site packages (README.md). -->
+       created with system site packages (README.md). OpenCV and numpy come from apt, so they
+       match the numpy that ROS was built with. -->
   <exec_depend>action_msgs</exec_depend>
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>control_msgs</exec_depend>
   <exec_depend>controller_manager_msgs</exec_depend>
   <exec_depend>movemaster_hardware</exec_depend>
   <exec_depend>movemaster_teleop</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
   <exec_depend>python3-yaml</exec_depend>
   <exec_depend>rclpy</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
