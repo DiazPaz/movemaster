@@ -8,7 +8,8 @@
        <label>_link   the link that joint moves. Its geometry runs from the joint to DH frame i.
        joint_i_dh     fixed Tz(di) · Tx(ai) · Rx(αi), from that link to DH frame i.
 
-     DH frame i is dh_frame_i; the last one is tool0, the TCP. Keeping the rotation and the fixed
+     DH frame i is dh_frame_i; the last one is tool0, the flange (the tool's tcp is beyond it, in
+     movemaster.urdf.xacro). Keeping the rotation and the fixed
      screw in separate joints makes every DH frame exact, also for an axis fixed at home.
 
      joints.json sets the range and maximum velocity of every axis it drives; the preview gives the

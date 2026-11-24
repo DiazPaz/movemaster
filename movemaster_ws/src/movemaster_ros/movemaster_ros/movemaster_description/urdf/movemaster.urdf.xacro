@@ -1,7 +1,8 @@
 <?xml version="1.0"?>
 <!-- MoveMaster robot description.
 
-     config/dh.yaml       kinematics: the five-axis chain in standard DH, base and link sizes.
+     config/dh.yaml       kinematics: the five-axis chain in standard DH, the tool, base and link
+                          sizes.
      joints.json          the axes the driver moves, with their limits. Those are revolute and
                           get the ros2_control block; the rest stay fixed at q = 0 (Home).
 
@@ -43,6 +44,14 @@
   </link>
 
   <xacro:movemaster_arm chain="${dh['chain']}" joints="${joints}" preview="${preview}" parent="base_link"/>
+
+  <!-- tcp, the tip of the tool mounted on the flange: tool.length_mm along z of tool0. -->
+  <joint name="tcp_joint" type="fixed">
+    <parent link="tool0"/>
+    <child link="tcp"/>
+    <origin xyz="0 0 ${dh['tool']['length_mm'] / 1000.0}" rpy="0 0 0"/>
+  </joint>
+  <link name="tcp"/>
 
   <!-- Mock hardware starts at q = 0, Home, where the real arm ends its homing. -->
   <xacro:unless value="${preview}">

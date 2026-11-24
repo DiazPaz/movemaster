@@ -5,6 +5,8 @@ A step is a dict, as the HMI stores it:
     {'type': 'waypoint', 'joints': [degrees, ...]}
     {'type': 'gripper', 'closed': bool}
     {'type': 'wait', 'seconds': float}
+The HMI also stores {'type': 'pose', 'pose': [X, Y, Z, PITCH, ROLL]}; RobotClient.run_program
+turns each into a waypoint before the program starts, so the runner only sees joints.
 """
 
 

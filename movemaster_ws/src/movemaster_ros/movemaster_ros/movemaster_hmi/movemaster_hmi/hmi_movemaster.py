@@ -62,6 +62,9 @@ from movemaster_hmi.robot_model import check_target, load_jog_axes, load_joints
 DEFAULT_SPEED_PERCENT = 25.0
 # Every joint this close to 0 degrees: the arm is at Home.
 HOME_TOLERANCE_DEG = 0.5
+# The fields of a tcp pose (robot_client): name, unit and range of its input.
+POSE_FIELDS = (('X', 'mm', -1000, 1000), ('Y', 'mm', -1000, 1000), ('Z', 'mm', -1000, 1000),
+               ('PITCH', '°', -180, 180), ('ROLL', '°', -360, 360))
 
 def numeric_validator(minimum, maximum, decimals, parent):
     """Accept decimals, but never scientific notation or thousands separators."""
@@ -1117,9 +1120,13 @@ class RobotHMI(QMainWindow):
         self.configuration_tab = self.create_configuration_tab()
         self.program_tab = self.create_program_tab()
         self.movement_tab = self.create_movement_tab()
+        self.editing_pose_index = None  # a POSE step being edited in the CARTESIAN tab
+        self.cartesian_tab = self.create_cartesian_tab()
         self.tabs.addTab(self.configuration_tab, 'CONFIGURATION')
         self.tabs.addTab(self.program_tab, 'PROGRAM')
         self.tabs.addTab(self.movement_tab, 'MOVEMENT')
+        self.tabs.addTab(self.cartesian_tab, 'CARTESIAN')
+        self.tabs.currentChanged.connect(self.on_tab_changed)
         main_layout.addWidget(self.tabs)
         keyboard_help = QLabel('[ + / - ] TAB     [ ↑ / ↓ ] SELECT     [ ← / → ] COLUMN     [ ENTER ] EDIT / CONFIRM')
         keyboard_help.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1306,6 +1313,8 @@ class RobotHMI(QMainWindow):
         self.tcp_distance_input.setValidator(numeric_validator(0, 1000, 2, self.tcp_distance_input))
         self.tcp_apply_button = QPushButton('APPLY TCP')
         self.tcp_apply_button.clicked.connect(self.apply_tcp)
+        if self.robot.arm is not None:
+            self.tcp_distance_input.setText(f'{self.robot.tool_length():g}')
         tcp_layout.addRow('Faceplate -> TCP:', self.tcp_distance_input)
         tcp_layout.addRow('', self.tcp_apply_button)
         tcp_group.setLayout(tcp_layout)
@@ -1484,11 +1493,19 @@ class RobotHMI(QMainWindow):
     def edit_selected_step(self):
         index = self.selected_step_index()
         if index is None:
-            QMessageBox.information(self, 'Edit Step', 'Select a waypoint, gripper or WAIT step in PROGRAM SEQUENCE.')
+            QMessageBox.information(self, 'Edit Step', 'Select a waypoint, pose, gripper or WAIT step in PROGRAM SEQUENCE.')
             return
         step = self.waypoints[index]
         self.editing_step_index = index
-        if step['type'] == 'waypoint':
+        if step['type'] == 'pose':
+            # Poses are edited where they are made: the CARTESIAN tab.
+            self.editing_step_index = None
+            self.set_pose_fields(step['pose'])
+            self.tabs.setCurrentIndex(3)
+            self.editing_pose_index = index
+            self.add_pose_button.setText('SAVE CHANGES')
+            self.pose_inputs[0].setFocus()
+        elif step['type'] == 'waypoint':
             self.add_waypoint()
             self.editing_step_index = index
             # Edit should use the saved waypoint angles rather than the live robot state.
@@ -1595,6 +1612,139 @@ class RobotHMI(QMainWindow):
         layout.addStretch()
         return tab
 
+    def create_cartesian_tab(self):
+        """The pose of the tool tip (tcp) to go to, and the one it has now. The arm gets there
+        joint by joint: the inverse kinematics (movemaster_kinematics) gives the angles."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        row = QHBoxLayout()
+        row.setSpacing(6)
+        target = QGroupBox('TARGET TCP POSE')
+        target_layout = QFormLayout(target)
+        target_layout.setContentsMargins(7, 18, 7, 5)
+        target_layout.setVerticalSpacing(5)
+        self.pose_inputs = []
+        for name, unit, low, high in POSE_FIELDS:
+            field = HMIInput()
+            field.setText('0.0')
+            field.setValidator(numeric_validator(low, high, 1, field))
+            field.setFixedHeight(34)
+            field.textChanged.connect(self.update_pose_solution)
+            self.pose_inputs.append(field)
+            target_layout.addRow(f'{name} [{unit}]:', field)
+        row.addWidget(target, 1)
+        current = QGroupBox('CURRENT TCP POSE')
+        current_layout = QFormLayout(current)
+        current_layout.setContentsMargins(7, 18, 7, 5)
+        current_layout.setVerticalSpacing(9)
+        self.pose_labels = []
+        for name, unit, _, _ in POSE_FIELDS:
+            label = QLabel('--')
+            self.pose_labels.append(label)
+            current_layout.addRow(f'{name}:', label)
+        # The joint angles of the target, or why it cannot be reached.
+        self.pose_solution = QLabel()
+        self.pose_solution.setWordWrap(True)
+        self.pose_solution.setStyleSheet('font-size: 11px;')
+        current_layout.addRow(self.pose_solution)
+        row.addWidget(current, 1)
+        layout.addLayout(row, 1)
+        actions = QHBoxLayout()
+        self.use_current_pose_button = QPushButton('USE CURRENT')
+        self.add_pose_button = QPushButton('ADD TO PROGRAM')
+        self.move_pose_button = QPushButton('MOVE TO POSE')
+        self.use_current_pose_button.clicked.connect(self.use_current_pose)
+        self.add_pose_button.clicked.connect(self.add_pose_step)
+        self.move_pose_button.clicked.connect(self.move_to_pose)
+        for button in (self.use_current_pose_button, self.add_pose_button, self.move_pose_button):
+            button.setFixedHeight(34)
+            actions.addWidget(button)
+        layout.addLayout(actions)
+        if self.robot.arm is None:
+            for widget in self.pose_inputs + [self.use_current_pose_button, self.add_pose_button,
+                                              self.move_pose_button]:
+                widget.setEnabled(False)
+            self.pose_solution.setText('KINEMATICS NOT AVAILABLE')
+        else:
+            self.set_pose_fields(self.robot.pose_of([0.0] * len(self.robot.joints)))  # Home
+        return tab
+
+    def pose_values(self):
+        """The target pose of the CARTESIAN tab: [X, Y, Z, PITCH, ROLL]."""
+        values = []
+        for (name, _, _, _), field in zip(POSE_FIELDS, self.pose_inputs):
+            text = field.text().strip()
+            if not text:
+                raise ValueError(f'Enter {name}.')
+            values.append(float(text))
+        return values
+
+    def set_pose_fields(self, pose):
+        for field, value in zip(self.pose_inputs, pose):
+            if field.editing:
+                field.stop_editing()
+            field.setText(f'{value:.1f}')
+
+    def show_current_pose(self):
+        if self.robot.arm is None:
+            return
+        pose = self.robot.pose_of(self.joint_values)
+        for label, value, (_, unit, _, _) in zip(self.pose_labels, pose, POSE_FIELDS):
+            label.setText(f'{value:.1f} {unit}')
+
+    def update_pose_solution(self):
+        """Shows the joint angles of the target pose as it is typed, or why it is out of reach."""
+        if self.robot.arm is None:
+            return
+        try:
+            joints = self.robot.joints_for(self.pose_values())
+        except ValueError as error:
+            self.pose_solution.setText(f'UNREACHABLE: {error}')
+            return
+        self.pose_solution.setText(
+            'JOINTS: ' + '  '.join(f'J{i}={value:.1f}°' for i, value in enumerate(joints, 1)))
+
+    def use_current_pose(self):
+        self.set_pose_fields(self.robot.pose_of(self.joint_values))
+
+    def move_to_pose(self):
+        if self.robot.busy:
+            self.stop_robot()
+            return
+        try:
+            pose = self.pose_values()
+        except ValueError as error:
+            QMessageBox.warning(self, 'Invalid Input', str(error))
+            return
+        for field in self.pose_inputs:
+            if field.editing:
+                field.stop_editing()
+        self.command_robot(lambda: self.robot.move_to_pose(pose, self.speed_percent()))
+
+    def add_pose_step(self):
+        """Adds the target pose to the program, or saves the POSE step being edited."""
+        try:
+            pose = self.pose_values()
+            self.robot.joints_for(pose)  # reachable: some solution within the limits
+        except (RobotError, ValueError) as error:
+            QMessageBox.warning(self, 'Invalid Pose', str(error))
+            return
+        step = {'type': 'pose', 'pose': pose}
+        if self.editing_pose_index is None:
+            self.waypoints.append(step)
+            self.refresh_waypoints()
+            self.pose_solution.setText(f'ADDED AS STEP {len(self.waypoints)}')
+            return
+        self.waypoints[self.editing_pose_index] = step
+        self.refresh_waypoints()
+        self.tabs.setCurrentIndex(1)  # back to the program, which ends the edit
+        self.focus_first_widget()
+
+    def on_tab_changed(self, index):
+        if index != 3 and self.editing_pose_index is not None:
+            self.editing_pose_index = None
+            self.add_pose_button.setText('ADD TO PROGRAM')
+
     def speed_percent(self):
         """MOVEMENT SPEED of the configuration tab; the default if it is empty."""
         text = self.speed_input.text().strip()
@@ -1626,7 +1776,17 @@ class RobotHMI(QMainWindow):
             QMessageBox.warning(self, 'Invalid TCP', 'Enter a TCP distance.')
             return
         distance = float(text)
+        try:
+            self.robot.set_tool_length(distance)
+        except (RobotError, ValueError) as error:
+            QMessageBox.warning(self, 'TCP', str(error))
+            return
         print(f'TCP DISTANCE = {distance} mm')
+        self.show_current_pose()
+        self.update_pose_solution()
+        QMessageBox.information(
+            self, 'TCP', f'The TCP is {distance:g} mm from the faceplate for this session. '
+            'The permanent value is tool.length_mm in dh.yaml (movemaster_description).')
 
     def move_robot(self):
         # In Freedrive, physical controls produce the position changes.
@@ -1722,6 +1882,11 @@ class RobotHMI(QMainWindow):
                     f'{step_number}. WAYPOINT {waypoint_number} | '
                     + '  '.join(f'J{i+1}={value:.1f}°' for i, value in enumerate(joints))
                 )
+            elif step['type'] == 'pose':
+                x, y, z, pitch, roll = step['pose']
+                self.sequence_list.addItem(
+                    f'{step_number}. POSE | {x:.1f}, {y:.1f}, {z:.1f} mm | '
+                    f'{pitch:.1f}°, {roll:.1f}°')
             elif step['type'] == 'gripper':
                 state = 'CLOSED' if step['closed'] else 'OPEN'
                 self.sequence_list.addItem(f'{step_number}. END EFFECTOR | GRIPPER: {state}')
@@ -1922,6 +2087,7 @@ class RobotHMI(QMainWindow):
         if not (self.waypoint_editor_active() and self.editing_step_index is not None):
             self.waypoint_joint_control.set_freedrive(enabled)
         self.move_robot_button.setVisible(not enabled)
+        self.move_pose_button.setVisible(not enabled)
         self.update_robot_position(self.joint_values)
         if self.tabs.currentIndex() == 1 and self.waypoint_editor_active() and self.editing_step_index is None:
             (self.save_waypoint_button if enabled else self.waypoint_joint_control.joint_inputs[0]).setFocus()
@@ -1942,6 +2108,9 @@ class RobotHMI(QMainWindow):
         self.movement_joint_control.update_joint_positions(self.joint_values, sync_inputs)
         if not (self.waypoint_editor_active() and self.editing_step_index is not None):
             self.waypoint_joint_control.update_joint_positions(self.joint_values, sync_inputs)
+        self.show_current_pose()
+        if sync_inputs and self.robot.arm is not None and self.editing_pose_index is None:
+            self.set_pose_fields(self.robot.pose_of(self.joint_values))
         at_home = all(abs(value) <= HOME_TOLERANCE_DEG for value in self.joint_values)
         self.home_status.setText('Home: AT HOME' if at_home else 'Home: AWAY FROM HOME')
 
@@ -1963,6 +2132,7 @@ class RobotHMI(QMainWindow):
 
     def on_busy_changed(self, busy):
         self.move_robot_button.setText('STOP' if busy else 'MOVE ROBOT')
+        self.move_pose_button.setText('STOP' if busy else 'MOVE TO POSE')
         self.home_button.setText('STOP' if busy else 'GO HOME')
         self.run_program_button.setText('STOP PROGRAM' if busy else 'RUN PROGRAM')
         if not busy:
@@ -2023,6 +2193,8 @@ class RobotHMI(QMainWindow):
                     self.sequence_list.setCurrentRow(0)
         elif index == 2:
             self.movement_joint_control.joint_inputs[0].setFocus()
+        elif index == 3:
+            self.pose_inputs[0].setFocus()
 
     def eventFilter(self, obj, event):
         # Este filtro está instalado una sola vez en QApplication.
@@ -2273,8 +2445,10 @@ def main():
     parser.add_argument('--joint-config', type=Path, default=None,
                         help='joints.json: the joints, their limits and speeds.')
     arguments, qt_arguments = parser.parse_known_args()
-    joints = load_joints(arguments.joint_config or default_joint_config())
-    robot = robot_client.connect(joints, load_jog_axes(default_jog_config()))
+    joint_config = arguments.joint_config or default_joint_config()
+    joints = load_joints(joint_config)
+    robot = robot_client.connect(joints, load_jog_axes(default_jog_config()),
+                                 robot_client.load_arm(joint_config))
 
     app = QApplication(sys.argv[:1] + qt_arguments)
     app.setStyleSheet(RETRO_STYLE)

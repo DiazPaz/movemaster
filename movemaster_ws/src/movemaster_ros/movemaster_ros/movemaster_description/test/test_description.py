@@ -83,10 +83,10 @@ def dh_tool0(q):
         rot_x(math.radians(row['alpha_deg']))) for row in CHAIN))
 
 
-def urdf_tool0(root, q):
-    """base_link → tool0 by walking the URDF joints; revolute joints take q[name]."""
+def urdf_tool0(root, q, frame='tool0'):
+    """base_link → frame by walking the URDF joints; revolute joints take q[name]."""
     by_child = {joint.find('child').get('link'): joint for joint in root.findall('joint')}
-    chain, link = [], 'tool0'
+    chain, link = [], frame
     while link != 'base_link':
         chain.insert(0, by_child[link])
         link = chain[0].find('parent').get('link')
@@ -252,3 +252,14 @@ def test_mock_hardware_starts_at_home_inside_the_limits(three_axes):
         # Home is q = 0; joint_3's range excludes it, so it starts at its lower limit.
         expected = min(max(HOME[name], joint['min_position_rad']), joint['max_position_rad'])
         assert float(initial.text) == pytest.approx(expected)
+
+
+def test_the_tcp_is_tool_length_along_z_of_tool0():
+    tool = yaml.safe_load(DH_CONFIG.read_text())['tool']['length_mm'] / 1000
+    root = robot()
+    for q in (HOME, DH_ZERO, {name: random.uniform(-1, 1) for name in OFFSET}):
+        assert_same_pose(urdf_tool0(root, q, 'tcp'),
+                         multiply(urdf_tool0(root, q), translation(0, 0, tool)))
+    # At Home the faceplate points down: the tcp is tool.length_mm below tool0.
+    assert position(urdf_tool0(root, HOME, 'tcp')) == pytest.approx(
+        [0.1574, 0, 0.320 - tool], abs=1e-9)

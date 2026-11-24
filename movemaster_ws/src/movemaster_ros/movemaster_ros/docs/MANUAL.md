@@ -74,13 +74,17 @@ movemaster_ws/                                  workspace de colcon (desde aquí
             │   ├── launch/bringup.launch.py
             │   ├── systemd/movemaster.service  arranque al encender la Pi  ← lo ajustas tú
             │   └── test/test_bringup.py
-            └── movemaster_hmi/                 HMI de la pantalla táctil (PySide6) y su API al robot
-                ├── package.xml, setup.py, requirements.txt
-                ├── movemaster_hmi/             hmi_movemaster.py, robot_client.py (la API), assets/
+            ├── movemaster_hmi/                 HMI de la pantalla táctil (PySide6) y su API al robot
+            │   ├── package.xml, setup.py, requirements.txt
+            │   ├── movemaster_hmi/             hmi_movemaster.py, robot_client.py (la API), assets/
+            │   └── test/
+            └── movemaster_kinematics/          CINEMÁTICA directa e inversa (Python, sin ROS)
+                ├── package.xml, setup.py
+                ├── movemaster_kinematics/      kinematics.py (Arm, Pose), cli.py
                 └── test/
 ```
 
-Hay seis paquetes de ROS que importan:
+Hay siete paquetes de ROS que importan:
 
 | Paquete | Qué es | Lenguaje |
 |---|---|---|
@@ -89,7 +93,8 @@ Hay seis paquetes de ROS que importan:
 | `movemaster_control` | No tiene código compilado: configura y arranca el nodo `controller_manager` de `ros2_control` con el plugin y sus controladores. | Python (launch), XML, YAML |
 | `movemaster_teleop` | Jog de articulaciones desde el teach pendant (ESP32): `jog_node` y el firmware. | Python, C++ (Arduino) |
 | `movemaster_bringup` | Arranca todo con un comando: `movemaster_control`, el jog si hay pendant, RViz y el HMI si se piden; trae el servicio de `systemd` para arrancar al encender. | Python (launch), systemd |
-| `movemaster_hmi` | La pantalla táctil y su API al robot (`RobotClient`): posiciones, movimientos, programas y gripper sobre ROS 2. | Python (PySide6) |
+| `movemaster_hmi` | La pantalla táctil y su API al robot (`RobotClient`): posiciones, movimientos (por ángulos o por pose del TCP), programas y gripper sobre ROS 2. | Python (PySide6) |
+| `movemaster_kinematics` | Cinemática directa e inversa analítica desde `dh.yaml` y `joints.json`: de los ángulos a la pose del TCP y de vuelta. | Python |
 
 ---
 
@@ -1099,7 +1104,7 @@ source install/setup.bash
   (`ros2_control`, `ros2_controllers`, `xacro`, `nlohmann-json`…). Necesita las
   dos rutas porque rosdep, como colcon, no entra en el paquete Python
   `movemaster_ros`.
-- `--packages-up-to movemaster_bringup` compila los seis paquetes:
+- `--packages-up-to movemaster_bringup` compila los siete paquetes:
   `movemaster_bringup` depende de todos los demás.
 - `--symlink-install` instala enlaces a los archivos de configuración en lugar
   de copias: los cambios en `joints.json`, `dh.yaml`, el YAML o el launch se
@@ -1332,7 +1337,7 @@ si falla, el launch se cierra y su salida dice por qué.
 |---|---|---|
 | `pendant` | vacío | Puerto serie del pendant; vacío, sin jog. Conviene la ruta fija de `/dev/serial/by-id/`: `/dev/ttyUSB0` puede cambiar al reconectar el cable. |
 | `rviz` | `false` | `true` abre RViz; necesita pantalla. |
-| `hmi`, `hmi_python` | `false`, `python3` | `hmi:=true` abre el HMI de la pantalla táctil con el Python que tiene PySide6, el de su entorno virtual ([11.6](#116-el-hmi-de-la-pantalla-táctil)). |
+| `hmi`, `hmi_python` | `false`, `python3` | `hmi:=true` abre el HMI de la pantalla táctil con el Python que tiene PySide6, el de su entorno virtual ([11.7](#117-el-hmi-de-la-pantalla-táctil)). |
 | `homing` | `true` | `false`: sin homing; cada eje toma como referencia la postura en que se encendió ([4.4](#44-cuidados)). Con `use_mock_hardware:=true` no hay homing. |
 | `use_mock_hardware`, `joint_config`, `can_interface` | los de [10](#10-paso-7--arrancar-el-nodo-con-los-spark-max) | Pasan a `movemaster_control`; `joint_config` también al jog. |
 
@@ -1377,25 +1382,6 @@ sudo systemctl enable --now movemaster
   `rviz2 -d $(ros2 pkg prefix --share movemaster_description)/rviz/display.rviz`.
   El HMI tampoco: el servicio no tiene sesión gráfica.
 
-### 11.6 El HMI de la pantalla táctil
-
-`movemaster_hmi` muestra las posiciones medidas en grados (Home en 0) y mueve el
-brazo con **MOVE ROBOT**, **GO HOME** y **RUN PROGRAM**; mientras se mueve, el
-mismo botón dice **STOP**. Usa el mismo camino que una trayectoria de
-[11.2](#112-mover): la acción del `joint_trajectory_controller`.
-
-```bash
-ros2 launch movemaster_bringup bringup.launch.py pendant:=/dev/ttyUSB0 hmi:=true hmi_python:=~/movemaster/hmi_venv/bin/python
-```
-
-- **El switch del pendant manda.** En MANUAL el HMI pasa a FREEDRIVE y no mueve
-  el brazo; para moverlo desde el HMI, el switch va en AUTO.
-- **El puerto del pendant es de `jog_node`.** El HMI sabe qué ejes están
-  seleccionados por `/pendant/joy`, que publica `jog_node`.
-- **Instalación (una vez):** PySide6 va en un entorno virtual creado con
-  `--system-site-packages`, para que vea `rclpy`. La API, la instalación y lo que
-  cambió en el HMI están en [movemaster_hmi/README.md](../movemaster_hmi/README.md).
-
 ### 11.6 Abrir y cerrar el gripper
 
 Si `joints.json` tiene el bloque `gripper` ([4.7](#47-el-servo-del-gripper)), el
@@ -1419,6 +1405,64 @@ ros2 topic pub --once /gripper_controller/commands std_msgs/msg/Float64MultiArra
   reporta el servo), así que la presión siguiente siempre hace lo contrario de
   lo que tiene la pinza, aunque la haya movido el HMI. Conectar o reconectar el
   pendant no mueve la pinza: solo cuenta un cambio del botón.
+
+### 11.7 El HMI de la pantalla táctil
+
+`movemaster_hmi` muestra las posiciones medidas en grados (Home en 0) y mueve el
+brazo con **MOVE ROBOT**, **GO HOME**, **MOVE TO POSE** y **RUN PROGRAM**; mientras se mueve, el
+mismo botón dice **STOP**. Usa el mismo camino que una trayectoria de
+[11.2](#112-mover): la acción del `joint_trajectory_controller`.
+
+```bash
+ros2 launch movemaster_bringup bringup.launch.py pendant:=/dev/ttyUSB0 hmi:=true hmi_python:=~/movemaster/hmi_venv/bin/python
+```
+
+- **El switch del pendant manda.** En MANUAL el HMI pasa a FREEDRIVE y no mueve
+  el brazo; para moverlo desde el HMI, el switch va en AUTO.
+- **El puerto del pendant es de `jog_node`.** El HMI sabe qué ejes están
+  seleccionados por `/pendant/joy`, que publica `jog_node`.
+- **Instalación (una vez):** PySide6 va en un entorno virtual creado con
+  `--system-site-packages`, para que vea `rclpy`. La API, la instalación y lo que
+  cambió en el HMI están en [movemaster_hmi/README.md](../movemaster_hmi/README.md).
+
+### 11.8 Mover a una pose (cinemática inversa)
+
+`movemaster_kinematics` convierte una **pose de la punta de la herramienta**
+(el TCP) en ángulos de los ejes, con una solución analítica: exacta, instantánea
+y siempre la misma. La geometría es la del URDF: la tabla DH y la herramienta de
+`dh.yaml`, y los límites de `joints.json`.
+
+| Campo | Unidad | Significado |
+|---|---|---|
+| X, Y, Z | mm | El TCP en `base_link`: `tool.length_mm` (65 mm, la pinza) delante de la brida. |
+| PITCH | ° | Inclinación de la herramienta: 0 horizontal hacia fuera, −90 hacia abajo, +90 hacia arriba. |
+| ROLL | ° | Giro de la herramienta sobre su eje; 0 en Home. |
+
+- **Cinco ejes, cinco números.** No hay yaw: la herramienta siempre queda en el
+  plano vertical del brazo, el que gira la cintura.
+- **Home** es X 157.4, Y 0, Z 255 mm, PITCH −90°, ROLL 0°.
+- **En el HMI**, pestaña **CARTESIAN**: se escribe la pose y, antes de mover, se
+  ven los ángulos que tendrían los ejes o por qué no se alcanza. **MOVE TO
+  POSE** mueve; **ADD TO PROGRAM** la guarda como paso `POSE`.
+- **El movimiento es punto a punto:** los ejes arrancan y terminan juntos, pero
+  el TCP no sigue una línea recta.
+- **De las soluciones posibles** (codo arriba o abajo, alcanzar por detrás)
+  elige la que los ejes alcanzan primero desde donde están, siempre dentro de
+  los límites.
+- **Otra herramienta:** se cambia `tool.length_mm` en
+  `movemaster_description/config/dh.yaml`. **APPLY TCP** del HMI la cambia solo
+  para la sesión.
+
+Sin el robot, desde la terminal:
+
+```bash
+ros2 run movemaster_kinematics kinematics fk 0 0 0 0 0
+# X 157.4 mm  Y 0.0 mm  Z 255.0 mm  pitch -90.0 deg  roll 0.0 deg
+ros2 run movemaster_kinematics kinematics ik 250 50 200 -90 30
+# J1 11.31 deg  J2 27.20 deg  J3 -15.97 deg  J4 -11.24 deg  J5 30.00 deg
+```
+
+Detalle, mensajes de error y API: [movemaster_kinematics/README.md](../movemaster_kinematics/README.md).
 
 ---
 

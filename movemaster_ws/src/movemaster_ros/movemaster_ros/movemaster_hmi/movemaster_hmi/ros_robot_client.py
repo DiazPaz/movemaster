@@ -49,8 +49,8 @@ GRIPPER_SETTLE_S = 1.0     # a program waits this long after commanding the grip
 class RosRobotClient(RobotClient):
     ros_stopped = Signal()  # ROS shut down from outside (Ctrl+C in the launch): the HMI closes
 
-    def __init__(self, joints, jog_axes, parent=None):
-        super().__init__(joints, jog_axes, parent)
+    def __init__(self, joints, jog_axes, arm=None, parent=None):
+        super().__init__(joints, jog_axes, arm, parent)
         self._names = [joint.name for joint in self.joints]
         self._commands = queue.SimpleQueue()
         self._measured = {}        # joint name -> rad

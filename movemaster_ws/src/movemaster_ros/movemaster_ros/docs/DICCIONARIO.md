@@ -88,6 +88,13 @@ llaman a `on_configure`, `on_activate`, `on_deactivate`, `on_cleanup`,
 Valor que devuelve cada transición del ciclo de vida: `SUCCESS`, `FAILURE` o
 `ERROR`.
 
+**Cinemática directa / inversa**
+Directa: de los ángulos de los ejes a la pose del TCP. Inversa: de una pose a
+los ángulos. En MoveMaster las dos están en `movemaster_kinematics`, con una
+solución analítica desde `dh.yaml` y los límites de `joints.json`; la pose tiene
+cinco números (X, Y, Z, PITCH, ROLL) porque el brazo tiene cinco ejes. MANUAL
+§11.8.
+
 **CAN (Controller Area Network)**
 Bus serie de dos hilos (CAN-H y CAN-L) usado por los SPARK MAX a 1 Mbit/s.
 "CAN clásico" son tramas de hasta 8 bytes de datos. Necesita una resistencia de
@@ -331,7 +338,8 @@ El gripper no lo escucha: tiene su propio `HEARTBEAT` (`0x0A080C05`, en
 **HMI (movemaster_hmi)**
 Interfaz de la pantalla táctil de 800x480 (PySide6). Habla con el robot solo
 por su API, `RobotClient`: posiciones medidas, movimientos, programas y gripper
-sobre ROS 2. MANUAL §11.6.
+sobre ROS 2, y poses del TCP con la cinemática inversa (pestaña CARTESIAN).
+MANUAL §11.7.
 
 **Home**
 Postura de reposo del brazo y cero de todos los ejes (q = 0): el brazo
@@ -594,6 +602,11 @@ Paso que se hace una vez por SPARK: restablece sus parámetros a fábrica
 (conserva CAN ID, tipo de motor e idle mode), escribe el baseline y lo guarda
 en flash. MANUAL §6.1.
 
+**Pose (del TCP)**
+Dónde está la punta de la herramienta y hacia dónde apunta: X, Y, Z en mm en
+`base_link`, PITCH (inclinación) y ROLL (giro sobre su eje) en grados. Sin yaw:
+la herramienta siempre queda en el plano vertical del brazo. MANUAL §11.8.
+
 **Pose cero DH**
 La postura con todos los θ de la tabla DH en 0, q = (0, 90°, −90°, 0, 0): el
 brazo y el antebrazo horizontales al frente y el faceplate hacia abajo, con su
@@ -801,11 +814,15 @@ alcanzarse esa posición.
 Canal con nombre por el que un nodo publica mensajes y otros los reciben
 (`/joint_states`).
 
+**TCP (tool center point)**
+La punta de la herramienta: el punto que posiciona la cinemática inversa. Está
+`tool.length_mm` (65 mm, la pinza) delante de `tool0`, sobre su eje z; en el
+URDF es el marco `tcp`. MANUAL §11.8.
+
 **tool0**
-El centro de la cara del faceplate (la brida), último marco de la tabla DH: el
-TCP mientras no haya herramienta. Su eje z sale del faceplate y su eje x apunta
-a la marca. Una herramienta (el gripper) se agrega como un marco hijo de
-`tool0`. MoveIt planea la posición de este marco.
+El centro de la cara del faceplate (la brida), último marco de la tabla DH. Su
+eje z sale del faceplate y su eje x apunta a la marca. La herramienta montada
+ahí define el TCP (marco `tcp`, hijo de `tool0`).
 
 ## U
 

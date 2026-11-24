@@ -14,7 +14,7 @@
 #
 # Longitudes en mm y ángulos en grados; el URDF los convierte a metros y radianes. El último
 # marco, tool0, es el centro de la cara del faceplate (la brida), con z hacia fuera: ahí se
-# montan las herramientas.
+# montan las herramientas. tcp, la punta de la herramienta, está tool.length_mm más allá.
 #
 # joint             nombre del eje en joints.json y en el URDF
 # label             nombre del eje en el brazo; da nombre a su eslabón (<label>_link)
@@ -27,6 +27,12 @@ chain:
   - {joint: joint_3, label: elbow,       a_mm: 157.4, alpha_deg: 0,   d_mm: 0,   theta_offset_deg: 90,  radius_mm: 30}
   - {joint: joint_4, label: wrist_pitch, a_mm: 0,     alpha_deg: -90, d_mm: 0,   theta_offset_deg: 0,   radius_mm: 25}
   - {joint: joint_5, label: wrist_roll,  a_mm: 0,     alpha_deg: 0,   d_mm: 150, theta_offset_deg: 0,   radius_mm: 20}
+
+# La herramienta montada en la brida. tcp (tool center point) está length_mm delante de tool0,
+# sobre su eje z: es el punto que posiciona la cinemática inversa (movemaster_kinematics). Al
+# cambiar de herramienta solo cambia este número. Hoy, la pinza: de la brida a la punta de los
+# dedos.
+tool: {length_mm: 65}
 
 # Base fija bajo el eje 1, solo para dibujo y colisiones.
 base: {radius_mm: 80, height_mm: 40}

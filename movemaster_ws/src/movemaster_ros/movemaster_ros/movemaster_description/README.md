@@ -35,6 +35,11 @@ DH estándar, `T(i-1 → i) = Rz(θi) · Tz(di) · Tx(ai) · Rx(αi)`, con
 - **Positivos:** cintura antihorario vista desde arriba; hombro, codo e
   inclinación de muñeca inclinan el brazo hacia adelante; faceplate antihorario
   visto de frente.
+- **La herramienta:** `tool: {length_mm: 65}` en `dh.yaml`. El marco `tcp`, la
+  punta de la pinza, está esa distancia delante de `tool0` sobre su eje z; en
+  Home, en (0.1574, 0, 0.255) m. Es el punto que posiciona la cinemática inversa
+  ([movemaster_kinematics](../movemaster_kinematics/README.md)). Para otra
+  herramienta solo cambia ese número.
 
 ## Cómo se arma el URDF
 
@@ -93,9 +98,9 @@ corrige en su `stop_rad`. Detalle en MANUAL §4.4 y §7.3.
 
 | Archivo | Contenido |
 |---|---|
-| `config/dh.yaml` | Tabla DH, Home, radios de los eslabones y tamaño de la base. |
+| `config/dh.yaml` | Tabla DH, Home, la herramienta (TCP), radios de los eslabones y tamaño de la base. |
 | `urdf/movemaster.urdf.xacro` | El robot: argumentos, base, cadena DH y bloque `<ros2_control>`. |
 | `urdf/movemaster_arm.xacro` | Macro que convierte cada fila DH en `joint_i`, `<label>_link` y `joint_i_dh`. |
 | `launch/display.launch.py` | Vista previa con `robot_state_publisher`, `joint_state_publisher(_gui)` y RViz. |
 | `rviz/display.rviz` | Configuración de RViz: modelo, TF de `base_link` y `tool0`. |
-| `test/test_description.py` | Cinemática directa del URDF contra el producto DH, Home en q = 0, pose cero DH, sentidos positivos, ejes fijos y bloque `<ros2_control>`. |
+| `test/test_description.py` | Cinemática directa del URDF contra el producto DH, Home en q = 0, pose cero DH, sentidos positivos, ejes fijos, el marco `tcp` y bloque `<ros2_control>`. |
