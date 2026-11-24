@@ -27,22 +27,22 @@
 
 // Joystick
 const int pinX = 34;
-const int pinY = 35;
-const int pinJoyBot = 18;
+const int pinY = 26;
+const int pinJoyBot = 32;
 
 // Switch Freedrive
-const int pinFreeDrive = 19;
+const int pinFreeDrive = 16;
 
 // Botones grupo Y
 // J1, J2, J3
-const int pinJ1 = 21;
-const int pinJ2 = 22;
-const int pinJ3 = 23;
+const int pinJ1 = 19;
+const int pinJ2 = 21;
+const int pinJ3 = 22;
 
 // Botones grupo X
 // J4, J5
-const int pinJ4 = 25;
-const int pinJ5 = 26;
+const int pinJ4 = 14;
+const int pinJ5 = 13;
 
 // Ángulos medidos que manda la Raspberry Pi
 const int numJoints = 5;
