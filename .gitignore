@@ -13,7 +13,7 @@ __pycache__/
 venv/
 env/
 .env/
-
+.myenv/
 
 # =========================
 # ROS 2 / colcon
@@ -77,3 +77,5 @@ Makefile
 
 .DS_Store
 Thumbs.db
+
+hmi_venv/
