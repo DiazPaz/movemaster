@@ -124,6 +124,20 @@ class HMIInput(QLineEdit):
         self.update()
 
 class CRTDisplay(QLabel):
+    """Shows source_widget through a CRT: curved glass, rounded corners, vignette, scanlines
+    drifting down, a soft glow scanning the screen, green tint and flicker.
+
+    Everything that does not change between frames is computed once per size: the distortion
+    maps (fixed point, the fastest remap) and, for each phase of the drifting scanlines, one
+    gain per pixel and channel with the mask, the vignette, the scanline and the tint. A frame
+    is then a grab, a remap and one saturating multiply, with the flicker as its scale; only
+    the rows of the glow get a second pass. All of it runs in OpenCV, outside the Python
+    interpreter, so the Qt thread stays free for the keyboard and the pendant.
+    """
+
+    FRAME_MS = 33         # about 30 FPS for the screens
+    FAST_FRAME_MS = 16    # about 60 FPS while something moves on screen (the arcade scene)
+    _GAIN_ONE = 128       # fixed point of the gains: 128 is 1.0, room up to 2.0
 
     def __init__(self, source_widget, parent=None):
         super().__init__(parent)
@@ -135,103 +149,130 @@ class CRTDisplay(QLabel):
         # CRT animation: drifting horizontal scanlines and soft moving glow.
         self.scanline_offset = 0
         self.scanline_position = 0.0
-        self.scanline_speed = 4.0       # pixels per frame (~80 px/s at 20 FPS)
+        self.scanline_speed = 80.0      # glow speed, pixels per second
         self.scanline_height = 12.0     # glow half-width in pixels
         self.scanline_intensity = 0.12  # maximum added brightness
         self.flicker_enabled = True
+        # Tint, in the memory order of QImage.Format_RGB32 (B, G, R, unused).
+        self.channel_gain = (1.03, 1.08, 0.85, 1.0)
         self.map_x = None
         self.map_y = None
+        self.gains = []                 # per scanline phase: uint8 gain, _GAIN_ONE = 1.0
         self.last_size = None
+        self.frame_clock = QElapsedTimer()
+        self.frame_clock.start()
+        self.frame_pending = False
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        # Every frame covers the whole label: Qt need not repaint the screens under it, which
+        # only the grab has to render.
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setStyleSheet('background-color: black;')
         self.timer = QTimer(self)
+        self.timer.setTimerType(Qt.TimerType.PreciseTimer)
         self.timer.timeout.connect(self.update_crt)
-        self.timer.start(50)
+        self.timer.start(self.FRAME_MS)
+
+    def set_fast(self, fast):
+        """60 FPS while something animates on screen; 30 FPS for the screens."""
+        self.timer.setInterval(self.FAST_FRAME_MS if fast else self.FRAME_MS)
+
+    def request_frame(self):
+        """A new frame as soon as Qt is idle: what the operator just did shows at once,
+        not at the next tick. Requests in the same burst make one frame."""
+        if not self.frame_pending:
+            self.frame_pending = True
+            QTimer.singleShot(0, self._requested_frame)
+
+    def _requested_frame(self):
+        self.frame_pending = False
+        self.update_crt()
+        self.timer.start()  # the next periodic frame a full interval after this one
 
     def create_distortion_map(self, width, height):
         x, y = np.meshgrid(np.linspace(-1.0, 1.0, width), np.linspace(-1.0, 1.0, height))
         r2 = x * x + y * y
         factor = 1.0 + self.distortion * r2
-        source_x = x / factor
-        source_y = y / factor
-        self.map_x = ((source_x + 1.0) * 0.5 * (width - 1)).astype(np.float32)
-        self.map_y = ((source_y + 1.0) * 0.5 * (height - 1)).astype(np.float32)
+        source_x = ((x / factor + 1.0) * 0.5 * (width - 1)).astype(np.float32)
+        source_y = ((y / factor + 1.0) * 0.5 * (height - 1)).astype(np.float32)
+        # Fixed-point maps: the same result as the float ones, remapped about twice as fast.
+        self.map_x, self.map_y = cv2.convertMaps(source_x, source_y, cv2.CV_16SC2)
 
-    def update_crt(self):
-        if not self.source_widget.isVisible():
-            return
-        width = self.source_widget.width()
-        height = self.source_widget.height()
-        if width <= 1 or height <= 1:
-            return
-        pixmap = self.source_widget.grab()
-        image = pixmap.toImage().convertToFormat(QImage.Format.Format_RGBA8888)
-        width = image.width()
-        height = image.height()
-        if width == 0 or height == 0:
-            return
-        bytes_per_line = image.bytesPerLine()
-        buffer = np.frombuffer(image.bits(), dtype=np.uint8, count=image.sizeInBytes())
-        frame = buffer.reshape((height, bytes_per_line // 4, 4))
-        frame = frame[:, :width, :].copy()
-        current_size = (width, height)
-        if self.last_size != current_size:
-            self.create_distortion_map(width, height)
-            self.last_size = current_size
-        frame = cv2.remap(frame, self.map_x, self.map_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 255))
+    def create_gains(self, width, height):
+        """Per scanline phase, the gain of every pixel and channel that does not move."""
         mask = np.zeros((height, width), dtype=np.uint8)
         margin_x = int(width * 0.025)
         margin_y = int(height * 0.035)
         radius = int(min(width, height) * 0.07)
         cv2.rectangle(mask, (margin_x + radius, margin_y), (width - margin_x - radius, height - margin_y), 255, -1)
         cv2.rectangle(mask, (margin_x, margin_y + radius), (width - margin_x, height - margin_y - radius), 255, -1)
-        corners = [(margin_x + radius, margin_y + radius), (width - margin_x - radius, margin_y + radius), (margin_x + radius, height - margin_y - radius), (width - margin_x - radius, height - margin_y - radius)]
-        for center in corners:
+        for center in ((margin_x + radius, margin_y + radius), (width - margin_x - radius, margin_y + radius),
+                       (margin_x + radius, height - margin_y - radius),
+                       (width - margin_x - radius, height - margin_y - radius)):
             cv2.circle(mask, center, radius, 255, -1)
-        mask_float = mask.astype(np.float32) / 255.0
-        frame[:, :, :3] = (frame[:, :, :3] * mask_float[:, :, None]).astype(np.uint8)
-        frame[:, :, 3] = 255
-        xv = np.linspace(-1.0, 1.0, width)
-        yv = np.linspace(-1.0, 1.0, height)
-        xx, yy = np.meshgrid(xv, yv)
-        radial_distance = np.sqrt(xx ** 2 + yy ** 2)
-        vignette = 1.0 - self.vignette_strength * np.clip(radial_distance - 0.3, 0.0, 1.0)
-        vignette = np.clip(vignette, 0.25, 1.0)
-        frame[:, :, :3] = (frame[:, :, :3] * vignette[:, :, None]).astype(np.uint8)
-        # Moving dark scanlines: shift the raster phase one pixel per frame.
-        self.scanline_offset = (self.scanline_offset + 1) % max(1, self.scanline_spacing)
-        for y in range(self.scanline_offset, height, self.scanline_spacing):
-            frame[y:y + 1, :, :3] = (
-                frame[y:y + 1, :, :3].astype(np.float32) * self.scanline_brightness
-            ).astype(np.uint8)
+        xx, yy = np.meshgrid(np.linspace(-1.0, 1.0, width), np.linspace(-1.0, 1.0, height))
+        vignette = np.clip(
+            1.0 - self.vignette_strength * np.clip(np.sqrt(xx ** 2 + yy ** 2) - 0.3, 0.0, 1.0),
+            0.25, 1.0)
+        base = (mask.astype(np.float32) / 255.0) * vignette
+        channels = np.array(self.channel_gain, dtype=np.float32)
+        self.gains = []
+        for phase in range(max(1, self.scanline_spacing)):
+            rows = np.ones(height, dtype=np.float32)
+            rows[phase::max(1, self.scanline_spacing)] = self.scanline_brightness
+            gain = base[:, :, None] * rows[:, None, None] * channels[None, None, :]
+            self.gains.append(np.clip(np.rint(gain * self._GAIN_ONE), 0, 255).astype(np.uint8))
 
-        # Soft luminous scanline, continuously scanning top to bottom.
-        # Vectorized per-row brightness avoids costly per-pixel Python loops.
-        self.scanline_position = (self.scanline_position + self.scanline_speed) % height
-        row_index = np.arange(height, dtype=np.float32)
-        distance = np.abs(row_index - self.scanline_position)
-        # Smoothly wrap the glow around the top/bottom edge.
+    def update_crt(self):
+        if not self.source_widget.isVisible():
+            return
+        if self.source_widget.width() <= 1 or self.source_widget.height() <= 1:
+            return
+        image = self.source_widget.grab().toImage()
+        if image.format() not in (QImage.Format.Format_RGB32, QImage.Format.Format_ARGB32,
+                                  QImage.Format.Format_ARGB32_Premultiplied):
+            image = image.convertToFormat(QImage.Format.Format_RGB32)
+        width, height = image.width(), image.height()
+        if width == 0 or height == 0:
+            return
+        if self.last_size != (width, height):
+            self.create_distortion_map(width, height)
+            self.create_gains(width, height)
+            self.last_size = (width, height)
+        source = np.ndarray((height, width, 4), dtype=np.uint8, buffer=image.constBits(),
+                            strides=(image.bytesPerLine(), 4, 1))
+        frame = cv2.remap(source, self.map_x, self.map_y, interpolation=cv2.INTER_LINEAR,
+                          borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 255))
+
+        # Drifting dark scanlines, mask, vignette, tint and flicker: one saturating multiply.
+        self.scanline_offset = (self.scanline_offset + 1) % len(self.gains)
+        brightness = random.uniform(0.97, 1.015) if self.flicker_enabled else 1.0
+        cv2.multiply(frame, self.gains[self.scanline_offset], dst=frame,
+                     scale=brightness / self._GAIN_ONE)
+
+        # Soft luminous scanline, scanning top to bottom at the same speed at any frame rate;
+        # only its rows are touched.
+        elapsed = self.frame_clock.restart() / 1000.0
+        self.scanline_position = (self.scanline_position
+                                  + self.scanline_speed * min(elapsed, 0.1)) % height
+        reach = int(self.scanline_height)
+        rows = np.arange(int(self.scanline_position) - reach,
+                         int(self.scanline_position) + reach + 2) % height
+        distance = np.abs(rows - self.scanline_position)
         distance = np.minimum(distance, height - distance)
-        glow = np.clip(1.0 - distance / max(1.0, self.scanline_height), 0.0, 1.0)
-        row_gain = 1.0 + glow * self.scanline_intensity
-        frame[:, :, :3] = np.clip(
-            frame[:, :, :3].astype(np.float32) * row_gain[:, None, None], 0, 255
-        ).astype(np.uint8)
+        glow = 1.0 + np.clip(1.0 - distance / max(1.0, self.scanline_height), 0.0, 1.0) \
+            * self.scanline_intensity
+        frame[rows] = np.clip(frame[rows] * glow[:, None, None], 0, 255).astype(np.uint8)
 
-        frame[:, :, 0] = (frame[:, :, 0] * 0.85).astype(np.uint8)
-        frame[:, :, 1] = np.clip(frame[:, :, 1] * 1.08, 0, 255).astype(np.uint8)
-        frame[:, :, 2] = np.clip(frame[:, :, 2] * 1.03, 0, 255).astype(np.uint8)
-        if self.flicker_enabled:
-            brightness = random.uniform(0.97, 1.015)
-            frame[:, :, :3] = np.clip(frame[:, :, :3].astype(np.float32) * brightness, 0, 255).astype(np.uint8)
-        frame = np.ascontiguousarray(frame)
-        output_image = QImage(frame.data, width, height, frame.strides[0], QImage.Format.Format_RGBA8888).copy()
-        output_pixmap = QPixmap.fromImage(output_image)
-        output_pixmap = output_pixmap.scaled(self.size(), Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
-        self.setPixmap(output_pixmap)
+        if (self.width(), self.height()) != (width, height) and self.width() > 1 \
+                and self.height() > 1:
+            frame = cv2.resize(frame, (self.width(), self.height()),
+                               interpolation=cv2.INTER_LINEAR)
+        output = QImage(frame.data, frame.shape[1], frame.shape[0], frame.strides[0],
+                        QImage.Format.Format_RGB32)
+        self.setPixmap(QPixmap.fromImage(output))  # fromImage copies: frame may go
 
 
 class GripperIndicator(QWidget):
@@ -1073,9 +1114,9 @@ class RobotHMI(QMainWindow):
         # Secret: arrows, physical J2, physical J1, keyboard ENTER.
         self.pong_sequence = ['UP', 'UP', 'DOWN', 'DOWN', 'LEFT', 'RIGHT', 'LEFT', 'RIGHT', 'J2', 'J1', 'ENTER']
         self.pong_sequence_offline = ['UP', 'UP', 'DOWN', 'DOWN', 'LEFT', 'RIGHT', 'LEFT', 'RIGHT', 'MINUS', 'PLUS', 'ENTER']
-        self.secret_using_esp32 = None
         self.pong_progress = 0
         self.pong_last_event = 0.0
+        self.pendant_joint_y = None  # last Y selection of the pendant: its J1/J2 presses
         self.pong_active = False
         self.arcade_active = False
         self.konami_pending = False
@@ -1185,6 +1226,12 @@ class RobotHMI(QMainWindow):
             self.intro_active = False
             self.content_pages.setCurrentWidget(self.hmi_widget)
         self.crt_display = CRTDisplay(self.content_pages)
+        # The screens change only when something happens; the intro, the transitions and the
+        # arcade scene move all the time.
+        self.content_pages.currentChanged.connect(
+            lambda _: self.crt_display.set_fast(
+                self.content_pages.currentWidget() is not self.hmi_widget))
+        self.crt_display.set_fast(self.content_pages.currentWidget() is not self.hmi_widget)
         self.stack.addWidget(self.content_pages)
         self.stack.addWidget(self.crt_display)
         self.stack.setCurrentWidget(self.crt_display)
@@ -1201,6 +1248,11 @@ class RobotHMI(QMainWindow):
         self.robot.busy_changed.connect(self.on_busy_changed)
         self.robot.step_started.connect(self.on_step_started)
         self.robot.finished.connect(self.on_robot_finished)
+        # What the robot or the pendant changes shows at once, not at the next CRT frame.
+        for signal in (self.robot.selection_changed, self.robot.gripper_changed,
+                       self.robot.mode_changed, self.robot.busy_changed,
+                       self.robot.step_started, self.robot.finished):
+            signal.connect(self.crt_display.request_frame)
         self.update_robot_status()
         self.robot.start()
 
@@ -1933,34 +1985,29 @@ class RobotHMI(QMainWindow):
     def record_secret_input(self, token):
         """Detecta la combinacion sin consumir las teclas de navegacion.
 
-        Con ESP32: flechas + J2 + J1 + Enter.
-        Sin ESP32: flechas + menos + mas + Enter.
+        Flechas + J2 + J1 + Enter, con J2 y J1 del pendant o menos y mas del teclado (se
+        pueden mezclar). Las flechas y Enter son del teclado.
         """
         if self.arcade_active or self.konami_pending:
             return False
 
-        connected = self.esp32_connected()
-        if connected != self.secret_using_esp32:
-            self.secret_using_esp32 = connected
-            self.pong_progress = 0
-
         now = time.monotonic()
         if now - self.pong_last_event > 12.0:
             self.pong_progress = 0
-
-        sequence = self.pong_sequence if connected else self.pong_sequence_offline
-        progress = self.pong_progress
         self.pong_last_event = now
 
-        if token == sequence[progress]:
+        progress = self.pong_progress
+        if token in (self.pong_sequence[progress], self.pong_sequence_offline[progress]):
             self.pong_progress += 1
-            if self.pong_progress == len(sequence):
+            if self.pong_progress == len(self.pong_sequence):
                 self.pong_progress = 0
                 self.open_arcade()
                 return True
             return False
 
-        self.pong_progress = 1 if token == sequence[0] else 0
+        # A third UP still leaves the last two: the sequence can go on from there.
+        first = self.pong_sequence[0]
+        self.pong_progress = (2 if progress == 2 else 1) if token == first else 0
         return False
 
     def activate_arcade(self):
@@ -2095,6 +2142,11 @@ class RobotHMI(QMainWindow):
     def on_selection_received(self, joint_x, joint_y):
         self.movement_joint_control.set_selection(joint_x, joint_y)
         self.waypoint_joint_control.set_selection(joint_x, joint_y)
+        # The pendant reports which joint each axis jogs, not its button presses: pressing J1
+        # or J2 shows as the Y selection changing to it, as in the original HMI.
+        previous, self.pendant_joint_y = self.pendant_joint_y, joint_y
+        if previous is not None and joint_y != previous and joint_y in (1, 2):
+            self.on_button_received(joint_y)
 
     def on_positions_received(self, positions):
         """Measured joint angles from the robot: the single source of the positions shown.
@@ -2196,12 +2248,20 @@ class RobotHMI(QMainWindow):
         elif index == 3:
             self.pose_inputs[0].setFocus()
 
+    @staticmethod
+    def physical_key(event):
+        """The key on the keyboard, the same when it goes down and up: Shift+= goes down as
+        Key_Plus but, if Shift is released first, comes up as Key_Equal."""
+        return event.nativeScanCode() or event.key()
+
     def eventFilter(self, obj, event):
         # Este filtro está instalado una sola vez en QApplication.
         # Liberar la tecla NO interrumpe el procesamiento normal de Qt.
+        if event.type() in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
+            self.crt_display.request_frame()  # show the answer to a key at once
         if event.type() == QEvent.Type.KeyRelease:
             if not event.isAutoRepeat():
-                self.pressed_keys.discard(event.key())
+                self.pressed_keys.discard(self.physical_key(event))
                 if self.arcade_active:
                     self.goat_game.release(event.key())
             if self.arcade_active:
@@ -2239,9 +2299,9 @@ class RobotHMI(QMainWindow):
         # Solo una pulsación física se cuenta para la secuencia y para
         # navegación con flechas. No bloquea el primer evento.
         if key in tracked_keys and not editing_text and not self.arcade_active:
-            if event.isAutoRepeat() or key in self.pressed_keys:
+            if event.isAutoRepeat() or self.physical_key(event) in self.pressed_keys:
                 return True
-            self.pressed_keys.add(key)
+            self.pressed_keys.add(self.physical_key(event))
 
         # Controles de la escena: movimiento y Enter frente a la puerta.
         if self.arcade_active:
