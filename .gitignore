@@ -79,3 +79,4 @@ Makefile
 Thumbs.db
 
 hmi_venv/
+movemaster_ws/src/movemaster_ros/movemaster_ros/movemaster_hardware/config/
