@@ -11,14 +11,17 @@
 //
 // Freedrive es el switch MANUAL/AUTO. Joystick va de -1000 a 1000 alrededor del centro
 // calibrado al encender, y es 0 en AUTO. Gripper es el estado que alterna el botón del
-// joystick: ON cierra el gripper. El ESP32 no mueve nada ni calcula ángulos: los ángulos son
-// los medidos en el robot (/joint_states), que la Raspberry Pi le manda en grados con Home
-// en 0, una línea por envío:
+// joystick: ON cierra el gripper. El ESP32 no mueve nada ni calcula ángulos. La Raspberry Pi
+// le manda, 10 veces por segundo, los ángulos medidos en el robot (/joint_states) en grados
+// con Home en 0 y el estado real del gripper (ON cerrado, OFF abierto):
 //
 //   ANGLES,12.3,-20.5,33.3,0.0,45.0
+//   GRIPPER,ON
 //
-// Antes de recibir la primera, el ángulo se imprime como "--". El formato de las líneas
-// debe coincidir con pendant_text.py: si cambia uno, cambia el otro.
+// Antes de recibir ángulos, se imprime "--". Gripper sigue al estado real, así cada presión
+// lo alterna aunque el HMI lo haya movido; durante un segundo tras una presión se ignora
+// GRIPPER, que aún puede ser el de antes. El formato de las líneas debe coincidir con
+// pendant_text.py: si cambia uno, cambia el otro.
 
 #include <Arduino.h>
 
@@ -67,8 +70,12 @@ bool gripperActivo = false;
 
 bool estadoAnteriorJoystickBtn = HIGH;
 
-unsigned long ultimoDebounce = 0;
+unsigned long ultimoDebounce = 0;  // también es la última presión
 const unsigned long debounceDelay = 50;
+
+// Tras una presión, el GRIPPER de la Raspberry Pi puede ser aún el de antes: se ignora este
+// tiempo, de sobra para que el comando llegue al robot y este reporte el estado nuevo.
+const unsigned long retencionGripperMs = 1000;
 
 // Promedio con el joystick en reposo: el centro real del ADC no es 2048.
 int calibrarCentro(int pin) {
@@ -97,8 +104,17 @@ int normalizar(int raw, int centro) {
   return constrain(valor, -escala, escala);
 }
 
-// "ANGLES,a1,a2,..." de la Raspberry Pi: guarda los ángulos que trae.
+// Una línea de la Raspberry Pi: "ANGLES,a1,a2,..." o "GRIPPER,ON|OFF".
 void procesarLinea(char *linea) {
+
+  bool cerrado = strcmp(linea, "GRIPPER,ON") == 0;
+
+  if (cerrado || strcmp(linea, "GRIPPER,OFF") == 0) {
+    if (millis() - ultimoDebounce >= retencionGripperMs) {
+      gripperActivo = cerrado;
+    }
+    return;
+  }
 
   if (strncmp(linea, "ANGLES,", 7) != 0) {
     return;

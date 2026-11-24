@@ -1401,9 +1401,12 @@ ros2 topic pub --once /gripper_controller/commands std_msgs/msg/Float64MultiArra
 - La apertura que reporta el servo sale en `/dynamic_joint_states`, con el
   nombre `gripper` y la interfaz `opening`. Es `nan` mientras el servo no ha
   recibido ningún comando desde que encendió la ESP32.
-- **Con el teach pendant,** el botón del joystick lo alterna: la primera
-  presión cierra (agarra) y la siguiente abre, en MANUAL y en AUTO. Conectar o
-  reconectar el pendant no mueve la pinza: solo cuenta un cambio del botón.
+- **Con el teach pendant,** el botón del joystick lo alterna, en MANUAL y en
+  AUTO: si está abierta la cierra (agarra) y si está cerrada la abre. Con el
+  firmware de texto, `jog_node` le manda al pendant el estado real (el que
+  reporta el servo), así que la presión siguiente siempre hace lo contrario de
+  lo que tiene la pinza, aunque la haya movido el HMI. Conectar o reconectar el
+  pendant no mueve la pinza: solo cuenta un cambio del botón.
 
 ---
 

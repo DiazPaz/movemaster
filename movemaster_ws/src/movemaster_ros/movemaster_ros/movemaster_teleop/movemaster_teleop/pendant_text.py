@@ -13,9 +13,15 @@ Freedrive is the MANUAL switch. Joystick goes from -1000 to 1000 around the cali
 and is 0 in AUTO. Gripper is the flag the joystick button toggles: ON closes the gripper.
 Angulo is only shown: the ESP32 prints what the Raspberry Pi last sent it ('--' before that).
 
-Raspberry Pi -> ESP32, the measured angles of J1..Jn in degrees, Home at 0:
+Raspberry Pi -> ESP32, ten times a second, each once known: the measured angles of J1..Jn in
+degrees, Home at 0, and the real state of the gripper (ON closed, OFF open):
 
     ANGLES,12.3,-20.5,33.3,0.0,45.0
+    GRIPPER,ON
+
+The ESP32 sets its gripper flag to GRIPPER, so a press always toggles the real state, also
+after the HMI moved the gripper; for a second after a press it ignores GRIPPER, which may
+still be the state from before the press.
 """
 
 import re
@@ -103,3 +109,8 @@ def encode(frame, angles_deg=None):
 def format_angles(angles_deg):
     """The line that tells the ESP32 the measured angles."""
     return ('ANGLES,' + ','.join(f'{angle:.1f}' for angle in angles_deg) + '\n').encode('ascii')
+
+
+def format_gripper(closed):
+    """The line that tells the ESP32 the real state of the gripper."""
+    return b'GRIPPER,ON\n' if closed else b'GRIPPER,OFF\n'

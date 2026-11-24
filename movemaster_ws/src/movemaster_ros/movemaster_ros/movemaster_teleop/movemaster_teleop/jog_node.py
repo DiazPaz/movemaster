@@ -8,7 +8,8 @@ select_controllers false, the controllers are switched by hand with ros2 control
 The joystick button opens and closes the gripper (movemaster_teleop.gripper), in MANUAL and
 in AUTO. jog_node is the only reader of the pendant's port: it publishes every fresh frame on
 /pendant/joy (movemaster_teleop.pendant_joy) for the HMI. With the text protocol it also sends
-the pendant the measured angles, which the ESP32 shows (movemaster_teleop.pendant_text).
+the pendant the measured angles, which the ESP32 shows, and the real state of the gripper,
+which sets the pendant's gripper flag (movemaster_teleop.pendant_text).
 """
 
 import json
@@ -18,6 +19,7 @@ import time
 
 from action_msgs.msg import GoalStatus, GoalStatusArray
 from ament_index_python.packages import get_package_share_directory
+from control_msgs.msg import DynamicJointState
 from controller_manager_msgs.srv import ListControllers, SwitchController
 import rclpy
 from rclpy.executors import ExternalShutdownException
@@ -27,7 +29,7 @@ from sensor_msgs.msg import JointState, Joy
 from std_msgs.msg import Float64MultiArray
 
 from movemaster_teleop import pendant_joy, pendant_text
-from movemaster_teleop.gripper import CLOSED, GripperButton
+from movemaster_teleop.gripper import CLOSED, GripperButton, is_closed
 from movemaster_teleop.jog import Jogger, JointLimits
 from movemaster_teleop.mode import ControllerSelector, JOG
 from movemaster_teleop.pendant_link import SerialLink
@@ -84,7 +86,7 @@ class JogNode(Node):
                              p['max_lead_rad'], p['idle_timeout_s'])
         self.joints = joints
         self.link = SerialLink(p['port'], p['baudrate'], protocol=p['protocol'])
-        # Only the text firmware reads the angles; a rate of 0 sends none.
+        # Only the text firmware reads the angles and the gripper state; a rate of 0 sends none.
         self.angles_period = (1.0 / p['angles_rate_hz']
                               if p['protocol'] == 'text' and p['angles_rate_hz'] > 0 else None)
         self.angles_at = 0.0
@@ -96,10 +98,13 @@ class JogNode(Node):
         self.last_tick = time.monotonic()
         self.publisher = self.create_publisher(Float64MultiArray, '/jog_controller/commands', 10)
         self.gripper = GripperButton()
+        self.gripper_closed = None  # real state, from /dynamic_joint_states; None: unknown
         self.gripper_publisher = self.create_publisher(
             Float64MultiArray, '/gripper_controller/commands', 10)
         self.joy_publisher = self.create_publisher(Joy, pendant_joy.TOPIC, 10)
         self.create_subscription(JointState, '/joint_states', self.on_joint_states, 10)
+        self.create_subscription(
+            DynamicJointState, '/dynamic_joint_states', self.on_dynamic_states, 10)
         self.selector = None
         if p['select_controllers']:
             self.selector = ControllerSelector(p['switch_retry_s'])
@@ -120,6 +125,13 @@ class JogNode(Node):
     def on_joint_states(self, msg):
         self.measured.update(zip(msg.name, msg.position))
 
+    def on_dynamic_states(self, msg):
+        """The gripper's real state: the opening its ESP32 reports."""
+        for name, interfaces in zip(msg.joint_names, msg.interface_values):
+            if name == 'gripper' and 'opening' in interfaces.interface_names:
+                self.gripper_closed = is_closed(
+                    interfaces.values[interfaces.interface_names.index('opening')])
+
     def tick(self):
         now = time.monotonic()
         dt, self.last_tick = min(now - self.last_tick, 0.1), now
@@ -135,8 +147,8 @@ class JogNode(Node):
         fresh = self.frame_at is not None and now - self.frame_at <= self.link_timeout
         frame = self.frame if fresh else None
         self.report_selection(frame)
-        self.send_angles(now)
-        opening = self.gripper.update(frame)
+        self.send_status(now)
+        opening = self.gripper.update(frame, self.gripper_closed)
         if opening is not None:
             self.gripper_publisher.publish(Float64MultiArray(data=[opening]))
             self.get_logger().info('Gripper: ' + ('closing.' if opening == CLOSED else 'opening.'))
@@ -149,15 +161,22 @@ class JogNode(Node):
         if targets is not None:
             self.publisher.publish(Float64MultiArray(data=targets))
 
-    def send_angles(self, now):
-        """The measured angles to the pendant, in degrees with Home at 0, for it to show."""
+    def send_status(self, now):
+        """To the pendant: the measured angles, in degrees with Home at 0, for it to show, and
+        the real state of the gripper, for its flag to follow it. Each once known."""
         if self.angles_period is None or now - self.angles_at < self.angles_period:
             return
-        if not self.link.connected or not all(name in self.measured for name in self.joints):
+        if not self.link.connected:
             return
         self.angles_at = now
-        self.link.send(pendant_text.format_angles(
-            [math.degrees(self.measured[name]) for name in self.joints]))
+        status = b''
+        if all(name in self.measured for name in self.joints):
+            status += pendant_text.format_angles(
+                [math.degrees(self.measured[name]) for name in self.joints])
+        if self.gripper_closed is not None:
+            status += pendant_text.format_gripper(self.gripper_closed)
+        if status:
+            self.link.send(status)
 
     def on_trajectory_status(self, msg):
         self.trajectory_running = any(goal.status in RUNNING for goal in msg.status_list)

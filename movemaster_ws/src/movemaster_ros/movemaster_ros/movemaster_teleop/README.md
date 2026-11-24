@@ -17,7 +17,7 @@ flowchart LR
     spark[("SPARK MAX")]
 
     esp -- "bloque de texto · 50 Hz · USB" --> jog
-    jog -- "ángulos medidos · 10 Hz" --> esp
+    jog -- "ángulos medidos y gripper · 10 Hz" --> esp
     jog -- "switch MANUAL / AUTO: switch_controller" --> cm
     jog -- "/jog_controller/commands" --> jc
     jc -- "position (rad)" --> hw
@@ -105,6 +105,14 @@ pendant alterna su bandera `gripper` con cada presión, y `jog_node` publica en
 desactiva (`movemaster_teleop/gripper.py`). Solo cuenta un cambio: la primera
 trama tras conectar o reconectar el pendant no mueve la pinza.
 
+La pinza también se mueve desde el HMI. Por eso, con el protocolo de texto,
+`jog_node` le manda al pendant el estado real (la apertura que reporta el servo
+en `/dynamic_joint_states`) y el pendant pone su bandera igual: la presión
+siguiente siempre invierte el estado real. Cuando la bandera cambia solo para
+igualar ese estado, `jog_node` no manda nada. Si un comando no llega a la pinza
+(por ejemplo, con el controlador inactivo), en un segundo el pendant vuelve a
+mostrar el estado real.
+
 ### Probar sin el ESP32
 
 `pendant_sim` imita al pendant en un puerto serie virtual:
@@ -118,7 +126,8 @@ Habla texto, como el firmware de `hmi/esp32/`; con `--binary`, tramas como el de
 `firmware/` (entonces `protocol: binary` en `jog.yaml`). Comandos: `manual` y
 `auto` (el switch; arranca en AUTO), `sel 4 1` (articulación X, articulación Y),
 `x 300`, `y -500` (-1000…1000), `0` (soltar), `grip` (el botón del joystick),
-`angles` (los últimos ángulos que mandó `jog_node`), `q`. Con `use_mock_hardware:=true` se prueba toda la
+`angles` (los últimos ángulos que mandó `jog_node`), `q`. En texto, como el ESP32,
+su gripper sigue al estado que manda `jog_node`. Con `use_mock_hardware:=true` se prueba toda la
 cadena sin motores.
 
 ## Parámetros (`config/jog.yaml`)
@@ -126,7 +135,7 @@ cadena sin motores.
 | Parámetro | Defecto | Significado |
 |---|---|---|
 | `protocol` | `text` | Lo que manda el ESP32: `text` (`hmi/esp32/main.cpp`) o `binary` (`firmware/`) |
-| `angles_rate_hz` | `10.0` | Solo `text`: cada cuánto se le mandan al ESP32 los ángulos medidos; `0`, nunca |
+| `angles_rate_hz` | `10.0` | Solo `text`: cada cuánto se le mandan al ESP32 los ángulos medidos y el estado del gripper; `0`, nunca |
 | `x_joints`, `y_joints` | `[4, 5]`, `[1, 2, 3]` | Qué articulaciones mueve cada eje del joystick: los grupos de botones del panel. El HMI los muestra igual |
 | `max_speed_rad_s` | `0.25` cada una | Velocidad a fondo, J1…J5; nunca más que `max_velocity_rad_s` de `joints.json` |
 | `deadband` | `0.12` | Fracción del recorrido del joystick que no mueve nada |
@@ -161,12 +170,19 @@ centro calibrado al encender (0 en AUTO); `Gripper`, el estado que alterna el
 botón del joystick (ON cierra). Como el texto no lleva CRC, `jog_node` solo
 acepta un bloque completo y en orden: una línea rara descarta el bloque entero.
 
-En sentido contrario, `jog_node` le manda al ESP32 los ángulos medidos
-(`/joint_states`) en grados con Home en 0, y el ESP32 los muestra en `Angulo`:
+En sentido contrario, 10 veces por segundo, `jog_node` le manda al ESP32 los
+ángulos medidos (`/joint_states`) en grados con Home en 0, que el ESP32 muestra
+en `Angulo`, y el estado real del gripper (ON cerrado, OFF abierto), al que el
+ESP32 iguala su `Gripper`. Cada línea solo se manda cuando ya se conoce el dato:
 
 ```text
 ANGLES,12.3,-20.5,33.3,0.0,45.0
+GRIPPER,ON
 ```
+
+Durante un segundo después de una presión, el ESP32 ignora `GRIPPER`: puede ser
+todavía el estado de antes de la presión, que venía en camino. Un segundo basta
+para que el comando llegue a la pinza y su estado nuevo vuelva.
 
 El formato está en `movemaster_teleop/pendant_text.py` y en `hmi/esp32/main.cpp`:
 si cambia uno, cambia el otro.

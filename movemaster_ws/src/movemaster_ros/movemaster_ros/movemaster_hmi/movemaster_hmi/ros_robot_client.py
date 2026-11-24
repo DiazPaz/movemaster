@@ -35,7 +35,7 @@ from movemaster_hmi.program import ProgramRunner
 from movemaster_hmi.robot_client import AUTO, MANUAL, OFFLINE, RobotClient, STOPPED
 from movemaster_hmi.robot_model import move_duration
 from movemaster_teleop import pendant_joy
-from movemaster_teleop.gripper import CLOSED, OPEN
+from movemaster_teleop.gripper import CLOSED, OPEN, is_closed
 from movemaster_teleop.mode import JOG, TRAJECTORY
 
 TRAJECTORY_ACTION = f'/{TRAJECTORY}/follow_joint_trajectory'
@@ -141,9 +141,9 @@ class RosRobotClient(RobotClient):
     def _on_dynamic_states(self, msg):
         for name, interfaces in zip(msg.joint_names, msg.interface_values):
             if name == 'gripper' and 'opening' in interfaces.interface_names:
-                opening = interfaces.values[interfaces.interface_names.index('opening')]
-                closed = opening < (OPEN + CLOSED) / 2
-                if closed != self._gripper_closed:
+                closed = is_closed(
+                    interfaces.values[interfaces.interface_names.index('opening')])
+                if closed is not None and closed != self._gripper_closed:
                     self._gripper_closed = closed
                     self.gripper_changed.emit(closed)
 

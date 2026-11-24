@@ -52,6 +52,11 @@ def test_angles_line():
     assert pendant_text.format_angles([12.34, -20.5, 0.0]) == b'ANGLES,12.3,-20.5,0.0\n'
 
 
+def test_gripper_line():
+    assert pendant_text.format_gripper(True) == b'GRIPPER,ON\n'
+    assert pendant_text.format_gripper(False) == b'GRIPPER,OFF\n'
+
+
 @pytest.mark.parametrize('protocol, sent', [
     ('text', BLOCK),
     ('binary', bytes([0xA5]) + FRAME.encode()),

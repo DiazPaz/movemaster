@@ -6,7 +6,8 @@ port. Text by default, as hmi/esp32/main.cpp; --binary for the frames of firmwar
 
 Commands: "manual" or "auto" (the switch; starts in AUTO), "sel 4 1" (X joint, Y joint),
 "x 300", "y -500" (-1000..1000), "0" (release), "grip" (the joystick button), "angles" (the
-last angles jog_node sent), "q".
+last angles jog_node sent), "q". In text, like the ESP32, the gripper flag follows the state
+jog_node sends, except for a second after "grip".
 """
 
 import os
@@ -20,6 +21,8 @@ import tty
 from movemaster_teleop import pendant_text
 from movemaster_teleop.pendant_frame import FULL_SCALE, PendantFrame, SYNC
 
+GRIPPER_HOLD_S = 1.0  # as retencionGripperMs in hmi/esp32/main.cpp
+
 
 def main():
     binary = '--binary' in sys.argv[1:]
@@ -27,6 +30,7 @@ def main():
     tty.setraw(slave)
     state = {'manual': False, 'gripper': False, 'x_joint': 4, 'y_joint': 1, 'x': 0, 'y': 0}
     received = {'angles': None}
+    pressed_at = [-GRIPPER_HOLD_S]  # last "grip"
     running = True
 
     def send():
@@ -39,7 +43,8 @@ def main():
             os.write(master, bytes([SYNC]) + frame.encode() if binary
                      else pendant_text.encode(frame, received['angles']))
             seq = (seq + 1) & 0xFF
-            # What jog_node writes back: the measured angles (text protocol only).
+            # What jog_node writes back (text protocol only): the measured angles and the real
+            # state of the gripper.
             while select.select([master], [], [], 0)[0]:
                 incoming += os.read(master, 1024)
             *lines, rest = incoming.split(b'\n')
@@ -50,6 +55,9 @@ def main():
                         received['angles'] = [float(v) for v in line[7:].split(b',')]
                     except ValueError:
                         pass
+                elif line in (b'GRIPPER,ON', b'GRIPPER,OFF') \
+                        and time.monotonic() - pressed_at[0] >= GRIPPER_HOLD_S:
+                    state['gripper'] = line == b'GRIPPER,ON'
             time.sleep(0.02)
 
     threading.Thread(target=send, daemon=True).start()
@@ -70,6 +78,7 @@ def main():
                     state.update(x=0, y=0)
                 elif words == ['grip']:
                     state['gripper'] = not state['gripper']
+                    pressed_at[0] = time.monotonic()
                 elif words == ['angles']:
                     print(received['angles'])
                     continue
