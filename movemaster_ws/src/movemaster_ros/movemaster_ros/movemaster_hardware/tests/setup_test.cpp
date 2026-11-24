@@ -57,6 +57,10 @@ void fixture_loads() {
       "control block not loaded");
   check(j.slots.size() == 1 && j.slots.at(0).pidf.at("p") == 0.5 &&
       j.slots.at(0).maxmotion.at("cruise_velocity") == 200, "slots not loaded");
+  // Optional on a SPARK joint: the acceleration trajectories are planned with.
+  check(std::isnan(j.max_acceleration_rad_s2), "max_acceleration_rad_s2 must be optional");
+  data["joints"]["joint_1"]["max_acceleration_rad_s2"] = 6.0;
+  check(load(data).joints.at(0).max_acceleration_rad_s2 == 6, "max_acceleration_rad_s2 not loaded");
 }
 // Each mistake names the field, and the previous format explains where things moved.
 void loader_errors() {
@@ -90,6 +94,11 @@ void loader_errors() {
   broken([](Json &j) { j["slots"]["0"].erase("maxmotion"); }, "MAXMotion control needs a maxmotion block");
   broken([](Json &j) { j["max_velocity_rad_s"] = 1.0; }, "cruise_velocity exceeds max_velocity_rad_s");
   broken([](Json &j) { j.erase("max_velocity_rad_s"); }, "max_velocity_rad_s is missing");
+  broken([](Json &j) { j["max_acceleration_rad_s2"] = 0; }, "max_acceleration_rad_s2 must be positive");
+  broken([](Json &j) { j["max_acceleration_rad_s2"] = "6"; }, "max_acceleration_rad_s2 must be a number");
+  // 500 RPM/s through a 10:1 reduction is 5.24 rad/s^2.
+  broken([](Json &j) { j["max_acceleration_rad_s2"] = 5.0; },
+      "MAXMotion max_acceleration exceeds max_acceleration_rad_s2");
   auto data = base;
   data["period"] = 0.02;
   rejects_with([&] { load(data); }, "joints.json: period is not a known key");

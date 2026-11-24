@@ -114,7 +114,8 @@ JointConfig load_joint(const std::string &name, const Json &j) {
       throw std::invalid_argument(std::string(moved) + " moved in joints.json v2: PIDF and MAXMotion go in "
           "slots.<n>, the slot in control.slot (docs/PARAMETROS.md)");
   only_keys(j, {"device", "can_id", "gear_ratio", "direction", "zero_offset_rad", "min_position_rad",
-      "max_position_rad", "max_velocity_rad_s", "spark", "control", "slots", "homing"});
+      "max_position_rad", "max_velocity_rad_s", "max_acceleration_rad_s2", "spark", "control", "slots",
+      "homing"});
   JointConfig joint;
   joint.name = name;
   joint.device_id = integer(j, "can_id");
@@ -124,6 +125,8 @@ JointConfig load_joint(const std::string &name, const Json &j) {
   joint.min_position_rad = number(j, "min_position_rad");
   joint.max_position_rad = number(j, "max_position_rad");
   joint.max_velocity_rad_s = number(j, "max_velocity_rad_s");
+  if (j.contains("max_acceleration_rad_s2"))
+    joint.max_acceleration_rad_s2 = number(j, "max_acceleration_rad_s2");
   const auto &spark = object_field(j, "spark");
   in("spark", [&] {
     only_keys(spark, {"motor_type", "idle_mode", "current_limit_a", "voltage_compensation_v"});

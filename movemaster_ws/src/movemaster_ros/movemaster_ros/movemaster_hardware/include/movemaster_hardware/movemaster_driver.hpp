@@ -27,7 +27,9 @@ struct JointConfig {
   double min_position_rad = std::numeric_limits<double>::quiet_NaN();
   double max_position_rad = std::numeric_limits<double>::quiet_NaN();
   double max_velocity_rad_s = std::numeric_limits<double>::quiet_NaN();  // bounds every cruise velocity
-  // Gripper only: with max_velocity_rad_s, the wrist's motion profile (SET_MOTION_PROFILE).
+  // Gripper: with max_velocity_rad_s, the wrist's motion profile (SET_MOTION_PROFILE); required.
+  // SPARK: optional, the acceleration trajectories are planned with (the HMI); bounds every
+  // MAXMotion max_acceleration. NaN: not given.
   double max_acceleration_rad_s2 = std::numeric_limits<double>::quiet_NaN();
   // The rest is for SPARK joints only.
   SparkBaseline spark;

@@ -293,8 +293,19 @@ Tabla completa, valores de fábrica y razones: [PARAMETROS.md](../movemaster_har
 
 | Modo | Trama | Qué hace el SPARK | Cuándo conviene |
 |---|---|---|---|
-| `maxmotion` | `MAXMOTION_POSITION_SETPOINT` | Genera un perfil hacia el setpoint con la cruise velocity y la aceleración del slot. | Movimientos punto a punto y jog: el SPARK limita la velocidad. |
-| `position` | `POSITION_SETPOINT` | Su PID persigue cada setpoint, sin perfil. | Trayectorias ya perfiladas, como las de MoveIt por el JTC. |
+| `maxmotion` | `MAXMOTION_POSITION_SETPOINT` | Genera un perfil hacia el setpoint con la cruise velocity y la aceleración del slot. | Un setpoint lejano que llega una sola vez, como desde `spark_console`: el SPARK limita la velocidad. |
+| `position` | `POSITION_SETPOINT` | Su PID persigue cada setpoint, sin perfil. | **El modo del brazo.** Trayectorias ya perfiladas que llegan en cada ciclo: las del JTC (HMI, MoveIt) y las del jog. |
+
+- **Por qué el brazo usa `position`.** El JTC ya manda una trayectoria suave y
+  sincronizada, un objetivo nuevo cada ciclo. En `maxmotion` el SPARK arma con
+  cada uno un perfil que frena hasta detenerse en él, unos milímetros adelante,
+  y vuelve a arrancar en el ciclo siguiente: dos planificadores en serie. La
+  velocidad sube y baja (el eje vibra), cada eje se atrasa distinto (pierden la
+  sincronía) y el eje nunca queda quieto, así que el JTC no da por terminada la
+  trayectoria. En `position` el PID sigue la trayectoria del JTC tal cual. Las
+  velocidades y aceleraciones que antes ponía el perfil se configuran en
+  `max_velocity_rad_s` y `max_acceleration_rad_s2` de cada eje, que son con las
+  que el HMI planea.
 
 - **Cambiar de modo o de slot es inmediato.** Cada trama de setpoint fija el
   modo (Control Type, ID 5) y lleva el slot en su campo `PID_SLOT`: no se
@@ -362,7 +373,8 @@ ESP32 del gripper lleva otros ([4.6](#46-la-muñeca-en-la-esp32-del-gripper-join
 | `direction` | **entero** | `1` o `-1` (no `1.0`) | `-1` si el motor gira al revés que la articulación en ROS. |
 | `zero_offset_rad` | número | finito | Ángulo de la articulación cuando el encoder del motor marca 0, es decir, al encender el SPARK. Solo se nota en un eje sin homing (ver [4.4](#44-cuidados)). |
 | `min_position_rad`, `max_position_rad` | número | `min < max` | Límites calibrados. El driver rechaza objetivos fuera; también son los límites del URDF. |
-| `max_velocity_rad_s` | número | > 0 | Velocidad máxima de la articulación: límite del URDF, con el que planea MoveIt. Ninguna `cruise_velocity` puede superarla. |
+| `max_velocity_rad_s` | número | > 0 | Velocidad máxima de la articulación: límite del URDF, con el que planean el HMI y MoveIt. Ninguna `cruise_velocity` puede superarla. En modo `position` nada más limita la velocidad: debe ser una que el eje pueda seguir (como referencia, el NEO da 5676 RPM / `gear_ratio`). |
+| `max_acceleration_rad_s2` | número | opcional, > 0 | Aceleración máxima de la articulación, con la que planea el HMI. Ninguna `max_acceleration` de MAXMotion puede superarla. Sin el campo, el HMI solo limita la velocidad. |
 | `spark` | objeto | ver abajo | Lo que la puesta en marcha guarda en la flash del SPARK. El driver lo vuelve a escribir en RAM al configurar. |
 | `control` | objeto | ver abajo | Modo y slot con que se activa el eje. |
 | `slots` | objeto | `"0"` a `"3"`, al menos uno | Presets del eje: ganancias y perfiles. |

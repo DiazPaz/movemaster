@@ -63,6 +63,9 @@ void validate_driver_config(const DriverConfig &config) {
       continue;
     }
     require(std::isfinite(j.gear_ratio) && j.gear_ratio > 0, j.name + ": gear_ratio must be positive");
+    require(std::isnan(j.max_acceleration_rad_s2) ||
+        (std::isfinite(j.max_acceleration_rad_s2) && j.max_acceleration_rad_s2 > 0),
+        j.name + ": max_acceleration_rad_s2 must be positive");
     require(j.spark.idle_mode == IdleMode::kCoast || j.spark.idle_mode == IdleMode::kBrake,
         j.name + ": invalid idle mode");
     require(j.spark.current_limit_a >= 1 && j.spark.current_limit_a <= 80,
@@ -95,6 +98,11 @@ void validate_driver_config(const DriverConfig &config) {
         const double cruise_rad_s = s.maxmotion["cruise_velocity"].get<double>() * tau / (60 * j.gear_ratio);
         require(cruise_rad_s <= j.max_velocity_rad_s * (1 + 1e-9),
             where + ": MAXMotion cruise_velocity exceeds max_velocity_rad_s");
+        const double acceleration_rad_s2 =
+            s.maxmotion["max_acceleration"].get<double>() * tau / (60 * j.gear_ratio);
+        require(std::isnan(j.max_acceleration_rad_s2) ||
+            acceleration_rad_s2 <= j.max_acceleration_rad_s2 * (1 + 1e-9),
+            where + ": MAXMotion max_acceleration exceeds max_acceleration_rad_s2");
       }
       // Fail before opening CAN if any tuning value overflows binary32.
       for (const auto *group : {&s.pidf, &s.maxmotion})
